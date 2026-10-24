@@ -1,5 +1,10 @@
 {
-  "name": "hausplaner",
+  "name": "mindora-dienst",
   "private": true,
-  "type": "module"
+  "type": "module",
+  "dependencies": {
+    "firebase-admin": "^13.0.0",
+    "imapflow": "^1.0.150",
+    "mailparser": "^3.7.1"
+  }
 }

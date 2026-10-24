@@ -1,7 +1,8 @@
-// Verschickt fällige Erinnerungen und die Morgen-Übersicht als Push-Nachricht.
+// Mindora-Hintergrunddienst: E-Mail-Eingang, Erinnerungen, Fristprüfung und Morgen-Übersicht.
 // Läuft automatisch alle 15 Minuten über GitHub Actions (siehe .github/workflows/reminders.yml).
 import admin from 'firebase-admin';
 import { assessTasks, urgencyOf, aiKeyOf, STATUS } from '../ai.js';
+import { processInbox } from './inbox.mjs';
 
 const sa = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT || '{}');
 if (!sa.project_id) {
@@ -65,11 +66,18 @@ async function send(targets, title, body, tag) {
 }
 
 let sent = 0;
-const projects = await db.collection('projects').get();
+let projects = await db.collection('projects').get();
+
+// 0) E-Mail-Eingang abholen (nur wenn ein Postfach eingerichtet ist)
+if (!TEST && process.env.INBOX_USER) {
+  try { sent += await processInbox({ db, admin, send, tokensFor, projects: projects.docs }); }
+  catch (e) { console.warn('E-Mail-Eingang fehlgeschlagen:', e.message); }
+  projects = await db.collection('projects').get();
+}
 for (const p of projects.docs) {
   const members = p.get('members') || [];
   const all = await tokensFor(members);
-  const pname = p.get('name') || 'Hausplaner';
+  const pname = p.get('name') || 'Mindora';
 
   if (TEST) {
     sent += await send(all, pname, 'Test: Push-Nachrichten funktionieren.', 'test');

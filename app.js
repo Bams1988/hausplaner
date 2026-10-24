@@ -1,83 +1,105 @@
 import { createStore, computeRemindAt } from './store.js';
-import { parseEmails, isoDate, similarity } from './parser.js';
-import { extractFromText, draftEmail, assessTasks, testConnection, urgencyOf, aiKeyOf, STATUS, MODELS, DEFAULT_MODEL } from './ai.js';
+import { parseEmails, isoDate, similarity, guessPhase } from './parser.js';
+import {
+  extractFromText, draftEmail, assessTasks, testConnection, urgencyOf, aiKeyOf,
+  STATUS, MODELS, DEFAULT_MODEL, DEFAULT_AREAS, HOUSE_PHASES,
+} from './ai.js';
 
-// ------------------------------------------------------------------ Zustand
-const PHASES = ['Allgemein', 'Finanzierung', 'Pläne & Behörden', 'Grundstück & Anschlüsse', 'Bemusterung', 'Versicherung', 'Bau & Abnahme'];
+// ================================================================== Zustand
 const REMINDERS = [
   ['none', 'Keine Erinnerung'], ['day0', 'Am Tag selbst, 8 Uhr'], ['hour1', '1 Stunde vorher'], ['day1', '1 Tag vorher, 18 Uhr'],
   ['day3', '3 Tage vorher, 18 Uhr'], ['week1', '1 Woche vorher, 18 Uhr'], ['custom', 'Eigener Zeitpunkt'],
 ];
+const AREA_COLORS = ['#2F9E77', '#E9A23B', '#4A8FE7', '#2BB0A6', '#8E7CE0', '#E46F8E', '#D9774B', '#5B7F95'];
+const AREA_EMOJIS = ['🏡', '💛', '📄', '🌿', '☀️', '🧒', '💼', '🚗', '✈️', '🎓', '🐾', '🎉', '🏃', '🛠️', '💶', '📦'];
 const S = {
-  view: 'tasks', filter: 'open', phase: 'all', mine: false,
-  me: null, authReady: false, project: null, projectState: 'loading', tasks: [], infos: [], contacts: [], ai: null, aiBusy: false, contactQuery: '',
-  pasteText: '', parsed: null, saveInfo: true, openInfo: null, infoQuery: '', authTab: 'login', authError: '',
+  view: 'today', area: 'all', filter: 'open', inboxTab: 'new', planArea: null, planZoom: 'week', planScrolled: false,
+  me: null, authReady: false, project: null, projectState: 'loading',
+  tasks: [], infos: [], contacts: [], areas: [], ai: null, aiBusy: false,
+  pasteText: '', parsed: null, saveInfo: true, openInfo: null, infoQuery: '', contactQuery: '', authTab: 'login', authError: '',
   pendingRender: false,
 };
 const store = createStore();
 const app = document.getElementById('app');
 const sheetRoot = document.getElementById('sheet-root');
 
-// ------------------------------------------------------------------ Helfer
+// ================================================================== Helfer
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const todayISO = () => isoDate(new Date());
 const parseISO = (s) => { const [y, m, d] = s.split('-').map(Number); return new Date(y, m - 1, d); };
-const dayDiff = (s) => Math.round((parseISO(s) - parseISO(todayISO())) / 864e5);
-const fmtDate = (s, o = { weekday: 'short', day: 'numeric', month: 'short' }) => parseISO(s).toLocaleDateString('de-DE', o);
+const addDays = (s, n) => { const d = parseISO(s); d.setDate(d.getDate() + n); return isoDate(d); };
+const dayDiff = (s, from = todayISO()) => Math.round((parseISO(s) - parseISO(from)) / 864e5);
+const fmtDate = (s, o = { weekday: 'short', day: 'numeric', month: 'short' }) => parseISO(s).toLocaleDateString('de-DE', o).replace(/\.$/, '');
 const isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 const standalone = window.matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 const members = () => S.project?.members || [];
 const nameOf = (uid) => (S.project?.memberNames || {})[uid] || 'Unbekannt';
 const initial = (uid) => nameOf(uid).trim().charAt(0).toUpperCase() || '?';
-
-function dueLabel(t) {
-  if (!t.due) return null;
-  const d = dayDiff(t.due);
-  let text = d === 0 ? 'Heute' : d === 1 ? 'Morgen' : d === -1 ? 'Gestern' : fmtDate(t.due);
-  if (d < -1 || d > 6) text = fmtDate(t.due, { weekday: 'short', day: 'numeric', month: 'short', year: parseISO(t.due).getFullYear() !== new Date().getFullYear() ? 'numeric' : undefined });
-  if (t.time) text += `, ${t.time} Uhr`;
-  return { text, late: !t.done && d < 0 };
-}
-function relText(d) {
-  if (d === 0) return 'heute fällig';
-  if (d === 1) return 'morgen fällig';
-  if (d > 1) return `in ${d} Tagen fällig`;
-  if (d === -1) return 'seit gestern überfällig';
-  return `seit ${-d} Tagen überfällig`;
-}
+const myName = () => (S.me?.name && S.me.name !== 'Ich' ? S.me.name : '');
 const aiCfg = () => (S.ai ? { apiKey: S.ai.apiKey, model: S.ai.model || DEFAULT_MODEL } : null);
 const contactById = (id) => S.contacts.find((c) => c.id === id) || null;
 const norm = (s) => String(s || '').toLowerCase().replace(/\b(herr|frau|dr\.?|dipl\.?-?\w*)\s+/g, '').replace(/[^a-zäöüß]/g, '');
+const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
+
+// --- Lebensbereiche
+const areas = () => (S.areas.length ? [...S.areas].sort((a, b) => (a.order ?? 99) - (b.order ?? 99) || a.name.localeCompare(b.name, 'de')) : DEFAULT_AREAS);
+const areaById = (id) => areas().find((a) => a.id === id) || null;
+function areaOf(t) {
+  if (t.areaId) { const a = areaById(t.areaId); if (a) return a; }
+  return areaById('hausbau') || areaById('alltag') || areas()[0]; // ältere Aufgaben stammen aus dem Hausbau
+}
+const phaseOf = (t) => (t.phase && t.phase !== 'Allgemein' ? t.phase : null);
+async function ensureAreasStored() {
+  if (S.areas.length) return;
+  for (const a of DEFAULT_AREAS) { const { id, ...rest } = a; await store.setArea(id, rest); }
+}
+
 function findContact({ email, name }) {
   const e = (email || '').trim().toLowerCase();
   if (e) { const c = S.contacts.find((x) => (x.email || '').toLowerCase() === e); if (c) return c; }
   const n = norm(name);
   return n ? S.contacts.find((x) => norm(x.name) === n) || null : null;
 }
+
+function dueLabel(t) {
+  if (!t.due) return null;
+  const d = dayDiff(t.due);
+  let text = d === 0 ? 'Heute' : d === 1 ? 'Morgen' : d === -1 ? 'Gestern' : fmtDate(t.due);
+  if (d < -1 || d > 6) text = fmtDate(t.due, { weekday: 'short', day: 'numeric', month: 'short', year: parseISO(t.due).getFullYear() !== new Date().getFullYear() ? 'numeric' : undefined });
+  if (t.time) text += `, ${t.time}`;
+  return { text, late: !t.done && d < 0 };
+}
+const byDue = (a, b) => (a.due || '9999').localeCompare(b.due || '9999') || (a.time || '99').localeCompare(b.time || '99') || (a.createdAt || 0) - (b.createdAt || 0);
 const urgRank = (t) => { const u = urgencyOf(t); return u ? STATUS[u.status].rank : -1; };
 const byUrgency = (a, b) => urgRank(b) - urgRank(a) || ((a.startBy || a.due || '9999').localeCompare(b.startBy || b.due || '9999')) || byDue(a, b);
 const badge = (u) => (u && u.status !== 'im_plan' ? `<span class="badge s-${u.status}">${esc(STATUS[u.status].label)}</span>` : '');
-const byDue = (a, b) => (a.due || '9999').localeCompare(b.due || '9999') || (a.time || '99').localeCompare(b.time || '99') || (a.createdAt || 0) - (b.createdAt || 0);
+const weekStart = () => { const d = new Date(); d.setHours(0, 0, 0, 0); d.setDate(d.getDate() - ((d.getDay() + 6) % 7)); return d; };
 
+// ================================================================== Symbole
+const sv = (p, w = 24, sw = 1.9) => `<svg width="${w}" height="${w}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="${sw}" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${p}</svg>`;
 const I = {
-  tasks: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 11.5 12 5l8 6.5"/><path d="M6 10v9h12v-9"/><path d="m9.5 14 2 2 3.5-3.5"/></svg>',
-  mail: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3.5 6.5 8.5 6.5 8.5-6.5"/></svg>',
-  infos: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/></svg>',
-  more: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><circle cx="12" cy="8" r="3.2"/><path d="M5.5 19.5c1.2-3.2 3.6-4.8 6.5-4.8s5.3 1.6 6.5 4.8"/></svg>',
-  people: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8.5" r="3"/><path d="M3.5 19c.9-3 3-4.6 5.5-4.6s4.6 1.6 5.5 4.6"/><path d="M15.5 5.8a3 3 0 0 1 0 5.4M17.5 14.6c1.5.6 2.5 2 3 4.4"/></svg>',
-  phone: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4h3.5l1.7 4.3-2.2 1.4a11 11 0 0 0 6.3 6.3l1.4-2.2L20 15.5V19a1.5 1.5 0 0 1-1.6 1.5C10.7 20 4 13.3 3.5 5.6A1.5 1.5 0 0 1 5 4Z"/></svg>',
-  envelope: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3.5 6.5 8.5 6.5 8.5-6.5"/></svg>',
-  spark: '<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="vertical-align:-3px"><path d="M12 2.5c.5 4.6 2.9 7 7.5 7.5-4.6.5-7 2.9-7.5 7.5-.5-4.6-2.9-7-7.5-7.5 4.6-.5 7-2.9 7.5-7.5Z"/><path d="M19 15c.2 2 1.2 3 3 3.2-1.8.2-2.8 1.2-3 3.3-.2-2.1-1.2-3.1-3-3.3 1.8-.2 2.8-1.2 3-3.2Z" opacity=".6"/></svg>',
-  plus: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>',
-  check: '<svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg>',
-  bell: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px"><path d="M6 16V11a6 6 0 0 1 12 0v5l1.5 2h-15Z"/><path d="M10 20.5a2 2 0 0 0 4 0"/></svg>',
-  share: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-3px"><path d="M12 3v12M7.5 7.5 12 3l4.5 4.5"/><path d="M5 12v7a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-7"/></svg>',
+  today: sv('<circle cx="12" cy="12" r="4"/><path d="M12 2.5v2M12 19.5v2M4.6 4.6 6 6M18 18l1.4 1.4M2.5 12h2M19.5 12h2M4.6 19.4 6 18M18 6l1.4-1.4"/>'),
+  plan: sv('<path d="M4 6h9M7 12h11M5 18h7"/><circle cx="16" cy="6" r="1.6"/><circle cx="20" cy="12" r="1.6"/><circle cx="15" cy="18" r="1.6"/>'),
+  inbox: sv('<path d="M3.5 13.5 6 5.5h12l2.5 8"/><path d="M3.5 13.5V18a1.5 1.5 0 0 0 1.5 1.5h14a1.5 1.5 0 0 0 1.5-1.5v-4.5h-5a3.5 3.5 0 0 1-7 0Z"/>'),
+  people: sv('<circle cx="9" cy="8.5" r="3"/><path d="M3.5 19c.9-3 3-4.6 5.5-4.6s4.6 1.6 5.5 4.6"/><path d="M15.5 5.8a3 3 0 0 1 0 5.4M17.5 14.6c1.5.6 2.5 2 3 4.4"/>'),
+  more: sv('<circle cx="5.5" cy="12" r="1.4"/><circle cx="12" cy="12" r="1.4"/><circle cx="18.5" cy="12" r="1.4"/>', 24, 2.2),
+  plus: sv('<path d="M12 5v14M5 12h14"/>', 26, 2.4),
+  check: '<svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg>',
+  bell: sv('<path d="M6 16V11a6 6 0 0 1 12 0v5l1.5 2h-15Z"/><path d="M10 20.5a2 2 0 0 0 4 0"/>', 13, 2.2),
+  share: sv('<path d="M12 3v12M7.5 7.5 12 3l4.5 4.5"/><path d="M5 12v7a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-7"/>', 16, 2),
+  phone: sv('<path d="M5 4h3.5l1.7 4.3-2.2 1.4a11 11 0 0 0 6.3 6.3l1.4-2.2L20 15.5V19a1.5 1.5 0 0 1-1.6 1.5C10.7 20 4 13.3 3.5 5.6A1.5 1.5 0 0 1 5 4Z"/>', 18, 2),
+  envelope: sv('<rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3.5 6.5 8.5 6.5 8.5-6.5"/>', 18, 2),
+  spark: '<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" class="spark"><path d="M12 2.5c.5 4.6 2.9 7 7.5 7.5-4.6.5-7 2.9-7.5 7.5-.5-4.6-2.9-7-7.5-7.5 4.6-.5 7-2.9 7.5-7.5Z"/><path d="M19 15c.2 2 1.2 3 3 3.2-1.8.2-2.8 1.2-3 3.3-.2-2.1-1.2-3.1-3-3.3 1.8-.2 2.8-1.2 3-3.2Z" opacity=".6"/></svg>',
+  chevron: sv('<path d="m9 6 6 6-6 6"/>', 18, 2),
+  copy: sv('<rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/>', 16, 2),
 };
 
+// ================================================================== Rückmeldungen
 let toastTimer;
 function toast(msg, action) {
   const el = document.getElementById('toast');
-  el.innerHTML = esc(msg) + (action ? ` <button class="btn small" style="margin-left:10px;background:var(--signal);color:var(--signal-ink)">${esc(action.label)}</button>` : '');
+  el.innerHTML = `<span>${esc(msg)}</span>` + (action ? `<button class="toast-btn">${esc(action.label)}</button>` : '');
   if (action) el.querySelector('button').onclick = () => { action.fn(); el.classList.remove('show'); };
   el.classList.add('show');
   clearTimeout(toastTimer);
@@ -98,106 +120,163 @@ function fail(e) {
   };
   return map[e?.code] || e?.message || 'Unbekannter Fehler.';
 }
+function celebrate(x, y) {
+  if (reduceMotion) return;
+  const colors = ['var(--brand)', 'var(--sun)', '#7ED3A8', '#FFD27F', '#8E7CE0'];
+  for (let i = 0; i < 14; i++) {
+    const d = document.createElement('i');
+    d.className = 'confetti';
+    const a = (Math.PI * 2 * i) / 14 + Math.random() * 0.4;
+    const r = 34 + Math.random() * 30;
+    d.style.cssText = `left:${x}px;top:${y}px;background:${colors[i % colors.length]};--dx:${Math.cos(a) * r}px;--dy:${Math.sin(a) * r - 12}px`;
+    document.body.appendChild(d);
+    setTimeout(() => d.remove(), 800);
+  }
+}
 
-// ------------------------------------------------------------------ Rendern
+// ================================================================== Rendern
 function render() {
   const a = document.activeElement;
   if (a && app.contains(a) && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName)) { S.pendingRender = true; return; }
   S.pendingRender = false;
   if (store.mode === 'cloud') {
-    if (!S.authReady) { app.innerHTML = '<div class="boot">Hausplaner wird geladen …</div>'; return; }
+    if (!S.authReady) { app.innerHTML = boot(); return; }
     if (!S.me) { app.innerHTML = viewAuth(); return; }
-    if (S.projectState === 'loading') { app.innerHTML = '<div class="boot">Bauprojekt wird geladen …</div>'; return; }
+    if (S.projectState === 'loading') { app.innerHTML = boot(); return; }
     if (S.projectState === 'none') { app.innerHTML = viewSetup(); return; }
   }
-  const views = { tasks: viewTasks, import: viewImport, contacts: viewContacts, infos: viewInfos, more: viewMore };
-  const fab = S.view === 'tasks' ? `<button class="fab" data-action="new-task" aria-label="Aufgabe anlegen">${I.plus}</button>`
+  const views = { today: viewToday, plan: viewPlan, inbox: viewInbox, contacts: viewContacts, more: viewMore };
+  const fab = S.view === 'today' || S.view === 'plan' ? `<button class="fab" data-action="new-task" aria-label="Aufgabe anlegen">${I.plus}</button>`
     : S.view === 'contacts' ? `<button class="fab" data-action="new-contact" aria-label="Kontakt anlegen">${I.plus}</button>` : '';
   app.innerHTML = views[S.view]() + tabbar() + fab;
+  if (S.view === 'plan') afterPlanRender();
 }
+const boot = () => '<div class="boot"><span class="boot-sun"></span>Mindora wird geladen …</div>';
 app.addEventListener('focusout', () => setTimeout(() => { if (S.pendingRender && !app.contains(document.activeElement)) render(); }, 50));
 
 function tabbar() {
-  const tab = (id, label, icon) => `<button data-action="tab" data-tab="${id}" ${S.view === id ? 'aria-current="page"' : ''}>${icon}<span>${label}</span></button>`;
-  return `<nav class="tabbar">${tab('tasks', 'Aufgaben', I.tasks)}${tab('import', 'Einlesen', I.mail)}${tab('contacts', 'Kontakte', I.people)}${tab('infos', 'Infos', I.infos)}${tab('more', 'Mehr', I.more)}</nav>`;
+  const newN = S.tasks.filter((t) => t.isNew && !t.done).length;
+  const tab = (id, label, icon, dot) => `<button data-action="tab" data-tab="${id}" ${S.view === id ? 'aria-current="page"' : ''}>${icon}${dot ? `<b class="tab-dot">${dot}</b>` : ''}<span>${label}</span></button>`;
+  return `<nav class="tabbar">${tab('today', 'Heute', I.today)}${tab('plan', 'Plan', I.plan)}${tab('inbox', 'Eingang', I.inbox, newN)}${tab('contacts', 'Kontakte', I.people)}${tab('more', 'Mehr', I.more)}</nav>`;
 }
 
-// --- Aufgaben
-function viewTasks() {
-  const open = S.tasks.filter((t) => !t.done).sort(byUrgency);
-  const next = open[0];
-  const nu = next ? urgencyOf(next) : null;
-  const nc = next?.contactId ? contactById(next.contactId) : null;
-  const late = open.filter((t) => t.due && dayDiff(t.due) < 0).length;
+// ================================================================== Heute
+function greeting() {
+  const h = new Date().getHours();
+  const g = h < 5 ? 'Gute Nacht' : h < 11 ? 'Guten Morgen' : h < 17 ? 'Hallo' : h < 22 ? 'Guten Abend' : 'Gute Nacht';
+  return myName() ? `${g}, ${myName().split(' ')[0]}` : g;
+}
+function heroRing(ratio, big, small) {
+  const R = 46, C = 2 * Math.PI * R, len = Math.max(0.001, Math.min(1, ratio)) * C;
+  const ang = -Math.PI / 2 + Math.min(1, ratio) * Math.PI * 2;
+  const sx = 60 + R * Math.cos(ang), sy = 60 + R * Math.sin(ang);
+  return `<svg class="ring" viewBox="0 0 120 120" role="img" aria-label="${esc(big)} ${esc(small)}">
+    <defs><linearGradient id="rg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="var(--brand)"/><stop offset="1" stop-color="var(--sun)"/></linearGradient></defs>
+    <circle cx="60" cy="60" r="${R}" fill="none" stroke="var(--ring-track)" stroke-width="11"/>
+    <circle class="ring-arc" cx="60" cy="60" r="${R}" fill="none" stroke="url(#rg)" stroke-width="11" stroke-linecap="round" stroke-dasharray="${len} ${C}" transform="rotate(-90 60 60)" style="--len:${len}px;--c:${C}px"/>
+    ${ratio > 0.02 ? `<circle cx="${sx}" cy="${sy}" r="8.5" fill="var(--sun)" class="ring-sun"/>` : ''}
+    <text x="60" y="60" text-anchor="middle" class="ring-big">${esc(big)}</text>
+    <text x="60" y="78" text-anchor="middle" class="ring-small">${esc(small)}</text>
+  </svg>`;
+}
+
+function viewToday() {
+  const today = todayISO();
+  const open = S.tasks.filter((t) => !t.done);
+  const inArea = (t) => S.area === 'all' || areaOf(t).id === S.area;
+  const ws = weekStart().getTime();
+  const weekEnd = isoDate(new Date(ws + 6 * 864e5));
+  const doneWeek = S.tasks.filter((t) => t.done && (t.doneAt || 0) >= ws).length;
+  const dueWeek = open.filter((t) => t.due && t.due <= weekEnd).length;
+  const ratio = doneWeek + dueWeek ? doneWeek / (doneWeek + dueWeek) : (S.tasks.length ? 1 : 0);
+  const todayN = open.filter((t) => t.due && t.due <= today).length;
+  const urgentN = open.filter((t) => urgRank(t) >= 2 && !(t.due && t.due <= today)).length;
+  let line, sub;
+  if (!S.tasks.length) { line = 'Schön, dass du da bist.'; sub = 'Leg deine erste Aufgabe an oder leite eine E-Mail weiter – Mindora macht den Rest.'; }
+  else if (!todayN && !urgentN) { line = 'Heute steht nichts an.'; sub = dueWeek ? `Diese Woche noch ${dueWeek} – alles entspannt im Plan.` : 'Alles im Plan. Genieß den Tag.'; }
+  else if (todayN) { line = `${todayN} ${todayN === 1 ? 'Sache' : 'Sachen'} für heute.`; sub = urgentN ? `Dazu ${urgentN}, die bald starten ${urgentN === 1 ? 'sollte' : 'sollten'}. Eins nach dem anderen.` : 'Eins nach dem anderen – das schaffst du.'; }
+  else { line = `${urgentN} ${urgentN === 1 ? 'Aufgabe sollte' : 'Aufgaben sollten'} jetzt starten.`; sub = 'Ein kleiner Schritt heute spart später Stress.'; }
+
+  const next = open.filter(inArea).sort(byUrgency)[0];
+  const newN = open.filter((t) => t.isNew).length;
   let banner = '';
   if (isIOS && !standalone && !localStorage.getItem('hp-hide-install')) {
-    banner = `<div class="banner"><p><strong>Als App installieren:</strong> unten in Safari auf ${I.share} tippen, dann „Zum Home-Bildschirm“. Erst danach funktionieren Push-Nachrichten.</p><button data-action="hide-banner" data-key="hp-hide-install" aria-label="Hinweis schließen">×</button></div>`;
-  } else if (store.mode === 'local' && !localStorage.getItem('hp-hide-local')) {
-    banner = `<div class="banner"><p>Die Daten liegen nur auf diesem Gerät. Zum Teilen und für Erinnerungen richte die Cloud ein (siehe Anleitung).</p><button data-action="hide-banner" data-key="hp-hide-local" aria-label="Hinweis schließen">×</button></div>`;
+    banner = `<div class="note-card"><p><strong>Als App installieren:</strong> In Safari auf ${I.share} tippen, dann „Zum Home-Bildschirm“. Danach klappen auch Push-Nachrichten.</p><button class="x" data-action="hide-banner" data-key="hp-hide-install" aria-label="Hinweis schließen">×</button></div>`;
   }
-  const schild = next ? `
-    <section class="bauschild" aria-label="Nächster Schritt">
-      <p class="bauschild-label">${nu && nu.status !== 'im_plan' ? esc(STATUS[nu.status].label) : 'Als Nächstes'}</p>
-      <p class="bauschild-task">${esc(next.title)}</p>
-      ${nu && nu.status !== 'im_plan' && (nu.next || nu.reason) ? `<p class="bauschild-why">${esc(nu.next || nu.reason)}</p>` : ''}
-      <p class="bauschild-when">${next.due ? esc(relText(dayDiff(next.due))) + (Math.abs(dayDiff(next.due)) > 1 ? ' · ' + esc(dueLabel(next).text) : next.time ? `, ${esc(next.time)} Uhr` : '') : 'ohne Termin'}</p>
-      <div class="bauschild-row">
-        <span class="bauschild-count">${open.length} offen${late ? `, ${late} überfällig` : ''}</span>
-        <span class="btn-row">${nc?.email ? `<button class="btn small" data-action="compose-task" data-id="${esc(next.id)}">E-Mail</button>` : ''}<button class="btn small" data-action="toggle" data-id="${esc(next.id)}">Erledigt</button></span>
-      </div>
-    </section>` : `
-    <section class="bauschild" aria-label="Nächster Schritt">
-      <p class="bauschild-label">Als Nächstes</p>
-      <p class="bauschild-task">${S.tasks.length ? 'Alles erledigt.' : 'Noch keine Aufgaben.'}</p>
-      <p class="bauschild-when">Füge eine E-Mail von Allkauf ein, dann findet die App die Aufgaben darin.</p>
-      <div class="bauschild-row"><span></span><button class="btn small" data-action="tab" data-tab="import">E-Mail einlesen</button></div>
-    </section>`;
-
-  const usedPhases = PHASES.filter((p) => S.tasks.some((t) => (t.phase || 'Allgemein') === p));
-  const chips = !usedPhases.length && members().length < 2 ? '' : `<div class="chips" role="group" aria-label="Bereich">
-      <button class="chip" data-action="phase" data-phase="all" aria-pressed="${S.phase === 'all'}">Alle Bereiche</button>
-      ${members().length > 1 ? `<button class="chip" data-action="mine" aria-pressed="${S.mine}">Nur meine</button>` : ''}
-      ${usedPhases.map((p) => `<button class="chip" data-action="phase" data-phase="${esc(p)}" aria-pressed="${S.phase === p}">${esc(p)}</button>`).join('')}
-    </div>`;
-
-  let list = S.tasks.filter((t) => (S.filter === 'open' ? !t.done : t.done));
-  if (S.phase !== 'all') list = list.filter((t) => (t.phase || 'Allgemein') === S.phase);
-  if (S.mine) list = list.filter((t) => !t.assignee || t.assignee === 'all' || t.assignee === S.me?.uid);
-
-  let body = '';
-  if (!S.tasks.length) {
-    body = '';
-  } else if (!list.length) {
-    body = S.filter === 'open'
-      ? `<div class="empty"><strong>Hier ist nichts offen</strong>Lege eine Aufgabe mit dem Plus an oder lies eine E-Mail ein.</div>`
-      : `<div class="empty"><strong>Noch nichts erledigt</strong>Abgehakte Aufgaben landen hier.</div>`;
-  } else if (S.filter === 'done') {
+  const focus = next ? focusCard(next) : '';
+  const chips = areaChips(S.area, 'area', true);
+  let list = S.tasks.filter((t) => (S.filter === 'open' ? !t.done : t.done)).filter(inArea);
+  let body;
+  if (!S.tasks.length) body = '';
+  else if (!list.length) body = S.filter === 'open'
+    ? `<div class="empty">${sunArt()}<strong>Alles erledigt.</strong>Zeit für dich – oder für etwas Neues mit dem Plus.</div>`
+    : `<div class="empty"><strong>Noch nichts erledigt</strong>Abgehakte Aufgaben sammeln sich hier.</div>`;
+  else if (S.filter === 'done') {
     list.sort((a, b) => (b.doneAt || 0) - (a.doneAt || 0));
-    body = `<div class="group-head"><h2>Erledigt</h2><span>${list.length}</span></div><div class="list">${list.slice(0, 150).map(row).join('')}</div>`;
+    body = `<div class="group-head"><h2>Geschafft</h2><span>${list.length}</span></div><div class="list">${list.slice(0, 150).map((t) => row(t)).join('')}</div>`;
   } else {
     body = groupTasks(list).map(([name, items, cls]) => `
       <div class="group-head ${cls || ''}"><h2>${esc(name)}</h2><span>${items.length}</span></div>
-      <div class="list">${items.map(row).join('')}</div>`).join('');
+      <div class="list">${items.map((t) => row(t)).join('')}</div>`).join('');
   }
   return `<main class="view">
-    <h1 class="title" data-action="rename">${esc(S.project?.name || 'Unser Haus')}</h1>
-    ${banner}${schild}
-    <div class="seg" role="group" aria-label="Ansicht">
-      <button data-action="filter" data-filter="open" aria-pressed="${S.filter === 'open'}">Offen</button>
-      <button data-action="filter" data-filter="done" aria-pressed="${S.filter === 'done'}">Erledigt</button>
+    <header class="hello"><h1>${esc(greeting())}</h1><p>${esc(new Date().toLocaleDateString('de-DE', { weekday: 'long', day: 'numeric', month: 'long' }))}</p></header>
+    ${banner}
+    <section class="hero" aria-label="Deine Woche">
+      ${heroRing(ratio, String(doneWeek), 'erledigt')}
+      <div class="hero-text"><p class="hero-line">${esc(line)}</p><p class="hero-sub">${esc(sub)}</p>
+        ${!S.tasks.length ? `<div class="btn-row" style="margin-top:12px"><button class="btn small" data-action="new-task">Aufgabe anlegen</button><button class="btn small secondary" data-action="tab" data-tab="inbox">E-Mail einlesen</button></div>` : ''}
+      </div>
+    </section>
+    ${newN ? `<button class="inbox-hint" data-action="goto-new">${I.inbox}<span><strong>${newN} ${newN === 1 ? 'neue Aufgabe' : 'neue Aufgaben'}</strong> aus deinen E-Mails</span>${I.chevron}</button>` : ''}
+    ${focus}
+    ${S.tasks.length ? `<div class="list-tools">
+      <div class="seg" role="group" aria-label="Ansicht">
+        <button data-action="filter" data-filter="open" aria-pressed="${S.filter === 'open'}">Offen</button>
+        <button data-action="filter" data-filter="done" aria-pressed="${S.filter === 'done'}">Geschafft</button>
+      </div>${chips}</div>` : ''}
+    ${body}</main>`;
+}
+const sunArt = () => `<svg class="sun-art" viewBox="0 0 120 70" aria-hidden="true"><path d="M8 62h104" stroke="var(--line)" stroke-width="3" stroke-linecap="round"/><path d="M30 62a30 30 0 0 1 60 0" fill="var(--sun-soft)" stroke="var(--sun)" stroke-width="3"/>${[0, 1, 2, 3, 4].map((i) => { const a = Math.PI + (i + 0.5) * Math.PI / 5; return `<path d="M${60 + 38 * Math.cos(a)} ${62 + 38 * Math.sin(a)}L${60 + 48 * Math.cos(a)} ${62 + 48 * Math.sin(a)}" stroke="var(--sun)" stroke-width="3" stroke-linecap="round"/>`; }).join('')}</svg>`;
+
+function focusCard(t) {
+  const u = urgencyOf(t);
+  const a = areaOf(t);
+  const c = t.contactId ? contactById(t.contactId) : null;
+  const due = dueLabel(t);
+  const why = u && u.status !== 'im_plan' ? (u.next || u.reason) : (u?.reason || '');
+  return `<section class="focus" style="--area:${esc(a.color)}" aria-label="Als Nächstes">
+    <div class="focus-top"><span class="focus-kicker">Als Nächstes</span>${badge(u)}</div>
+    <button class="focus-title" data-action="edit" data-id="${esc(t.id)}">${esc(t.title)}</button>
+    ${why ? `<p class="focus-why">${esc(why)}</p>` : ''}
+    <div class="focus-meta"><span>${esc(a.emoji)} ${esc(a.name)}</span>${due ? `<span class="${due.late ? 'late' : ''}">${esc(due.text)}</span>` : ''}</div>
+    <div class="btn-row">
+      <button class="btn small" data-action="toggle" data-id="${esc(t.id)}">Erledigt</button>
+      ${c?.email ? `<button class="btn small secondary" data-action="compose-task" data-id="${esc(t.id)}">${I.envelope} E-Mail</button>` : ''}
     </div>
-    ${chips}${body}</main>`;
+  </section>`;
+}
+
+function areaChips(active, action, withAll) {
+  const counts = new Map();
+  for (const t of S.tasks) if (!t.done) { const id = areaOf(t).id; counts.set(id, (counts.get(id) || 0) + 1); }
+  const shown = areas().filter((a) => counts.get(a.id) || active === a.id);
+  if (!shown.length) return '';
+  return `<div class="chips" role="group" aria-label="Lebensbereich">
+    ${withAll ? `<button class="chip" data-action="${action}" data-id="all" aria-pressed="${active === 'all'}">Alle</button>` : ''}
+    ${shown.map((a) => `<button class="chip" data-action="${action}" data-id="${esc(a.id)}" aria-pressed="${active === a.id}" style="--area:${esc(a.color)}">${esc(a.emoji)} ${esc(a.name)}${counts.get(a.id) ? ` <small>${counts.get(a.id)}</small>` : ''}</button>`).join('')}
+  </div>`;
 }
 
 function groupTasks(list) {
-  const dow = (new Date().getDay() + 6) % 7; // Montag = 0
+  const dow = (new Date().getDay() + 6) % 7;
   const endWeek = 6 - dow;
   const groups = new Map();
   const add = (k, t, cls) => { if (!groups.has(k)) groups.set(k, { items: [], cls }); groups.get(k).items.push(t); };
   for (const t of [...list].sort(byDue)) {
     if (!t.due) continue;
     const d = dayDiff(t.due);
-    if (d < 0) add('Überfällig', t, 'overdue');
+    if (d < 0) add('Nachholen', t, 'overdue');
     else if (d === 0) add('Heute', t);
     else if (d === 1) add('Morgen', t);
     else if (d <= endWeek) add('Diese Woche', t);
@@ -205,68 +284,243 @@ function groupTasks(list) {
     else add(fmtDate(t.due, { month: 'long', year: 'numeric' }), t);
   }
   const noDate = list.filter((t) => !t.due).sort(byDue);
-  if (noDate.length) groups.set('Ohne Termin', { items: noDate });
+  if (noDate.length) groups.set('Irgendwann', { items: noDate });
   return [...groups].map(([k, v]) => [k, v.items, v.cls]);
 }
 
 function row(t) {
   const due = dueLabel(t);
+  const a = areaOf(t);
   const meta = [];
+  if (!t.done) { const b = badge(urgencyOf(t)); if (b) meta.push(b); }
   if (due) meta.push(`<span class="${due.late ? 'late' : ''}">${esc(due.text)}</span>`);
-  if (!t.done) { const b = badge(urgencyOf(t)); if (b) meta.unshift(b); }
+  if (S.area === 'all' || S.view !== 'today') meta.push(`<span>${esc(a.emoji)} ${esc(phaseOf(t) || a.name)}</span>`);
+  else if (phaseOf(t)) meta.push(`<span>${esc(phaseOf(t))}</span>`);
   const c = t.contactId ? contactById(t.contactId) : null;
   if (c) meta.push(`<span>${esc(c.name)}</span>`);
-  else if (t.phase && t.phase !== 'Allgemein') meta.push(`<span>${esc(t.phase)}</span>`);
-  if (!t.done && t.remindAt && t.remindAt > Date.now()) meta.push(`<span title="Erinnerung aktiv">${I.bell}</span>`);
+  if (!t.done && t.remindAt && t.remindAt > Date.now()) meta.push(`<span class="bell" title="Erinnerung aktiv">${I.bell}</span>`);
   const who = members().length > 1 && t.assignee && t.assignee !== 'all' ? `<span class="who" title="${esc(nameOf(t.assignee))}">${esc(initial(t.assignee))}</span>` : '';
-  return `<div class="row ${t.done ? 'done' : ''}">
+  return `<div class="row ${t.done ? 'done' : ''}" style="--area:${esc(a.color)}">
     <button class="check" data-action="toggle" data-id="${esc(t.id)}" aria-label="${t.done ? 'Wieder öffnen' : 'Als erledigt markieren'}: ${esc(t.title)}">${I.check}</button>
     <button class="row-main" data-action="edit" data-id="${esc(t.id)}">
-      <div class="row-title">${esc(t.title)}</div>
+      <div class="row-title">${t.isNew && !t.done ? '<b class="new-dot" title="Neu aus E-Mail"></b>' : ''}${esc(t.title)}</div>
       ${meta.length ? `<div class="row-meta">${meta.join('')}</div>` : ''}
     </button>${who}</div>`;
 }
 
-// --- Einlesen
-function viewImport() {
+// ================================================================== Plan (Zeitstrahl)
+const DAY_PX = { week: 30, month: 8 };
+function barRange(t) {
+  const end = t.due;
+  let start = t.startBy || t.aiStartBy;
+  if (!start) {
+    const created = t.createdAt ? isoDate(new Date(t.createdAt)) : end;
+    start = created < end ? (dayDiff(end, created) > 21 ? addDays(end, -7) : created) : end;
+  }
+  if (start > end) start = end;
+  const milestone = start === end || t.dueKind === 'termin' || (!!t.time && !t.leadDays);
+  return { start, end, milestone };
+}
+function viewPlan() {
+  const list = areas();
+  const withDue = S.tasks.filter((t) => t.due);
+  if (!S.planArea || (S.planArea !== 'all' && !areaById(S.planArea))) {
+    const counts = new Map(); for (const t of withDue) if (!t.done) counts.set(areaOf(t).id, (counts.get(areaOf(t).id) || 0) + 1);
+    S.planArea = [...counts].sort((a, b) => b[1] - a[1])[0]?.[0] || 'all';
+  }
+  const inScope = (t) => S.planArea === 'all' || areaOf(t).id === S.planArea;
+  const tasks = withDue.filter(inScope);
+  const undated = S.tasks.filter((t) => !t.due && !t.done && inScope(t)).length;
+  const all = S.tasks.filter(inScope);
+  const doneN = all.filter((t) => t.done).length;
+  const endDate = tasks.filter((t) => !t.done).map((t) => t.due).sort().pop();
+  const pct = all.length ? Math.round((doneN / all.length) * 100) : 0;
+  const area = S.planArea !== 'all' ? areaById(S.planArea) : null;
+
+  const chips = `<div class="chips" role="group" aria-label="Bereich">
+    <button class="chip" data-action="plan-area" data-id="all" aria-pressed="${S.planArea === 'all'}">Alle</button>
+    ${list.map((a) => `<button class="chip" data-action="plan-area" data-id="${esc(a.id)}" aria-pressed="${S.planArea === a.id}" style="--area:${esc(a.color)}">${esc(a.emoji)} ${esc(a.name)}</button>`).join('')}
+  </div>`;
+  const summary = `<section class="plan-sum" style="--area:${esc(area?.color || 'var(--brand)')}">
+    <div class="plan-sum-top"><strong>${area ? `${esc(area.emoji)} ${esc(area.name)}` : 'Alle Bereiche'}</strong><span>${pct} %</span></div>
+    <div class="meter"><i style="width:${pct}%"></i></div>
+    <p>${doneN} von ${all.length} erledigt${endDate ? ` · voraussichtlich fertig am ${esc(fmtDate(endDate, { day: 'numeric', month: 'long', year: 'numeric' }))}` : ''}</p>
+  </section>`;
+  const tools = `<div class="plan-tools"><div class="seg small" role="group" aria-label="Zoom">
+      <button data-action="plan-zoom" data-zoom="week" aria-pressed="${S.planZoom === 'week'}">Wochen</button>
+      <button data-action="plan-zoom" data-zoom="month" aria-pressed="${S.planZoom === 'month'}">Monate</button></div>
+      <button class="link" data-action="plan-today">Heute</button></div>`;
+  const gantt = tasks.length ? ganttHtml(tasks) : `<div class="empty">${sunArt()}<strong>Noch nichts geplant</strong>Sobald Aufgaben ein Datum haben, entsteht hier dein Plan – ganz von selbst.</div>`;
+  return `<main class="view">
+    <header class="page-head"><h1>Plan</h1><p>Wächst automatisch mit deinen Aufgaben und Fristen.</p></header>
+    ${chips}${summary}${tasks.length ? tools : ''}${gantt}
+    ${undated ? `<p class="hint">${undated} ${undated === 1 ? 'Aufgabe hat' : 'Aufgaben haben'} noch kein Datum und ${undated === 1 ? 'steht' : 'stehen'} deshalb nicht im Plan.</p>` : ''}
+  </main>`;
+}
+
+function ganttHtml(tasks) {
+  const px = DAY_PX[S.planZoom];
+  const today = todayISO();
+  const ranges = new Map(tasks.map((t) => [t.id, barRange(t)]));
+  let min = [...ranges.values()].map((r) => r.start).sort()[0];
+  let max = [...ranges.values()].map((r) => r.end).sort().pop();
+  if (addDays(today, -7) < min) min = addDays(today, -7);
+  if (addDays(today, 21) > max) max = addDays(today, 21);
+  min = addDays(min, -3); max = addDays(max, 10);
+  if (dayDiff(max, min) > 730) max = addDays(min, 730);
+  const md = parseISO(min); md.setDate(md.getDate() - ((md.getDay() + 6) % 7)); min = isoDate(md);
+  const days = dayDiff(max, min) + 1;
+  const X = (d) => dayDiff(d, min) * px;
+  const width = days * px + 180;
+
+  let head = '';
+  for (let i = 0; i < days; i++) {
+    const d = addDays(min, i); const dt = parseISO(d);
+    if (dt.getDate() === 1 || i === 0) head += `<span class="g-month" style="left:${i * px}px">${esc(dt.toLocaleDateString('de-DE', { month: 'long', year: dt.getMonth() === 0 || i === 0 ? 'numeric' : undefined }))}</span>`;
+    if (S.planZoom === 'week' && dt.getDay() === 1) head += `<span class="g-day" style="left:${i * px}px">${dt.getDate()}.</span><i class="g-grid" style="left:${i * px}px"></i>`;
+    if (S.planZoom === 'month' && dt.getDate() === 1) head += `<i class="g-grid" style="left:${i * px}px"></i>`;
+  }
+
+  const groups = new Map();
+  const sorted = [...tasks].sort((a, b) => ranges.get(a.id).start.localeCompare(ranges.get(b.id).start) || byDue(a, b));
+  for (const t of sorted) {
+    const a = areaOf(t);
+    const key = S.planArea === 'all' ? `${a.emoji} ${a.name}` : (phaseOf(t) || 'Weitere Aufgaben');
+    if (!groups.has(key)) groups.set(key, { items: [], color: a.color, order: S.planArea === 'all' ? (a.order ?? 99) : ((a.phases || []).indexOf(phaseOf(t)) + 1 || 99) });
+    groups.get(key).items.push(t);
+  }
+  const rows = [...groups].sort((a, b) => a[1].order - b[1].order).map(([name, g]) => {
+    const gs = g.items.map((t) => ranges.get(t.id).start).sort()[0];
+    const ge = g.items.map((t) => ranges.get(t.id).end).sort().pop();
+    const done = g.items.filter((t) => t.done).length;
+    const pct = Math.round((done / g.items.length) * 100);
+    const header = `<div class="g-group" style="--area:${esc(g.color)}">
+      <span class="g-group-name" style="margin-left:${Math.max(0, X(gs))}px">${esc(name)} <small>${done}/${g.items.length}</small></span>
+      <i class="g-span" style="left:${X(gs)}px;width:${Math.max(px, X(ge) - X(gs) + px)}px"><i style="width:${pct}%"></i></i></div>`;
+    const items = g.items.map((t) => {
+      const r = ranges.get(t.id); const u = urgencyOf(t);
+      const left = X(r.start); const w = Math.max(px * 0.9, X(r.end) - X(r.start) + px);
+      const cls = ['g-bar', t.done ? 'done' : '', u && u.status !== 'im_plan' ? `u-${u.status}` : '', r.milestone ? 'ms' : ''].join(' ');
+      const bar = r.milestone
+        ? `<i class="${cls}" style="left:${X(r.end) + px / 2 - 8}px"></i>`
+        : `<i class="${cls}" style="left:${left}px;width:${w}px">${!t.done && r.start < today && today <= r.end ? `<i class="g-elapsed" style="width:${Math.min(100, ((dayDiff(today, r.start) + 1) / (dayDiff(r.end, r.start) + 1)) * 100)}%"></i>` : ''}</i>`;
+      return `<div class="g-row" role="button" tabindex="0" data-action="edit" data-id="${esc(t.id)}" style="--area:${esc(areaOf(t).color)}" aria-label="${esc(t.title)}, ${esc(fmtDate(r.end))}">
+        <span class="g-label" style="margin-left:${Math.max(0, r.milestone ? X(r.end) + px / 2 - 8 : left)}px">${t.done ? '✓ ' : ''}${esc(t.title)} <small>${esc(fmtDate(r.end, { day: 'numeric', month: 'short' }))}</small></span>${bar}</div>`;
+    }).join('');
+    return header + items;
+  }).join('');
+  return `<div class="gantt-wrap" tabindex="0" aria-label="Zeitstrahl, seitlich scrollbar">
+    <div class="gantt" style="width:${width}px" data-today-x="${X(today)}">
+      <div class="g-head">${head}</div>
+      <i class="g-today" style="left:${X(today) + px / 2}px"><b>Heute</b></i>
+      <div class="g-body">${rows}</div>
+    </div></div>
+    <div class="legend"><span><i class="lg bar"></i>Zeit zum Erledigen</span><span><i class="lg ms"></i>Termin</span><span><i class="lg urg"></i>Jetzt starten</span><span><i class="lg dn"></i>Erledigt</span></div>`;
+}
+function afterPlanRender() {
+  const w = app.querySelector('.gantt-wrap'); if (!w) return;
+  if (!S.planScrolled) {
+    const x = +w.querySelector('.gantt').dataset.todayX;
+    w.scrollLeft = Math.max(0, x - 60);
+    S.planScrolled = true;
+  } else if (S.planScroll != null) w.scrollLeft = S.planScroll;
+  w.addEventListener('scroll', () => { S.planScroll = w.scrollLeft; }, { passive: true });
+}
+
+// ================================================================== Eingang
+function viewInbox() {
+  const newOnes = S.tasks.filter((t) => t.isNew && !t.done).sort(byDue);
+  const seg = `<div class="seg" role="group" aria-label="Eingang">
+    <button data-action="inbox-tab" data-tab="new" aria-pressed="${S.inboxTab === 'new'}">Neu${newOnes.length ? ` (${newOnes.length})` : ''}</button>
+    <button data-action="inbox-tab" data-tab="paste" aria-pressed="${S.inboxTab === 'paste'}">Einfügen</button>
+    <button data-action="inbox-tab" data-tab="archive" aria-pressed="${S.inboxTab === 'archive'}">Ablage</button></div>`;
+  const body = S.inboxTab === 'paste' ? inboxPaste() : S.inboxTab === 'archive' ? inboxArchive() : inboxNew(newOnes);
+  return `<main class="view">
+    <header class="page-head"><h1>Eingang</h1><p>Was per E-Mail reinkommt, wird hier zu Aufgaben.</p></header>
+    ${seg}${body}</main>`;
+}
+function inboxAddressCard() {
+  const addr = S.project?.inboxAddress;
+  if (store.mode !== 'cloud') return `<div class="note-card"><p><strong>E-Mails weiterleiten</strong> geht, sobald die Cloud eingerichtet ist (Anleitung, Stufe 2 und 5). Bis dahin: Text unter „Einfügen“ hineinkopieren.</p></div>`;
+  if (!addr) return `<div class="note-card"><p><strong>Tipp:</strong> Mit einem eigenen Mindora-Postfach leitest du E-Mails einfach weiter – die KI legt die Aufgaben dann von selbst an. Einrichtung: Anleitung, Stufe 5.</p></div>`;
+  const last = S.project?.inboxCheckedAt ? Math.round((Date.now() - S.project.inboxCheckedAt) / 60000) : null;
+  return `<div class="address-card">
+    <p>Leite E-Mails weiter an</p>
+    <button class="address" data-action="copy-address">${esc(addr)} ${I.copy}</button>
+    <small>${last == null ? 'Wird alle 15 Minuten abgerufen.' : last < 2 ? 'Gerade eben abgerufen.' : last < 90 ? `Zuletzt vor ${last} Min. abgerufen.` : 'Längere Zeit nicht abgerufen – siehe Anleitung, falls das so bleibt.'}</small>
+  </div>`;
+}
+function inboxNew(list) {
+  const cards = list.map((t) => {
+    const a = areaOf(t); const due = dueLabel(t);
+    return `<article class="new-card" style="--area:${esc(a.color)}">
+      <button class="new-main" data-action="edit" data-id="${esc(t.id)}">
+        <span class="new-area">${esc(a.emoji)} ${esc(a.name)}${phaseOf(t) ? ` · ${esc(phaseOf(t))}` : ''}</span>
+        <strong>${esc(t.title)}</strong>
+        <span class="new-meta">${due ? esc(due.text) : 'Ohne Datum'}${t.mailSubject ? ` · aus „${esc(t.mailSubject)}“` : ''}</span>
+      </button>
+      <div class="btn-row"><button class="btn small" data-action="accept-new" data-id="${esc(t.id)}">Passt</button><button class="btn small ghost" data-action="discard-new" data-id="${esc(t.id)}">Weg damit</button></div>
+    </article>`;
+  }).join('');
+  return `${inboxAddressCard()}
+    ${list.length ? `<div class="group-head"><h2>Neu für dich</h2><button class="link" data-action="accept-all">Alle passen</button></div>${cards}`
+      : `<div class="empty">${sunArt()}<strong>Nichts Neues.</strong>Du hast alles im Blick.</div>`}`;
+}
+function inboxArchive() {
+  const q = S.infoQuery.trim().toLowerCase();
+  const list = S.infos.filter((x) => !q || `${x.title} ${x.text} ${x.from}`.toLowerCase().includes(q));
+  const items = list.map((x) => {
+    const open = S.openInfo === x.id;
+    return `<article class="info ${open ? 'open' : ''}">
+      <button class="info-toggle" data-action="info-open" data-id="${esc(x.id)}" aria-expanded="${open}">
+        <div class="info-head"><span class="info-title">${x.kind === 'mail-auto' ? '📬 ' : ''}${esc(x.title || 'Ohne Betreff')}</span><span class="info-date">${esc(x.date ? fmtDate(x.date, { day: 'numeric', month: 'short', year: '2-digit' }) : new Date(x.createdAt).toLocaleDateString('de-DE', { day: 'numeric', month: 'short' }))}</span></div>
+        ${x.from ? `<div class="info-from">${esc(x.from)}</div>` : ''}
+        <div class="info-text">${esc(x.text)}</div>
+      </button>
+      ${open ? `<div class="btn-row" style="margin-top:12px">
+        <button class="btn secondary small" data-action="info-reparse" data-id="${esc(x.id)}">Aufgaben darin suchen</button>
+        <button class="btn ghost small danger-text" data-action="info-delete" data-id="${esc(x.id)}">Löschen</button></div>` : ''}
+    </article>`;
+  }).join('');
+  return `<div class="btn-row" style="margin-bottom:12px;flex-wrap:nowrap">
+      <input class="input" type="search" data-input="info-q" value="${esc(S.infoQuery)}" placeholder="In der Ablage suchen" style="flex:1;min-width:0" aria-label="Ablage durchsuchen">
+      <button class="btn small" data-action="new-info">Notiz</button>
+    </div>
+    ${items || `<div class="empty"><strong>${q ? 'Nichts gefunden' : 'Die Ablage ist leer'}</strong>${q ? 'Versuch einen anderen Suchbegriff.' : 'Eingelesene E-Mails und Notizen landen hier – z. B. Zugangsdaten oder Telefonnummern.'}</div>`}`;
+}
+function inboxPaste() {
   const p = S.parsed;
   let results = '';
   if (p) {
     const sel = p.tasks.filter((t) => t.selected).length;
     const csel = (p.contacts || []).filter((c) => c.selected).length;
-    const contactsHtml = p.contacts?.length ? `
-      <h2 class="section-title">${p.contacts.length} ${p.contacts.length === 1 ? 'Kontakt' : 'Kontakte'}</h2>
-      ${p.contacts.map((c, i) => foundContact(c, i)).join('')}` : '';
+    const contactsHtml = p.contacts?.length ? `<div class="group-head"><h2>${p.contacts.length} ${p.contacts.length === 1 ? 'Kontakt' : 'Kontakte'}</h2></div>${p.contacts.map((c, i) => foundContact(c, i)).join('')}` : '';
     results = p.tasks.length || p.contacts?.length ? `
-      ${p.ai && p.summary ? `<div class="ai-box" style="margin-top:22px">${I.spark} <span>${esc(p.summary)}</span></div>` : ''}
-      <h2 class="section-title">${p.tasks.length} ${p.tasks.length === 1 ? 'Aufgabe' : 'Aufgaben'} gefunden</h2>
-      <p class="hint">${p.ai ? 'Von der KI vorgeschlagen. Prüfe Titel, Frist und Vorlauf und wähle ab, was nicht passt.' : 'Häkchen setzen, Text und Datum bei Bedarf anpassen. Bei Aufgaben aus älteren Nachrichten im Verlauf kurz prüfen, ob sie noch offen sind.'}</p>
+      ${p.ai && p.summary ? `<div class="ai-note">${I.spark}<span>${esc(p.summary)}</span></div>` : ''}
+      <div class="group-head"><h2>${p.tasks.length} ${p.tasks.length === 1 ? 'Aufgabe' : 'Aufgaben'} gefunden</h2></div>
+      <p class="hint">${p.ai ? 'Vorschläge der KI. Passe an, was nicht stimmt, und wähle ab, was du nicht brauchst.' : 'Häkchen setzen, Text und Datum bei Bedarf anpassen.'}</p>
       ${p.tasks.map((t, i) => foundItem(t, i)).join('')}
       ${contactsHtml}
-      <label class="opt"><input type="checkbox" data-action="save-info" ${S.saveInfo ? 'checked' : ''}> E-Mail zusätzlich unter Infos ablegen</label>
+      <label class="opt"><input type="checkbox" data-action="save-info" ${S.saveInfo ? 'checked' : ''}> E-Mail zusätzlich in der Ablage speichern</label>
       <div class="sticky-action"><button class="btn block" data-action="commit-import" id="commit-btn" ${sel || csel ? '' : 'disabled'}>${commitLabel(sel, csel)}</button></div>`
-      : `<div class="empty"><strong>Keine Aufgaben erkannt</strong>In diesem Text steht nichts, was nach einer Bitte oder Frist klingt. Du kannst die Aufgabe selbst anlegen.<br><br>
-         <button class="btn secondary" data-action="new-task">Aufgabe selbst anlegen</button>
-         <button class="btn ghost" data-action="info-only">Nur unter Infos ablegen</button></div>`;
+      : `<div class="empty"><strong>Keine Aufgaben erkannt</strong>In diesem Text steht nichts, was nach einer Bitte oder Frist klingt.<br><br>
+         <button class="btn secondary small" data-action="new-task">Selbst anlegen</button>
+         <button class="btn ghost small" data-action="info-only">Nur ablegen</button></div>`;
   }
   const has = S.pasteText.trim();
   const mainBtn = S.ai
-    ? `<button class="btn block" style="margin-top:14px" data-action="parse-ai" ${has && !S.aiBusy ? '' : 'disabled'} id="parse-btn">${S.aiBusy ? '<span class="spin"></span> KI liest den Text …' : `${I.spark} Mit KI auswerten`}</button>
-       <button class="link" data-action="parse" ${S.aiBusy ? 'disabled' : ''}>Ohne KI auswerten (feste Regeln)</button>`
+    ? `<button class="btn block" style="margin-top:14px" data-action="parse-ai" ${has && !S.aiBusy ? '' : 'disabled'} id="parse-btn">${S.aiBusy ? '<span class="spin"></span> Mindora liest mit …' : `${I.spark} Mit KI auswerten`}</button>
+       <button class="link center" data-action="parse" ${S.aiBusy ? 'disabled' : ''}>Ohne KI auswerten</button>`
     : `<button class="btn block" style="margin-top:14px" data-action="parse" ${has ? '' : 'disabled'} id="parse-btn">Aufgaben finden</button>
-       <p class="hint">Tipp: Mit dem KI-Assistenten (Mehr → KI-Assistent) erkennt die App auch Ansprechpartner, schätzt Vorlaufzeiten und versteht frei formulierte Mails.</p>`;
-  return `<main class="view">
-    <h1 class="title">E-Mail einlesen</h1>
-    <p class="subtitle">Kopiere den ganzen Verlauf aus der Mail-App oder einen Text aus der Allkauf-App hier hinein.</p>
-    <textarea class="paste" id="paste" data-input="paste" placeholder="Hier einfügen: Betreff, Von, Gesendet und der Text der E-Mail – gern der komplette Verlauf.">${esc(S.pasteText)}</textarea>
+       <p class="hint">Mit dem KI-Assistenten (Mehr → KI-Assistent) erkennt Mindora auch Ansprechpartner, schätzt Vorlaufzeiten und versteht frei formulierte Texte.</p>`;
+  return `<p class="hint" style="margin-top:0">Kopiere eine E-Mail, einen Verlauf oder einen Text aus einer anderen App hier hinein.</p>
+    <textarea class="paste" id="paste" data-input="paste" placeholder="Hier einfügen …">${esc(S.pasteText)}</textarea>
     <div class="btn-row" style="margin-top:10px">
       <button class="btn secondary small" data-action="clip">Aus Zwischenablage</button>
       <label class="btn secondary small" style="position:relative">Screenshot lesen<input type="file" accept="image/*" data-action="ocr" style="position:absolute;inset:0;opacity:0"></label>
       ${S.pasteText ? '<button class="btn ghost small" data-action="clear-paste">Leeren</button>' : ''}
     </div>
-    ${mainBtn}
-    ${results}
-  </main>`;
+    ${mainBtn}${results}`;
 }
 function commitLabel(n, c = 0) {
   if (!n && !c) return 'Nichts ausgewählt';
@@ -276,20 +530,20 @@ function commitLabel(n, c = 0) {
   return parts.join(' und ') + ' übernehmen';
 }
 const KIND = { frist: 'Frist', termin: 'Termin', geschaetzt: 'Vorschlag der KI', keine: '' };
-
+const areaSelect = (attrs, selected) => `<select ${attrs}>${areas().map((a) => `<option value="${esc(a.id)}" ${a.id === selected ? 'selected' : ''}>${esc(a.emoji)} ${esc(a.name)}</option>`).join('')}</select>`;
 function foundItem(t, i) {
   const src = [t.from && `von ${t.from}`, t.messageDate && `vom ${fmtDate(t.messageDate, { day: 'numeric', month: 'short' })}`].filter(Boolean).join(' ');
-  const sb = t.due && t.leadDays != null ? (() => { const d = parseISO(t.due); d.setDate(d.getDate() - t.leadDays); return isoDate(d); })() : null;
-  return `<div class="found ${t.selected ? '' : 'off'}" data-i="${i}">
+  const sb = t.due && t.leadDays != null ? addDays(t.due, -t.leadDays) : null;
+  return `<div class="found ${t.selected ? '' : 'off'}">
     <input type="checkbox" data-action="pick" data-i="${i}" ${t.selected ? 'checked' : ''} aria-label="Übernehmen">
     <div class="found-body">
       <textarea class="found-title" data-input="found-title" data-i="${i}" rows="2" aria-label="Titel">${esc(t.title)}</textarea>
       <div class="found-line">
         <input type="date" data-input="found-due" data-i="${i}" value="${esc(t.due || '')}" aria-label="Fällig am">
         ${t.leadDays != null ? `<label class="mini">Vorlauf <input type="number" min="0" max="120" inputmode="numeric" data-input="found-lead" data-i="${i}" value="${esc(t.leadDays)}" aria-label="Vorlauf in Tagen"> Tage</label>` : ''}
-        <select data-input="found-phase" data-i="${i}" aria-label="Bereich">${PHASES.map((p) => `<option ${p === t.phase ? 'selected' : ''}>${esc(p)}</option>`).join('')}</select>
+        ${areaSelect(`data-input="found-area" data-i="${i}" aria-label="Bereich"`, t.areaId)}
       </div>
-      ${t.ai ? `<div class="found-src">${[KIND[t.dueKind] && t.due ? KIND[t.dueKind] : '', sb ? `anfangen bis ${fmtDate(sb, { day: 'numeric', month: 'short' })}` : '', t.contactName ? `Ansprechpartner: ${t.contactName}` : ''].filter(Boolean).map(esc).join(' · ')}</div>
+      ${t.ai ? `<div class="found-src">${[KIND[t.dueKind] && t.due ? KIND[t.dueKind] : '', sb ? `starten bis ${fmtDate(sb, { day: 'numeric', month: 'short' })}` : '', t.contactName ? `Ansprechpartner: ${t.contactName}` : ''].filter(Boolean).map(esc).join(' · ')}</div>
         ${t.leadReason ? `<div class="found-src">${esc(t.leadReason)}</div>` : ''}
         ${t.details ? `<div class="found-src">${esc(t.details)}</div>` : ''}
         ${t.doneInThread ? '<div class="found-warn">Laut Verlauf vermutlich schon erledigt</div>' : ''}` : ''}
@@ -300,18 +554,18 @@ function foundItem(t, i) {
 function foundContact(c, i) {
   const line = [c.role, c.company].filter(Boolean).join(', ');
   const data = [c.email, c.phone, c.mobile].filter(Boolean).join(' · ');
-  const state = c.match ? (c.addsInfo ? `Schon gespeichert – fehlende Angaben werden ergänzt` : 'Schon gespeichert, nichts Neues') : 'Neuer Kontakt';
+  const state = c.match ? (c.addsInfo ? 'Schon gespeichert – fehlende Angaben werden ergänzt' : 'Schon gespeichert') : 'Neuer Kontakt';
   return `<div class="found ${c.selected ? '' : 'off'}">
     <input type="checkbox" data-action="pick-contact" data-i="${i}" ${c.selected ? 'checked' : ''} aria-label="Kontakt übernehmen">
     <div class="found-body">
-      <div style="font-weight:600">${esc(c.name)}</div>
+      <div style="font-weight:700">${esc(c.name)}</div>
       ${line ? `<div class="found-src" style="margin-top:2px">${esc(line)}</div>` : ''}
       <div class="found-src" style="margin-top:2px">${esc(data)}</div>
       <div class="found-src">${esc(state)}</div>
     </div></div>`;
 }
 
-// --- Kontakte
+// ================================================================== Kontakte
 const telHref = (n) => 'tel:' + String(n).replace(/[^\d+]/g, '');
 function viewContacts() {
   const q = S.contactQuery.trim().toLowerCase();
@@ -331,42 +585,13 @@ function viewContacts() {
     </div>`;
   }).join('');
   return `<main class="view">
-    <h1 class="title">Kontakte</h1>
-    <p class="subtitle">Ansprechpartner bei allkauf, Bank, Behörden und Handwerkern.</p>
+    <header class="page-head"><h1>Kontakte</h1><p>Alle Ansprechpartner an einem Ort – direkt anschreiben oder anrufen.</p></header>
     ${S.contacts.length > 5 ? `<input class="input" type="search" data-input="contact-q" value="${esc(S.contactQuery)}" placeholder="Suchen" style="margin-bottom:12px" aria-label="Kontakte durchsuchen">` : ''}
-    ${rows ? `<div class="list">${rows}</div>` : `<div class="empty"><strong>${q ? 'Nichts gefunden' : 'Noch keine Kontakte'}</strong>${q ? 'Versuch einen anderen Suchbegriff.' : 'Lies eine E-Mail mit dem KI-Assistenten ein – Ansprechpartner aus der Signatur landen dann hier. Oder lege einen Kontakt mit dem Plus an.'}</div>`}
+    ${rows ? `<div class="list">${rows}</div>` : `<div class="empty"><strong>${q ? 'Nichts gefunden' : 'Noch keine Kontakte'}</strong>${q ? 'Versuch einen anderen Suchbegriff.' : 'Ansprechpartner aus E-Mail-Signaturen landen automatisch hier. Oder leg einen mit dem Plus an.'}</div>`}
   </main>`;
 }
 
-// --- Infos
-function viewInfos() {
-  const q = S.infoQuery.trim().toLowerCase();
-  const list = S.infos.filter((x) => !q || `${x.title} ${x.text} ${x.from}`.toLowerCase().includes(q));
-  const items = list.map((x) => {
-    const open = S.openInfo === x.id;
-    return `<article class="info ${open ? 'open' : ''}">
-      <button class="info-toggle" data-action="info-open" data-id="${esc(x.id)}" aria-expanded="${open}">
-        <div class="info-head"><span class="info-title">${esc(x.title || 'Ohne Betreff')}</span><span class="info-date">${esc(x.date ? fmtDate(x.date, { day: 'numeric', month: 'short', year: '2-digit' }) : new Date(x.createdAt).toLocaleDateString('de-DE', { day: 'numeric', month: 'short' }))}</span></div>
-        ${x.from ? `<div class="info-from">${esc(x.from)}</div>` : ''}
-        <div class="info-text">${esc(x.text)}</div>
-      </button>
-      ${open ? `<div class="btn-row" style="margin-top:12px">
-        <button class="btn secondary small" data-action="info-reparse" data-id="${esc(x.id)}">Aufgaben darin suchen</button>
-        <button class="btn danger small" data-action="info-delete" data-id="${esc(x.id)}">Löschen</button></div>` : ''}
-    </article>`;
-  }).join('');
-  return `<main class="view">
-    <h1 class="title">Infos</h1>
-    <p class="subtitle">Abgelegte E-Mails und Notizen – für alle im Projekt sichtbar.</p>
-    <div class="btn-row" style="margin-bottom:12px">
-      <input class="input" type="search" data-input="info-q" value="${esc(S.infoQuery)}" placeholder="Suchen" style="flex:1;min-width:0" aria-label="Infos durchsuchen">
-      <button class="btn small" data-action="new-info">Notiz</button>
-    </div>
-    ${items || `<div class="empty"><strong>${q ? 'Nichts gefunden' : 'Noch keine Infos'}</strong>${q ? 'Versuch einen anderen Suchbegriff.' : 'Eingelesene E-Mails und eigene Notizen erscheinen hier, zum Beispiel Zugangsdaten zum Bauamt-Portal oder Telefonnummern.'}</div>`}
-  </main>`;
-}
-
-// --- Mehr
+// ================================================================== Mehr
 function pushState() {
   if (store.mode !== 'cloud') return { on: false, text: 'Braucht die Cloud-Einrichtung' };
   if (typeof Notification === 'undefined') return { on: false, text: isIOS && !standalone ? 'Erst zum Home-Bildschirm hinzufügen' : 'Auf diesem Gerät nicht verfügbar' };
@@ -377,41 +602,52 @@ function pushState() {
 function viewMore() {
   const cloud = store.mode === 'cloud';
   const ps = pushState();
+  const open = new Map(); for (const t of S.tasks) if (!t.done) open.set(areaOf(t).id, (open.get(areaOf(t).id) || 0) + 1);
   const mem = members().map((u) => `<div class="setting"><span class="who">${esc(initial(u))}</span><span class="grow">${esc(nameOf(u))}${u === S.me?.uid ? ' <span class="muted">(du)</span>' : ''}</span></div>`).join('');
+  const modelName = S.ai ? (MODELS.find((m) => m[0] === S.ai.model) || [0, S.ai.model])[1].split(' – ')[0] : '';
   return `<main class="view">
-    <h1 class="title">Mehr</h1>
-    ${cloud ? '' : `<div class="banner"><p><strong>Lokaler Modus.</strong> Alles bleibt auf diesem Gerät. Für Teilen mit deiner Frau und Push-Nachrichten trägst du deine Firebase-Daten in <em>config.js</em> ein – die Anleitung führt dich durch.</p></div>`}
+    <header class="page-head"><h1>Mehr</h1></header>
+    ${cloud ? '' : `<div class="note-card"><p><strong>Lokaler Modus.</strong> Alles bleibt auf diesem Gerät. Für Teilen, Push-Nachrichten und den E-Mail-Eingang richte die Cloud ein (Anleitung, Stufe 2).</p></div>`}
 
-    <h2 class="section-title">Bauprojekt</h2>
+    <h2 class="section-title">Lebensbereiche</h2>
     <div class="settings">
-      <button class="setting" data-action="rename"><span class="grow">Name<small>${esc(S.project?.name || 'Unser Haus')}</small></span><span class="end">Ändern</span></button>
+      ${areas().map((a) => `<button class="setting" data-action="area-edit" data-id="${esc(a.id)}"><span class="area-dot" style="--area:${esc(a.color)}">${esc(a.emoji)}</span><span class="grow">${esc(a.name)}<small>${open.get(a.id) || 0} offen${a.phases?.length ? ` · ${a.phases.length} Abschnitte` : ''}</small></span>${I.chevron}</button>`).join('')}
+      <button class="setting" data-action="area-new"><span class="area-dot add">+</span><span class="grow">Bereich hinzufügen</span></button>
+    </div>
+
+    <h2 class="section-title">Gemeinsam planen</h2>
+    <div class="settings">
       ${cloud ? mem : ''}
-      <button class="setting" data-action="invite"><span class="grow">Partner einladen<small>Code erzeugen und per Nachricht schicken</small></span></button>
-      ${cloud ? `<button class="setting" data-action="join"><span class="grow">Mit Code beitreten<small>Einem anderen Bauprojekt beitreten</small></span></button>` : ''}
+      <button class="setting" data-action="invite"><span class="grow">Partnerin oder Partner einladen<small>Code erzeugen und per Nachricht schicken</small></span>${I.chevron}</button>
+      ${cloud ? `<button class="setting" data-action="join"><span class="grow">Mit Code beitreten</span>${I.chevron}</button>` : ''}
     </div>
 
     <h2 class="section-title">Erinnerungen</h2>
     <div class="settings">
       <button class="setting" data-action="push" ${ps.on ? 'disabled' : ''}><span class="status-dot ${ps.on ? 'on' : ''}"></span><span class="grow">Push-Nachrichten<small>${esc(ps.text)}</small></span>${ps.on ? '' : '<span class="end">Aktivieren</span>'}</button>
     </div>
-    <p class="hint">Erinnert wird zur eingestellten Zeit jeder Aufgabe. Jeden Morgen ab 7 Uhr kommt zusätzlich eine Übersicht, wenn etwas fällig ist. Jedes Gerät muss einmal selbst aktiviert werden.</p>
+    <p class="hint">Zur eingestellten Zeit jeder Aufgabe, morgens ab 7 Uhr eine kurze Übersicht und ein Hinweis, wenn etwas jetzt starten sollte. Jedes Gerät einmal selbst aktivieren.</p>
 
     <h2 class="section-title">KI-Assistent</h2>
     <div class="settings">
-      <button class="setting" data-action="ai-settings"><span class="status-dot ${S.ai ? 'on' : ''}"></span><span class="grow">Claude von Anthropic<small>${S.ai ? `Aktiv · ${esc((MODELS.find((m) => m[0] === S.ai.model) || [0, S.ai.model])[1].split(' – ')[0])}` : 'Nicht eingerichtet'}</small></span><span class="end">${S.ai ? 'Ändern' : 'Einrichten'}</span></button>
-      ${S.ai ? `<button class="setting" data-action="assess-all" ${S.aiBusy ? 'disabled' : ''}><span class="grow">${S.aiBusy ? 'Fristen werden geprüft …' : 'Alle Fristen jetzt prüfen'}<small>Die KI schätzt ein, was bis wann zu schaffen ist</small></span></button>` : ''}
+      <button class="setting" data-action="ai-settings"><span class="status-dot ${S.ai ? 'on' : ''}"></span><span class="grow">Claude von Anthropic<small>${S.ai ? `Aktiv · ${esc(modelName)}` : 'Nicht eingerichtet'}</small></span><span class="end">${S.ai ? 'Ändern' : 'Einrichten'}</span></button>
+      ${S.ai ? `<button class="setting" data-action="assess-all" ${S.aiBusy ? 'disabled' : ''}><span class="grow">${S.aiBusy ? 'Fristen werden geprüft …' : 'Alle Fristen jetzt prüfen'}<small>Was ist bis wann realistisch zu schaffen?</small></span></button>` : ''}
     </div>
-    <p class="hint">${S.ai ? (store.mode === 'cloud' ? 'Jeden Morgen prüft die KI alle offenen Fristen. Was jetzt angegangen werden muss, kommt als Push-Nachricht.' : 'Im lokalen Modus prüft die KI die Fristen nur, wenn du es hier antippst. Mit Cloud passiert das jeden Morgen automatisch.') : 'Liest E-Mails, erkennt Aufgaben, Fristen und Ansprechpartner, schreibt Mail-Entwürfe und warnt, wenn eine Frist knapp wird.'}</p>
 
-    <h2 class="section-title">Aufgaben</h2>
+    <h2 class="section-title">E-Mail-Eingang</h2>
     <div class="settings">
-      <button class="setting" data-action="template"><span class="grow">Typische Bauherren-Aufgaben<small>Checkliste vom Bauantrag bis zur Abnahme hinzufügen</small></span></button>
+      <button class="setting" data-action="inbox-settings"><span class="status-dot ${S.project?.inboxAddress ? 'on' : ''}"></span><span class="grow">${S.project?.inboxAddress ? esc(S.project.inboxAddress) : 'Nicht eingerichtet'}<small>${S.project?.inboxAddress ? 'Erlaubte Absender verwalten' : 'Anleitung, Stufe 5'}</small></span>${I.chevron}</button>
+    </div>
+
+    <h2 class="section-title">Vorlagen</h2>
+    <div class="settings">
+      <button class="setting" data-action="template"><span class="grow">Checkliste Hausbau<small>Vom Bauantrag bis zur Abnahme</small></span>${I.chevron}</button>
     </div>
 
     <h2 class="section-title">Daten</h2>
     <div class="settings">
-      <button class="setting" data-action="export"><span class="grow">Sicherung speichern<small>Alle Aufgaben, Kontakte und Infos als Datei</small></span></button>
-      <label class="setting" style="cursor:pointer;position:relative"><span class="grow">Sicherung einspielen<small>Aufgaben und Infos aus einer Datei hinzufügen</small></span><input type="file" accept="application/json,.json" data-action="import-file" style="position:absolute;inset:0;opacity:0"></label>
+      <button class="setting" data-action="export"><span class="grow">Sicherung speichern<small>Aufgaben, Bereiche, Kontakte und Ablage als Datei</small></span></button>
+      <label class="setting" style="cursor:pointer;position:relative"><span class="grow">Sicherung einspielen</span><input type="file" accept="application/json,.json" data-action="import-file" style="position:absolute;inset:0;opacity:0"></label>
     </div>
 
     ${cloud ? `<h2 class="section-title">Konto</h2>
@@ -419,15 +655,15 @@ function viewMore() {
       <div class="setting"><span class="grow">${esc(S.me?.name)}<small>${esc(S.me?.email)}</small></span></div>
       <button class="setting danger" data-action="logout">Abmelden</button>
     </div>` : ''}
-    <p class="hint" style="margin-top:28px">Hausplaner · Daten ${cloud ? 'in deinem eigenen Firebase-Projekt' : 'nur auf diesem Gerät'}</p>
+    <p class="hint center" style="margin-top:28px">Mindora · Planung darf leicht sein.</p>
   </main>`;
 }
 
-// --- Anmeldung & Projekt anlegen
+// ================================================================== Anmeldung
 function viewAuth() {
   const reg = S.authTab === 'register';
   return `<main class="auth">
-    <section class="bauschild"><p class="bauschild-label">Bauvorhaben</p><p class="bauschild-task">Hausplaner</p><p class="bauschild-when">Aufgaben, Termine und E-Mails rund um euren Hausbau.</p></section>
+    <div class="auth-hero">${heroRing(0.72, '✓', 'Mindora')}<h1>Mindora</h1><p>Dein persönlicher Assistent. Aufgaben, Fristen und E-Mails – leicht geplant.</p></div>
     <div class="seg" role="group" aria-label="Anmelden oder registrieren">
       <button data-action="auth-tab" data-tab="login" aria-pressed="${!reg}">Anmelden</button>
       <button data-action="auth-tab" data-tab="register" aria-pressed="${reg}">Konto erstellen</button>
@@ -439,28 +675,27 @@ function viewAuth() {
       ${S.authError ? `<p class="error">${esc(S.authError)}</p>` : ''}
       <button class="btn block" type="submit">${reg ? 'Konto erstellen' : 'Anmelden'}</button>
     </form>
-    ${reg ? '' : '<button class="link" data-action="reset-pw">Passwort vergessen?</button>'}
+    ${reg ? '' : '<button class="link center" data-action="reset-pw">Passwort vergessen?</button>'}
   </main>`;
 }
 function viewSetup() {
   return `<main class="auth">
-    <h1 class="title">Hallo ${esc(S.me?.name || '')}</h1>
-    <p class="subtitle">Lege euer Bauprojekt an. Wenn deine Partnerin oder dein Partner es schon angelegt hat, tritt mit dem Code bei.</p>
+    <header class="page-head"><h1>Hallo ${esc(S.me?.name || '')}</h1><p>Leg euren gemeinsamen Bereich an. Wenn deine Partnerin oder dein Partner schon einen hat, tritt mit dem Code bei.</p></header>
     <form data-form="create" style="margin-top:20px">
-      <label class="field"><span>Name des Projekts</span><input name="name" value="Unser Allkauf-Haus" required></label>
-      <button class="btn block" type="submit">Bauprojekt anlegen</button>
+      <label class="field"><span>Name</span><input name="name" value="Unser Zuhause" required></label>
+      <button class="btn block" type="submit">Loslegen</button>
     </form>
     <h2 class="section-title" style="margin-top:36px">Ich habe einen Code</h2>
     <form data-form="join-setup">
-      <label class="field"><span>Einladungscode</span><input name="code" autocapitalize="characters" autocomplete="off" placeholder="z. B. K7MQ2P" required></label>
+      <label class="field"><span>Einladungscode</span><input name="code" autocapitalize="characters" autocomplete="off" placeholder="z. B. K7M-Q2P" required></label>
       ${S.authError ? `<p class="error">${esc(S.authError)}</p>` : ''}
       <button class="btn secondary block" type="submit">Beitreten</button>
     </form>
-    <button class="link" data-action="logout" style="margin-top:24px">Abmelden</button>
+    <button class="link center" data-action="logout" style="margin-top:24px">Abmelden</button>
   </main>`;
 }
 
-// ------------------------------------------------------------------ Bottom-Sheets
+// ================================================================== Sheets
 function openSheet(html, onMount) {
   sheetRoot.innerHTML = `<div class="backdrop" data-close></div><div class="sheet" role="dialog" aria-modal="true"><div class="sheet-grab"></div>${html}</div>`;
   const sheet = sheetRoot.querySelector('.sheet');
@@ -475,10 +710,16 @@ document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && sheetRoo
 function contactOptions(selected) {
   return `<option value="">– keiner –</option>${S.contacts.map((c) => `<option value="${esc(c.id)}" ${c.id === selected ? 'selected' : ''}>${esc(c.name)}${c.company ? ` (${esc(c.company)})` : ''}</option>`).join('')}`;
 }
+function phaseOptions(areaId, selected) {
+  const a = areaById(areaId);
+  const ph = a?.phases || [];
+  if (!ph.length) return '';
+  return `<option value="">– ohne –</option>${ph.map((p) => `<option ${p === selected ? 'selected' : ''}>${esc(p)}</option>`).join('')}`;
+}
 function urgencyBox(t) {
   const u = urgencyOf(t);
   if (!u) return '';
-  const sb = u.startBy ? `Anfangen spätestens: ${fmtDate(u.startBy, { weekday: 'short', day: 'numeric', month: 'short' })}` : '';
+  const sb = u.startBy ? `Starten spätestens: ${fmtDate(u.startBy)}` : '';
   return `<div class="ai-box u-${u.status}" data-urg>
     <div class="ai-box-head">${u.ai ? I.spark : ''}<strong>${esc(STATUS[u.status].label)}</strong>${u.ai ? '<span class="muted">KI-Einschätzung</span>' : ''}</div>
     ${u.reason ? `<p>${esc(u.reason)}</p>` : ''}
@@ -488,21 +729,28 @@ function urgencyBox(t) {
   </div>`;
 }
 
-function taskSheet(task) {
-  const t = task || { title: '', due: '', time: '', reminder: 'day1', phase: S.phase !== 'all' ? S.phase : 'Allgemein', assignee: 'all', notes: '', leadDays: null, contactId: null };
+function taskSheet(task, preset = {}) {
+  const defArea = preset.areaId || (S.view === 'plan' && S.planArea && S.planArea !== 'all' ? S.planArea : S.area !== 'all' ? S.area : (areaById('alltag') ? 'alltag' : areas()[0].id));
+  const t = task || { title: '', due: '', time: '', reminder: 'day1', areaId: defArea, phase: null, assignee: 'all', notes: '', leadDays: null, contactId: null, ...preset };
+  const tArea = task ? areaOf(task).id : t.areaId;
   const memOpts = members().length > 1 ? `<label class="field"><span>Zuständig</span><select name="assignee">
       <option value="all" ${!t.assignee || t.assignee === 'all' ? 'selected' : ''}>Beide</option>
       ${members().map((u) => `<option value="${esc(u)}" ${t.assignee === u ? 'selected' : ''}>${esc(nameOf(u))}</option>`).join('')}</select></label>` : '';
   const c = t.contactId ? contactById(t.contactId) : null;
   const sheet = openSheet(`
-    <div class="sheet-head"><h2>${task ? 'Aufgabe' : 'Neue Aufgabe'}</h2><button class="btn ghost" data-dismiss>Abbrechen</button></div>
+    <div class="sheet-head"><h2>${task ? 'Aufgabe' : 'Neue Aufgabe'}</h2><button class="btn ghost" data-dismiss>${task ? 'Schließen' : 'Abbrechen'}</button></div>
+    ${task?.isNew && !task.done ? `<div class="note-card soft"><p>📬 Neu aus der E-Mail${task.mailSubject ? ` „${esc(task.mailSubject)}“` : ''}. Speichern bestätigt sie.</p></div>` : ''}
     ${task && !task.done ? urgencyBox(task) : ''}
     ${task ? `<div class="btn-row" style="margin-bottom:14px">
       <button type="button" class="btn secondary small" data-act="mail">${I.envelope} ${c?.email ? `E-Mail an ${esc(c.name.split(' ').slice(-1)[0])}` : 'E-Mail schreiben'}</button>
       ${c && (c.mobile || c.phone) ? `<a class="btn secondary small" href="${esc(telHref(c.mobile || c.phone))}">${I.phone} Anrufen</a>` : ''}
     </div>` : ''}
-    <form data-sheet-form>
+    <form>
       <label class="field"><span>Was ist zu tun?</span><textarea name="title" rows="2" required style="min-height:64px">${esc(t.title)}</textarea></label>
+      <div class="two">
+        <label class="field"><span>Bereich</span>${areaSelect('name="areaId"', tArea)}</label>
+        <label class="field" data-phase-wrap ${phaseOptions(tArea) ? '' : 'hidden'}><span>Abschnitt</span><select name="phase">${phaseOptions(tArea, phaseOf(t))}</select></label>
+      </div>
       <div class="two">
         <label class="field"><span>Fällig am</span><input type="date" name="due" value="${esc(t.due || '')}"></label>
         <label class="field"><span>Uhrzeit</span><input type="time" name="time" value="${esc(t.time || '')}"></label>
@@ -515,24 +763,30 @@ function taskSheet(task) {
       <label class="field"><span>Erinnerung</span><select name="reminder">${REMINDERS.map(([v, l]) => `<option value="${v}" ${(t.reminder || 'none') === v ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
       <label class="field" data-custom ${t.reminder === 'custom' ? '' : 'hidden'}><span>Erinnern am</span><input type="datetime-local" name="remindCustom" value="${esc(t.remindCustom || '')}"></label>
       <p class="hint" data-remind-hint style="margin-top:-6px"></p>
-      <div class="two">
-        <label class="field"><span>Bereich</span><select name="phase">${PHASES.map((p) => `<option ${p === (t.phase || 'Allgemein') ? 'selected' : ''}>${esc(p)}</option>`).join('')}</select></label>
-        ${memOpts || '<span></span>'}
-      </div>
+      ${memOpts}
       <label class="field"><span>Notizen</span><textarea name="notes" rows="4">${esc(t.notes || '')}</textarea></label>
       <button class="btn block" type="submit">Speichern</button>
       ${task ? `<div class="btn-row" style="justify-content:space-between;margin-top:10px">
-        <button type="button" class="btn ghost" data-act="done">${task.done ? 'Wieder öffnen' : 'Als erledigt markieren'}</button>
-        <button type="button" class="btn danger" data-act="delete">Löschen</button></div>
+        <button type="button" class="btn ghost" data-act="done">${task.done ? 'Wieder öffnen' : 'Erledigt'}</button>
+        <button type="button" class="btn ghost danger-text" data-act="delete">Löschen</button></div>
         ${task.createdBy && members().length > 1 ? `<p class="hint">Angelegt von ${esc(nameOf(task.createdBy))}${task.done && task.doneBy ? `, erledigt von ${esc(nameOf(task.doneBy))}` : ''}</p>` : ''}` : ''}
     </form>`);
   const form = sheet.querySelector('form');
   const formData = () => {
     const f = Object.fromEntries(new FormData(form));
-    return { title: f.title.trim(), due: f.due || null, time: f.time || null, reminder: f.reminder, remindCustom: f.remindCustom || null, phase: f.phase, notes: f.notes.trim(), assignee: f.assignee || 'all', leadDays: f.leadDays === '' ? null : Math.max(0, Math.min(120, parseInt(f.leadDays, 10) || 0)), contactId: f.contactId || null };
+    return {
+      title: f.title.trim(), due: f.due || null, time: f.time || null, reminder: f.reminder, remindCustom: f.remindCustom || null,
+      areaId: f.areaId, phase: f.phase || null, notes: f.notes.trim(), assignee: f.assignee || 'all',
+      leadDays: f.leadDays === '' ? null : Math.max(0, Math.min(120, parseInt(f.leadDays, 10) || 0)), contactId: f.contactId || null,
+    };
   };
-  const upd = () => {
+  const upd = (e) => {
     const f = formData();
+    if (e?.target?.name === 'areaId') {
+      const opts = phaseOptions(f.areaId);
+      sheet.querySelector('[data-phase-wrap]').hidden = !opts;
+      form.phase.innerHTML = opts || '<option value=""></option>';
+    }
     sheet.querySelector('[data-custom]').hidden = f.reminder !== 'custom';
     const at = computeRemindAt(f);
     const hint = sheet.querySelector('[data-remind-hint]');
@@ -541,17 +795,18 @@ function taskSheet(task) {
     else if (at) hint.textContent = `Erinnerung: ${new Date(at).toLocaleString('de-DE', { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })} Uhr${at < Date.now() ? ' – liegt in der Vergangenheit' : ''}`;
     else hint.textContent = '';
     const lh = sheet.querySelector('[data-lead-hint]');
-    if (f.due && f.leadDays != null) { const d = parseISO(f.due); d.setDate(d.getDate() - f.leadDays); lh.textContent = `Anfangen spätestens am ${d.toLocaleDateString('de-DE', { weekday: 'short', day: 'numeric', month: 'short' }).replace(/\.$/, '')}. Ab dann kommt eine Push-Nachricht „Jetzt angehen“.`; }
-    else lh.textContent = f.due ? 'Vorlauf = wie viele Tage vor der Frist du anfangen musst (z. B. weil die Bank Zeit braucht).' : '';
+    if (f.due && f.leadDays != null) lh.textContent = `Starten spätestens am ${fmtDate(addDays(f.due, -f.leadDays))}. Ab dann erinnert Mindora dich.`;
+    else lh.textContent = f.due ? 'Vorlauf = wie viele Tage vorher du anfangen solltest, z. B. weil andere Zeit brauchen.' : '';
   };
-  form.addEventListener('input', upd); upd();
+  form.addEventListener('input', upd); form.addEventListener('change', upd); upd();
   if (!task) setTimeout(() => form.title.focus(), 280);
   form.onsubmit = async (e) => {
     e.preventDefault();
     const data = formData();
     if (!data.title) return;
     try {
-      if (task) await store.updateTask(task.id, data, task);
+      if (data.areaId && !S.areas.find((a) => a.id === data.areaId)) await ensureAreasStored();
+      if (task) await store.updateTask(task.id, { ...data, isNew: false }, task);
       else await store.addTask({ ...data, source: 'manual' });
       closeSheet();
       toast(task ? 'Gespeichert' : 'Aufgabe angelegt');
@@ -562,15 +817,14 @@ function taskSheet(task) {
     composeSheet({ task: cur, contact: cur.contactId ? contactById(cur.contactId) : null });
   });
   sheet.querySelector('[data-act="assess"]')?.addEventListener('click', async (e) => {
-    e.target.disabled = true; e.target.textContent = 'KI schätzt ein …';
+    e.target.disabled = true; e.target.textContent = 'Mindora schätzt ein …';
     try {
       await assessList([S.tasks.find((x) => x.id === task.id) || task]);
       const fresh = S.tasks.find((x) => x.id === task.id);
       sheet.querySelector('[data-urg]').outerHTML = urgencyBox(fresh);
-      sheet.querySelector('[data-act="assess"]')?.addEventListener('click', () => taskSheet(fresh));
     } catch (err) { toast(fail(err)); e.target.disabled = false; e.target.textContent = 'Mit KI neu einschätzen'; }
   });
-  sheet.querySelector('[data-act="done"]')?.addEventListener('click', () => { closeSheet(); toggleTask(task.id); });
+  sheet.querySelector('[data-act="done"]')?.addEventListener('click', (e) => { const r = e.target.getBoundingClientRect(); closeSheet(); toggleTask(task.id, r.left + 20, r.top + 10); });
   sheet.querySelector('[data-act="delete"]')?.addEventListener('click', async () => {
     if (!confirm('Aufgabe wirklich löschen?')) return;
     closeSheet();
@@ -578,12 +832,25 @@ function taskSheet(task) {
   });
 }
 
-// --- Kontakt ansehen / bearbeiten
+const CHEERS = ['Erledigt 🎉', 'Geschafft ✨', 'Ein Punkt weniger 🙌', 'Stark gemacht 💪', 'Weiter so 🌿', 'Abgehakt ☀️'];
+async function toggleTask(id, x, y) {
+  const t = S.tasks.find((k) => k.id === id); if (!t) return;
+  const patch = t.done ? { done: false, doneAt: null, doneBy: null } : { done: true, doneAt: Date.now(), doneBy: S.me?.uid || null, isNew: false };
+  if (!t.done && x != null) celebrate(x, y);
+  try {
+    await store.updateTask(id, patch, t);
+    if (!t.done) {
+      const openLeft = S.tasks.filter((k) => !k.done && k.due && k.due <= todayISO()).length;
+      toast(openLeft === 0 && t.due && t.due <= todayISO() ? 'Alles für heute geschafft ☀️' : pick(CHEERS), { label: 'Rückgängig', fn: () => store.updateTask(id, { done: false, doneAt: null, doneBy: null }, { ...t, ...patch }) });
+    }
+  } catch (e) { toast(fail(e)); }
+}
+
+// --- Kontakt
 function contactSheet(c) {
   const isNew = !c;
   c = c || { name: '', company: '', role: '', email: '', phone: '', mobile: '', address: '', notes: '' };
   const tasks = isNew ? [] : S.tasks.filter((t) => !t.done && t.contactId === c.id).sort(byDue);
-  const tel = c.mobile || c.phone;
   const f = (name, label, type = 'text', extra = '') => `<label class="field"><span>${label}</span><input name="${name}" type="${type}" value="${esc(c[name] || '')}" ${extra}></label>`;
   const sheet = openSheet(`
     <div class="sheet-head"><h2>${isNew ? 'Neuer Kontakt' : esc(c.name)}</h2><button class="btn ghost" data-dismiss>${isNew ? 'Abbrechen' : 'Schließen'}</button></div>
@@ -592,7 +859,7 @@ function contactSheet(c) {
       ${c.phone ? `<a class="btn secondary small" href="${esc(telHref(c.phone))}">${I.phone} ${esc(c.phone)}</a>` : ''}
       ${c.mobile ? `<a class="btn secondary small" href="${esc(telHref(c.mobile))}">${I.phone} Mobil</a>` : ''}
     </div>
-    ${tasks.length ? `<h3 class="sub-title">Offene Aufgaben</h3><div class="list" style="margin-bottom:18px">${tasks.map(row).join('')}</div>` : ''}`}
+    ${tasks.length ? `<h3 class="sub-title">Offene Aufgaben</h3><div class="list" style="margin-bottom:18px">${tasks.map((t) => row(t)).join('')}</div>` : ''}`}
     <form>
       ${f('name', 'Name', 'text', 'required autocomplete="off"')}
       <div class="two">${f('role', 'Rolle')}${f('company', 'Firma')}</div>
@@ -601,7 +868,7 @@ function contactSheet(c) {
       ${f('address', 'Adresse')}
       <label class="field"><span>Notizen</span><textarea name="notes" rows="3">${esc(c.notes || '')}</textarea></label>
       <button class="btn block" type="submit">Speichern</button>
-      ${isNew ? '' : '<button type="button" class="btn danger block" data-act="delete" style="margin-top:8px">Kontakt löschen</button>'}
+      ${isNew ? '' : '<button type="button" class="btn ghost block danger-text" data-act="delete" style="margin-top:8px">Kontakt löschen</button>'}
     </form>`);
   const form = sheet.querySelector('form');
   if (isNew) setTimeout(() => form.name.focus(), 280);
@@ -622,49 +889,47 @@ function contactSheet(c) {
     try { await store.deleteContact(c.id); closeSheet(); toast('Kontakt gelöscht'); } catch (err) { toast(fail(err)); }
   });
   sheet.querySelectorAll('.row-main[data-action="edit"]').forEach((b) => b.addEventListener('click', () => taskSheet(S.tasks.find((t) => t.id === b.dataset.id))));
-  sheet.querySelectorAll('.check[data-action="toggle"]').forEach((b) => b.addEventListener('click', () => { toggleTask(b.dataset.id); closeSheet(); }));
+  sheet.querySelectorAll('.check[data-action="toggle"]').forEach((b) => b.addEventListener('click', () => { closeSheet(); toggleTask(b.dataset.id); }));
 }
 
-// --- E-Mail schreiben (öffnet die Mail-App mit fertigem Text)
+// --- E-Mail schreiben
 function composeSheet({ task = null, contact = null } = {}) {
   const withMail = S.contacts.filter((x) => x.email);
-  const sender = S.me?.name && S.me.name !== 'Ich' ? S.me.name : '';
-  const greet = 'Guten Tag,';
-  const defBody = `${greet}\n\n\n\nMit freundlichen Grüßen\n${sender}`;
+  const sender = myName();
+  const defBody = `Guten Tag,\n\n\n\nMit freundlichen Grüßen\n${sender}`;
   const sheet = openSheet(`
     <div class="sheet-head"><h2>E-Mail</h2><button class="btn ghost" data-dismiss>Abbrechen</button></div>
     <form>
       ${withMail.length ? `<label class="field"><span>An</span><select name="pick">${withMail.map((x) => `<option value="${esc(x.email)}" ${contact?.id === x.id ? 'selected' : ''}>${esc(x.name)} – ${esc(x.email)}</option>`).join('')}<option value="" ${contact?.email ? '' : 'selected'}>Andere Adresse …</option></select></label>` : ''}
       <label class="field" data-other ${withMail.length && contact?.email ? 'hidden' : ''}><span>E-Mail-Adresse</span><input name="to" type="email" autocapitalize="off" value="${esc(!withMail.length || !contact?.email ? contact?.email || '' : '')}"></label>
       ${S.ai ? `<div class="ai-compose">
-        <input class="input" name="instruction" placeholder="${task ? 'Optional: Worum soll es gehen?' : 'Worum soll es gehen? z. B. Termin für Bemusterung anfragen'}">
+        <input class="input" name="instruction" placeholder="${task ? 'Optional: Worum soll es gehen?' : 'Worum soll es gehen? z. B. Termin anfragen'}">
         <button type="button" class="btn secondary small" data-act="ai">${I.spark} Mit KI formulieren</button>
       </div>` : ''}
       <label class="field"><span>Betreff</span><input name="subject" value="${esc(task ? task.title : '')}"></label>
       <label class="field"><span>Text</span><textarea name="body" rows="11">${esc(defBody)}</textarea></label>
       <button class="btn block" type="submit">${I.envelope} In Mail-App öffnen</button>
       <button type="button" class="btn ghost block" data-act="copy" style="margin-top:6px">Text kopieren</button>
-      <p class="hint">Die Mail öffnet sich fertig ausgefüllt in deiner Mail-App. Dort prüfst du sie und tippst auf Senden – so geht sie von deiner eigenen Adresse raus.</p>
+      <p class="hint">Die Mail öffnet sich fertig ausgefüllt in deiner Mail-App. Dort tippst du auf Senden – so geht sie von deiner eigenen Adresse raus.</p>
     </form>`);
   const form = sheet.querySelector('form');
-  const pick = form.pick;
+  const pickEl = form.pick;
   const other = sheet.querySelector('[data-other]');
-  pick?.addEventListener('change', () => { other.hidden = !!pick.value; });
-  const toAddr = () => (pick && pick.value) || form.to.value.trim();
+  pickEl?.addEventListener('change', () => { other.hidden = !!pickEl.value; });
+  const toAddr = () => (pickEl && pickEl.value) || form.to.value.trim();
   const recipient = () => S.contacts.find((x) => x.email && x.email === toAddr()) || contact;
   sheet.querySelector('[data-act="ai"]')?.addEventListener('click', async (e) => {
     const btn = e.currentTarget;
     if (!task && !form.instruction.value.trim()) { toast('Schreib kurz, worum es gehen soll.'); form.instruction.focus(); return; }
-    btn.disabled = true; btn.innerHTML = '<span class="spin"></span> KI schreibt …';
+    btn.disabled = true; btn.innerHTML = '<span class="spin"></span> Mindora schreibt …';
     try {
-      const d = await draftEmail(aiCfg(), { task, contact: recipient(), sender, project: S.project?.name, instruction: form.instruction.value.trim() });
+      const area = task ? areaOf(task) : null;
+      const d = await draftEmail(aiCfg(), { task, contact: recipient(), sender, project: area ? area.name : '', instruction: form.instruction.value.trim() });
       form.subject.value = d.subject; form.body.value = d.body;
     } catch (err) { toast(fail(err)); }
     btn.disabled = false; btn.innerHTML = `${I.spark} Neu formulieren`;
   });
-  sheet.querySelector('[data-act="copy"]').addEventListener('click', async () => {
-    try { await navigator.clipboard.writeText(`${form.subject.value}\n\n${form.body.value}`); toast('Text kopiert'); } catch { toast('Kopieren nicht möglich.'); }
-  });
+  sheet.querySelector('[data-act="copy"]').addEventListener('click', () => copyText(`${form.subject.value}\n\n${form.body.value}`, 'Text kopiert'));
   form.onsubmit = async (e) => {
     e.preventDefault();
     const to = toAddr();
@@ -684,14 +949,14 @@ function aiSheet() {
   const cur = S.ai || {};
   const sheet = openSheet(`
     <div class="sheet-head"><h2>KI-Assistent</h2><button class="btn ghost" data-dismiss>Abbrechen</button></div>
-    <p class="hint" style="margin-top:0">Der Hausplaner nutzt Claude von Anthropic. Dafür brauchst du einen eigenen API-Schlüssel aus der Anthropic Console (Anleitung, Stufe 4). Abgerechnet wird nach Verbrauch – eine E-Mail auszuwerten kostet meist 1–3 Cent.</p>
+    <p class="hint" style="margin-top:0">Mindora nutzt Claude von Anthropic. Dafür brauchst du einen eigenen API-Schlüssel aus der Anthropic Console (Anleitung, Stufe 4). Abgerechnet wird nach Verbrauch – eine E-Mail auszuwerten kostet meist 1–3 Cent.</p>
     <form>
       <label class="field"><span>API-Schlüssel</span><input name="apiKey" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="sk-ant-…" value="${esc(cur.apiKey || '')}" required></label>
       <label class="field"><span>Modell</span><select name="model">${MODELS.map(([v, l]) => `<option value="${v}" ${(cur.model || DEFAULT_MODEL) === v ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select></label>
-      <p class="hint">${store.mode === 'cloud' ? 'Der Schlüssel wird in eurem Bauprojekt gespeichert. So kann auch deine Partnerin die KI nutzen, und die tägliche Fristprüfung läuft damit. Nur Mitglieder des Projekts können ihn lesen.' : 'Der Schlüssel bleibt auf diesem Gerät.'}</p>
+      <p class="hint">${store.mode === 'cloud' ? 'Der Schlüssel wird in eurem gemeinsamen Bereich gespeichert. So kann auch deine Partnerin die KI nutzen, und E-Mail-Eingang und tägliche Fristprüfung laufen damit. Nur ihr beide könnt ihn lesen.' : 'Der Schlüssel bleibt auf diesem Gerät.'}</p>
       <p class="error" data-err hidden></p>
       <button class="btn block" type="submit">Prüfen und speichern</button>
-      ${S.ai ? '<button type="button" class="btn danger block" data-act="remove" style="margin-top:8px">KI-Assistent ausschalten</button>' : ''}
+      ${S.ai ? '<button type="button" class="btn ghost block danger-text" data-act="remove" style="margin-top:8px">KI-Assistent ausschalten</button>' : ''}
     </form>`);
   const form = sheet.querySelector('form');
   form.onsubmit = async (e) => {
@@ -702,7 +967,7 @@ function aiSheet() {
     try {
       await testConnection(cfg);
       await store.setAi(cfg);
-      closeSheet(); toast('KI-Assistent ist aktiv');
+      closeSheet(); toast('KI-Assistent ist bereit ✨');
     } catch (x) { err.textContent = fail(x); err.hidden = false; btn.disabled = false; btn.textContent = 'Prüfen und speichern'; }
   };
   sheet.querySelector('[data-act="remove"]')?.addEventListener('click', async () => {
@@ -711,36 +976,90 @@ function aiSheet() {
   });
 }
 
-// --- Fristen von der KI einschätzen lassen
-async function assessList(list) {
-  const todo = list.filter((t) => !t.done && t.due);
-  if (!todo.length) return 0;
-  let n = 0;
-  for (let i = 0; i < todo.length; i += 30) {
-    const res = await assessTasks(aiCfg(), todo.slice(i, i + 30));
-    for (const r of res) {
-      const t = S.tasks.find((x) => x.id === r.id); if (!t) continue;
-      await store.updateTask(t.id, { aiStatus: r.status, aiReason: r.reason, aiNext: r.next, aiStartBy: r.startBy, aiFor: aiKeyOf(t), aiAt: Date.now() }, t);
-      n++;
-    }
-  }
-  return n;
+// --- Lebensbereich
+function areaSheet(a) {
+  const isNew = !a;
+  a = a || { name: '', emoji: '✨', color: AREA_COLORS[areas().length % AREA_COLORS.length], phases: [] };
+  const used = isNew ? 0 : S.tasks.filter((t) => areaOf(t).id === a.id).length;
+  const sheet = openSheet(`
+    <div class="sheet-head"><h2>${isNew ? 'Neuer Bereich' : esc(a.name)}</h2><button class="btn ghost" data-dismiss>Abbrechen</button></div>
+    <form>
+      <div class="area-preview" data-preview style="--area:${esc(a.color)}"><span>${esc(a.emoji)}</span></div>
+      <label class="field"><span>Name</span><input name="name" value="${esc(a.name)}" required placeholder="z. B. Urlaub, Auto, Kinder"></label>
+      <div class="field"><span>Symbol</span><div class="emoji-pick">${AREA_EMOJIS.map((e) => `<button type="button" data-emoji="${e}" aria-pressed="${e === a.emoji}">${e}</button>`).join('')}</div>
+        <input name="emoji" value="${esc(a.emoji)}" maxlength="4" class="input emoji-input" aria-label="Eigenes Symbol"></div>
+      <div class="field"><span>Farbe</span><div class="color-pick">${AREA_COLORS.map((c) => `<button type="button" data-color="${c}" style="--c:${c}" aria-pressed="${c === a.color}" aria-label="Farbe ${c}"></button>`).join('')}</div></div>
+      <label class="field"><span>Abschnitte im Plan (optional, einer pro Zeile)</span><textarea name="phases" rows="4" placeholder="z. B. Planung&#10;Umsetzung&#10;Abschluss">${esc((a.phases || []).join('\n'))}</textarea></label>
+      <button class="btn block" type="submit">Speichern</button>
+      ${!isNew && areas().length > 1 ? `<button type="button" class="btn ghost block danger-text" data-act="delete" style="margin-top:8px">Bereich löschen</button>` : ''}
+    </form>`);
+  const form = sheet.querySelector('form');
+  let color = a.color;
+  const prev = sheet.querySelector('[data-preview]');
+  sheet.querySelectorAll('[data-emoji]').forEach((b) => b.addEventListener('click', () => {
+    form.emoji.value = b.dataset.emoji; prev.querySelector('span').textContent = b.dataset.emoji;
+    sheet.querySelectorAll('[data-emoji]').forEach((x) => x.setAttribute('aria-pressed', x === b));
+  }));
+  form.emoji.addEventListener('input', () => { prev.querySelector('span').textContent = form.emoji.value || '✨'; });
+  sheet.querySelectorAll('[data-color]').forEach((b) => b.addEventListener('click', () => {
+    color = b.dataset.color; prev.style.setProperty('--area', color);
+    sheet.querySelectorAll('[data-color]').forEach((x) => x.setAttribute('aria-pressed', x === b));
+  }));
+  form.onsubmit = async (e) => {
+    e.preventDefault();
+    const name = form.name.value.trim(); if (!name) return;
+    const data = { name, emoji: form.emoji.value.trim() || '✨', color, phases: form.phases.value.split('\n').map((s) => s.trim()).filter(Boolean), order: a.order ?? areas().length };
+    try {
+      await ensureAreasStored();
+      const id = isNew ? (name.toLowerCase().replace(/[^a-z0-9äöüß]+/g, '-').replace(/^-|-$/g, '').slice(0, 30) || 'bereich') + '-' + Date.now().toString(36).slice(-4) : a.id;
+      await store.setArea(id, data);
+      closeSheet(); toast(isNew ? `${data.emoji} ${name} angelegt` : 'Gespeichert');
+    } catch (err) { toast(fail(err)); }
+  };
+  sheet.querySelector('[data-act="delete"]')?.addEventListener('click', async () => {
+    const target = areas().find((x) => x.id !== a.id);
+    if (!confirm(`Bereich „${a.name}“ löschen?${used ? ` Die ${used} Aufgaben wandern nach „${target.name}“.` : ''}`)) return;
+    try {
+      await ensureAreasStored();
+      for (const t of S.tasks.filter((k) => areaOf(k).id === a.id)) await store.updateTask(t.id, { areaId: target.id, phase: null }, t);
+      await store.deleteArea(a.id);
+      if (S.area === a.id) S.area = 'all';
+      if (S.planArea === a.id) S.planArea = null;
+      closeSheet(); toast('Bereich gelöscht');
+    } catch (err) { toast(fail(err)); }
+  });
 }
 
-async function toggleTask(id) {
-  const t = S.tasks.find((x) => x.id === id); if (!t) return;
-  const patch = t.done ? { done: false, doneAt: null, doneBy: null } : { done: true, doneAt: Date.now(), doneBy: S.me?.uid || null };
-  try {
-    await store.updateTask(id, patch, t);
-    if (!t.done) toast('Erledigt', { label: 'Rückgängig', fn: () => store.updateTask(id, { done: false, doneAt: null, doneBy: null }, { ...t, ...patch }) });
-  } catch (e) { toast(fail(e)); }
+// --- E-Mail-Eingang
+function inboxSheet() {
+  const addr = S.project?.inboxAddress;
+  const allowed = (S.project?.inboxAllowed || []).join('\n');
+  const sheet = openSheet(`
+    <div class="sheet-head"><h2>E-Mail-Eingang</h2><button class="btn ghost" data-dismiss>Abbrechen</button></div>
+    ${addr ? `<div class="address-card" style="margin-bottom:16px"><p>Weiterleiten an</p><button class="address" type="button" data-act="copy">${esc(addr)} ${I.copy}</button></div>`
+      : `<div class="note-card"><p>Noch kein Postfach verbunden. Die Einrichtung (ca. 15 Minuten) steht in der Anleitung, Stufe 5.</p></div>`}
+    <form>
+      <label class="field"><span>Erlaubte Absender (einer pro Zeile)</span><textarea name="allowed" rows="5" placeholder="z. B. @allkauf.de&#10;kita@beispiel.de">${esc(allowed)}</textarea></label>
+      <p class="hint">Mails von euren eigenen Konto-Adressen${S.me?.email ? ` (z. B. ${esc(S.me.email)})` : ''} sind immer erlaubt – also alles, was ihr selbst weiterleitet. Ergänze hier Absender, die direkt an das Postfach schreiben oder automatisch weitergeleitet werden. Mit „@firma.de“ erlaubst du eine ganze Firma. Alles andere ignoriert Mindora – so entstehen keine Aufgaben aus Werbung.</p>
+      <button class="btn block" type="submit" ${store.mode !== 'cloud' ? 'disabled' : ''}>Speichern</button>
+    </form>`);
+  sheet.querySelector('[data-act="copy"]')?.addEventListener('click', () => copyText(addr, 'Adresse kopiert'));
+  sheet.querySelector('form').onsubmit = async (e) => {
+    e.preventDefault();
+    const list = e.target.allowed.value.split(/[\n,;]+/).map((s) => s.trim().toLowerCase()).filter((s) => /^[^\s@]*@[^\s@]+\.[^\s@]+$/.test(s));
+    try { await store.updateProject({ inboxAllowed: list }); closeSheet(); toast('Gespeichert'); } catch (err) { toast(fail(err)); }
+  };
+}
+async function copyText(text, msg) {
+  try { await navigator.clipboard.writeText(text); toast(msg); } catch { toast(text); }
 }
 
+// --- Notiz
 function infoSheet() {
   const sheet = openSheet(`
     <div class="sheet-head"><h2>Notiz</h2><button class="btn ghost" data-dismiss>Abbrechen</button></div>
     <form>
-      <label class="field"><span>Titel</span><input name="title" required placeholder="z. B. Ansprechpartner Allkauf"></label>
+      <label class="field"><span>Titel</span><input name="title" required placeholder="z. B. Zugangsdaten Bauamt-Portal"></label>
       <label class="field"><span>Inhalt</span><textarea name="text" rows="8"></textarea></label>
       <button class="btn block" type="submit">Ablegen</button>
     </form>`);
@@ -752,9 +1071,10 @@ function infoSheet() {
   };
 }
 
+// --- Vorlage Hausbau
 const TEMPLATE = [
-  ['Finanzierung', 'Finanzierungsbestätigung der Bank an Allkauf schicken'],
-  ['Finanzierung', 'Zahlungsplan mit Bank und Allkauf abgleichen'],
+  ['Finanzierung', 'Finanzierungsbestätigung der Bank an allkauf schicken'],
+  ['Finanzierung', 'Zahlungsplan mit Bank und allkauf abgleichen'],
   ['Finanzierung', 'Förderung (z. B. KfW) vor Baubeginn beantragen'],
   ['Finanzierung', 'Jede Abschlagsrechnung gegen den Baufortschritt prüfen'],
   ['Pläne & Behörden', 'Bodengutachten beauftragen'],
@@ -783,58 +1103,69 @@ const TEMPLATE = [
 function templateSheet() {
   const rows = TEMPLATE.map(([phase, title], i) => {
     const exists = S.tasks.some((t) => similarity(t.title, title) >= 0.75);
-    return `<label class="found ${exists ? 'off' : ''}" style="align-items:center"><input type="checkbox" name="t" value="${i}" ${exists ? '' : 'checked'}><div class="found-body"><div style="font-weight:600">${esc(title)}</div><div class="found-src">${esc(phase)}${exists ? ' · schon vorhanden' : ''}</div></div></label>`;
+    return `<label class="found ${exists ? 'off' : ''}" style="align-items:center"><input type="checkbox" name="t" value="${i}" ${exists ? '' : 'checked'}><div class="found-body"><div style="font-weight:700">${esc(title)}</div><div class="found-src">${esc(phase)}${exists ? ' · schon vorhanden' : ''}</div></div></label>`;
   }).join('');
   const sheet = openSheet(`
-    <div class="sheet-head"><h2>Checkliste</h2><button class="btn ghost" data-dismiss>Abbrechen</button></div>
-    <p class="hint">Allgemeine Schritte beim Bau eines Fertighauses. Was bei euch nicht passt, einfach abwählen – Termine trägst du später ein.</p>
+    <div class="sheet-head"><h2>Checkliste Hausbau</h2><button class="btn ghost" data-dismiss>Abbrechen</button></div>
+    <p class="hint">Typische Schritte beim Fertighausbau. Was nicht passt, einfach abwählen – Termine trägst du später ein.</p>
     <form>${rows}<button class="btn block" type="submit" style="margin-top:8px">Ausgewählte hinzufügen</button></form>`);
   sheet.querySelector('form').onsubmit = async (e) => {
     e.preventDefault();
     const picked = [...new FormData(e.target).getAll('t')].map((i) => TEMPLATE[+i]);
     if (!picked.length) return closeSheet();
-    try { await store.addTasks(picked.map(([phase, title]) => ({ title, phase, reminder: 'none', source: 'vorlage', notes: '' }))); closeSheet(); toast(`${picked.length} Aufgaben hinzugefügt`); S.view = 'tasks'; render(); } catch (err) { toast(fail(err)); }
+    try {
+      await ensureAreasStored();
+      if (!areaById('hausbau')) { const { id, ...rest } = DEFAULT_AREAS[0]; await store.setArea(id, rest); }
+      await store.addTasks(picked.map(([phase, title]) => ({ title, phase, areaId: 'hausbau', reminder: 'none', source: 'vorlage', notes: '' })));
+      closeSheet(); toast(`${picked.length} Aufgaben hinzugefügt`);
+    } catch (err) { toast(fail(err)); }
   };
 }
 
 async function inviteSheet() {
   if (store.mode !== 'cloud') {
-    openSheet(`<div class="sheet-head"><h2>Partner einladen</h2><button class="btn ghost" data-dismiss>Schließen</button></div>
-      <p>Zum gemeinsamen Arbeiten braucht der Hausplaner einen Ort im Internet, an dem eure Daten zusammenkommen. Das ist dein eigenes, kostenloses Firebase-Projekt.</p>
-      <p class="hint">Die Anleitung erklärt die Einrichtung Schritt für Schritt (ca. 30 Minuten am Computer). Deine bisherigen Aufgaben werden dabei übernommen.</p>`);
+    openSheet(`<div class="sheet-head"><h2>Gemeinsam planen</h2><button class="btn ghost" data-dismiss>Schließen</button></div>
+      <p>Damit ihr zu zweit plant, braucht Mindora einen Ort im Internet, an dem eure Daten zusammenkommen – dein eigenes, kostenloses Firebase-Projekt.</p>
+      <p class="hint">Die Anleitung erklärt die Einrichtung Schritt für Schritt (ca. 30 Minuten am Computer). Bisherige Aufgaben werden übernommen.</p>`);
     return;
   }
   try {
     const code = await store.createInvite();
     const pretty = code.slice(0, 3) + '-' + code.slice(3);
-    const text = `Tritt unserem Hausplaner bei!\n1. Öffne ${location.origin + location.pathname} in Safari\n2. Teilen → „Zum Home-Bildschirm“\n3. App öffnen, Konto erstellen, Code eingeben: ${pretty}\n(Der Code gilt 7 Tage.)`;
-    const sheet = openSheet(`<div class="sheet-head"><h2>Partner einladen</h2><button class="btn ghost" data-dismiss>Fertig</button></div>
+    const text = `Lass uns zusammen mit Mindora planen!\n1. Öffne ${location.origin + location.pathname} in Safari\n2. Teilen → „Zum Home-Bildschirm“\n3. App öffnen, Konto erstellen, Code eingeben: ${pretty}\n(Der Code gilt 7 Tage.)`;
+    const sheet = openSheet(`<div class="sheet-head"><h2>Einladen</h2><button class="btn ghost" data-dismiss>Fertig</button></div>
       <p class="hint">Schick diesen Code zusammen mit dem Link. Er gilt 7 Tage.</p>
       <div class="code">${esc(pretty)}</div>
       <button class="btn block" data-share>${I.share} Einladung senden</button>`);
     sheet.querySelector('[data-share]').onclick = async () => {
       try {
-        if (navigator.share) await navigator.share({ title: 'Hausplaner-Einladung', text });
-        else { await navigator.clipboard.writeText(text); toast('Einladung kopiert'); }
+        if (navigator.share) await navigator.share({ title: 'Mindora-Einladung', text });
+        else copyText(text, 'Einladung kopiert');
       } catch {}
     };
   } catch (e) { toast(fail(e)); }
 }
 
-// ------------------------------------------------------------------ Einlesen
+// ================================================================== Einlesen
+function ruleArea(text) {
+  const ph = guessPhase(text);
+  if (ph !== 'Allgemein' && areaById('hausbau')) return { areaId: 'hausbau', phase: HOUSE_PHASES.includes(ph) ? ph : null };
+  return { areaId: S.area !== 'all' ? S.area : (areaById('alltag') ? 'alltag' : areas()[0].id), phase: null };
+}
 function runParse(text) {
   S.pasteText = text;
   const res = parseEmails(text, { today: new Date(), existing: S.tasks.filter((t) => !t.done) });
+  res.tasks.forEach((t) => Object.assign(t, ruleArea(`${t.notes} ${t.subject || ''}`)));
   S.parsed = { ...res, raw: text };
   render();
-  if (res.tasks.length) setTimeout(() => app.querySelector('.section-title')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 60);
+  if (res.tasks.length) setTimeout(() => app.querySelector('.group-head')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 60);
 }
 async function runParseAI(text) {
   S.pasteText = text; S.aiBusy = true; S.parsed = null; render();
   try {
     const r = await extractFromText(aiCfg(), text, {
-      me: { name: S.me?.name !== 'Ich' ? S.me?.name : '', email: S.me?.email, partner: members().filter((u) => u !== S.me?.uid).map(nameOf).join(', ') },
-      contacts: S.contacts, openTasks: S.tasks.filter((t) => !t.done),
+      me: { name: myName(), email: S.me?.email, partner: members().filter((u) => u !== S.me?.uid).map(nameOf).join(', ') },
+      contacts: S.contacts, openTasks: S.tasks.filter((t) => !t.done), areas: areas(),
     });
     const open = S.tasks.filter((t) => !t.done);
     const contacts = r.contacts.map((c) => {
@@ -847,19 +1178,15 @@ async function runParseAI(text) {
       return { ...t, ai: true, doneInThread: t.done, existing: ex ? ex.title : null, selected: !t.done && !ex, notes: t.details, from: r.from, messageDate: r.date, subject: r.subject };
     });
     S.parsed = { ai: true, raw: text, summary: r.summary, tasks, contacts, messages: [{ subject: r.subject, from: r.from, date: r.date }] };
-  } catch (e) {
-    toast(fail(e));
-  }
+  } catch (e) { toast(fail(e)); }
   S.aiBusy = false;
   render();
-  if (S.parsed) setTimeout(() => app.querySelector('.ai-box, .section-title')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 60);
+  if (S.parsed) setTimeout(() => app.querySelector('.ai-note, .group-head')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 60);
 }
-
 async function commitImport() {
   const p = S.parsed; if (!p) return;
   const sel = p.tasks.filter((t) => t.selected && t.title.trim());
   const btn = app.querySelector('#commit-btn'); if (btn) btn.disabled = true;
-  // 1) Kontakte anlegen oder ergänzen
   const idByKey = new Map();
   const keyOf = (x) => [(x.email || '').toLowerCase(), norm(x.name)];
   try {
@@ -881,34 +1208,34 @@ async function commitImport() {
     return idByKey.get((t.contactEmail || '').toLowerCase()) || idByKey.get(norm(t.contactName)) || findContact({ email: t.contactEmail, name: t.contactName })?.id || null;
   };
   try {
+    if (sel.length) await ensureAreasStored();
     await store.addTasks(sel.map((t) => {
       const src = [t.from && `von ${t.from}`, t.messageDate && `vom ${fmtDate(t.messageDate, { day: 'numeric', month: 'numeric', year: 'numeric' })}`].filter(Boolean).join(' ');
       const notes = [t.notes, t.quote ? `„${t.quote}“` : '', t.leadReason ? `Vorlauf: ${t.leadReason}` : ''].filter(Boolean).join('\n\n');
       return {
-        title: t.title.trim(), due: t.due || null, time: t.time || null, phase: t.phase,
+        title: t.title.trim(), due: t.due || null, time: t.time || null, areaId: t.areaId, phase: t.phase || null,
         leadDays: t.leadDays ?? null, contactId: p.ai ? contactFor(t) : null, dueKind: t.dueKind || null,
         reminder: !t.due ? 'none' : dayDiff(t.due) <= 1 ? 'day0' : 'day1', notes: `${notes}${src ? `\n\nAus der E-Mail ${src}` : ''}${t.subject ? `\nBetreff: ${t.subject}` : ''}`, source: p.ai ? 'mail-ki' : 'mail',
       };
     }));
     if (S.saveInfo) await saveInfoFromText(p);
-    S.parsed = null; S.pasteText = ''; S.view = sel.length ? 'tasks' : 'contacts'; S.filter = 'open';
+    S.parsed = null; S.pasteText = ''; S.view = sel.length ? 'today' : 'contacts'; S.filter = 'open';
     render();
     const nc = (p.contacts || []).filter((c) => c.selected).length;
-    toast(commitLabel(sel.length, nc).replace(' übernehmen', ' übernommen'));
+    toast(commitLabel(sel.length, nc).replace(' übernehmen', ' übernommen ✨'));
   } catch (e) { toast(fail(e)); if (btn) btn.disabled = false; }
 }
 function saveInfoFromText(p) {
   const m = p.messages?.[0] || {};
   const firstLine = p.raw.trim().split('\n').find((l) => l.trim())?.slice(0, 80);
-  return store.addInfo({ title: m.subject || p.messages.find((x) => x.subject)?.subject || firstLine || 'E-Mail', from: m.from || p.messages.find((x) => x.from)?.from || null, date: m.date || null, text: p.raw.trim(), kind: 'mail' });
+  return store.addInfo({ title: m.subject || p.messages?.find((x) => x.subject)?.subject || firstLine || 'E-Mail', from: m.from || p.messages?.find((x) => x.from)?.from || null, date: m.date || null, text: p.raw.trim(), kind: 'mail' });
 }
-
 let tesseract;
 async function ocr(file) {
   toast('Screenshot wird gelesen … (beim ersten Mal ca. 15 MB Download)');
   try {
     if (!tesseract) {
-      await new Promise((ok, no) => { const s = document.createElement('script'); s.src = 'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js'; s.onload = ok; s.onerror = () => no(new Error('Texterkennung konnte nicht geladen werden. Besteht eine Internetverbindung?')); document.head.appendChild(s); });
+      await new Promise((ok, no) => { const s = document.createElement('script'); s.src = 'https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js'; s.onload = ok; s.onerror = () => no(new Error('Texterkennung konnte nicht geladen werden. Besteht eine Internetverbindung?')); document.head.appendChild(s); });
       tesseract = window.Tesseract;
     }
     const { data } = await tesseract.recognize(file, 'deu');
@@ -916,15 +1243,31 @@ async function ocr(file) {
     if (!text) { toast('Im Bild wurde kein Text erkannt.'); return; }
     S.pasteText = (S.pasteText ? S.pasteText + '\n\n' : '') + text;
     S.parsed = null; render();
-    toast('Text erkannt – prüfe ihn kurz und tippe auf „Aufgaben finden“.');
+    toast('Text erkannt – kurz prüfen und auswerten.');
   } catch (e) { toast(fail(e)); }
 }
 
-// ------------------------------------------------------------------ Daten sichern
+// --- KI-Einschätzung
+async function assessList(list) {
+  const todo = list.filter((t) => !t.done && t.due).map((t) => ({ ...t, areaName: areaOf(t).name }));
+  if (!todo.length) return 0;
+  let n = 0;
+  for (let i = 0; i < todo.length; i += 30) {
+    const res = await assessTasks(aiCfg(), todo.slice(i, i + 30));
+    for (const r of res) {
+      const t = S.tasks.find((x) => x.id === r.id); if (!t) continue;
+      await store.updateTask(t.id, { aiStatus: r.status, aiReason: r.reason, aiNext: r.next, aiStartBy: r.startBy, aiFor: aiKeyOf(t), aiAt: Date.now() }, t);
+      n++;
+    }
+  }
+  return n;
+}
+
+// ================================================================== Daten sichern
 async function exportData() {
-  const data = { app: 'hausplaner', version: 1, exportedAt: new Date().toISOString(), project: S.project?.name, tasks: S.tasks, infos: S.infos, contacts: S.contacts };
+  const data = { app: 'mindora', version: 2, exportedAt: new Date().toISOString(), project: S.project?.name, areas: S.areas, tasks: S.tasks, infos: S.infos, contacts: S.contacts };
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-  const name = `hausplaner-sicherung-${todayISO()}.json`;
+  const name = `mindora-sicherung-${todayISO()}.json`;
   const file = new File([blob], name, { type: 'application/json' });
   if (navigator.canShare?.({ files: [file] })) { try { await navigator.share({ files: [file], title: name }); return; } catch (e) { if (e.name === 'AbortError') return; } }
   const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name; a.click();
@@ -933,7 +1276,8 @@ async function exportData() {
 async function importData(file) {
   try {
     const data = JSON.parse(await file.text());
-    if (!Array.isArray(data.tasks)) throw new Error('Das ist keine Hausplaner-Sicherung.');
+    if (!Array.isArray(data.tasks)) throw new Error('Das ist keine Mindora-Sicherung.');
+    for (const { id, ...a } of data.areas || []) if (id && !S.areas.find((x) => x.id === id)) await store.setArea(id, a);
     const tasks = data.tasks.map(({ id, ...t }) => t).filter((t) => !S.tasks.some((x) => x.title === t.title && x.due === t.due));
     if (tasks.length) await store.addTasks(tasks);
     for (const { id, ...i } of data.infos || []) if (!S.infos.some((x) => x.text === i.text)) await store.addInfo(i);
@@ -942,24 +1286,27 @@ async function importData(file) {
   } catch (e) { toast(fail(e)); }
 }
 
-// ------------------------------------------------------------------ Ereignisse
+// ================================================================== Ereignisse
 app.addEventListener('click', async (e) => {
   const el = e.target.closest('[data-action]'); if (!el || el.tagName === 'INPUT') return;
   const a = el.dataset.action;
   switch (a) {
-    case 'tab': S.view = el.dataset.tab; render(); window.scrollTo(0, 0); break;
+    case 'tab': S.view = el.dataset.tab; if (S.view === 'plan') S.planScrolled = false; render(); window.scrollTo(0, 0); break;
     case 'filter': S.filter = el.dataset.filter; render(); break;
-    case 'phase': S.phase = el.dataset.phase; render(); break;
-    case 'mine': S.mine = !S.mine; render(); break;
-    case 'toggle': toggleTask(el.dataset.id); break;
+    case 'area': S.area = el.dataset.id; render(); break;
+    case 'plan-area': S.planArea = el.dataset.id; S.planScrolled = false; render(); break;
+    case 'plan-zoom': S.planZoom = el.dataset.zoom; S.planScrolled = false; render(); break;
+    case 'plan-today': S.planScrolled = false; render(); break;
+    case 'toggle': { const r = el.getBoundingClientRect(); toggleTask(el.dataset.id, r.left + r.width / 2, r.top + r.height / 2); break; }
     case 'edit': taskSheet(S.tasks.find((t) => t.id === el.dataset.id)); break;
     case 'new-task': taskSheet(null); break;
     case 'hide-banner': localStorage.setItem(el.dataset.key, '1'); render(); break;
-    case 'rename': {
-      const n = prompt('Name des Bauprojekts', S.project?.name || 'Unser Haus');
-      if (n && n.trim()) store.renameProject(n.trim()).catch((err) => toast(fail(err)));
-      break;
-    }
+    case 'goto-new': S.view = 'inbox'; S.inboxTab = 'new'; render(); window.scrollTo(0, 0); break;
+    case 'inbox-tab': S.inboxTab = el.dataset.tab; render(); break;
+    case 'accept-new': { const t = S.tasks.find((x) => x.id === el.dataset.id); if (t) store.updateTask(t.id, { isNew: false }, t).then(() => toast('Im Plan ✓')).catch((err) => toast(fail(err))); break; }
+    case 'discard-new': { const t = S.tasks.find((x) => x.id === el.dataset.id); if (t) store.deleteTask(t.id).then(() => toast('Verworfen', { label: 'Rückgängig', fn: () => { const { id, ...rest } = t; store.addTask(rest); } })).catch((err) => toast(fail(err))); break; }
+    case 'accept-all': for (const t of S.tasks.filter((x) => x.isNew && !x.done)) await store.updateTask(t.id, { isNew: false }, t).catch(() => {}); toast('Alles im Plan ✓'); break;
+    case 'copy-address': copyText(S.project?.inboxAddress || '', 'Adresse kopiert'); break;
     case 'clip':
       try {
         const t = await navigator.clipboard.readText();
@@ -970,43 +1317,44 @@ app.addEventListener('click', async (e) => {
     case 'clear-paste': S.pasteText = ''; S.parsed = null; render(); break;
     case 'parse': runParse(app.querySelector('#paste').value); break;
     case 'parse-ai': runParseAI(app.querySelector('#paste').value); break;
+    case 'commit-import': commitImport(); break;
+    case 'info-only':
+      try { await saveInfoFromText(S.parsed); S.parsed = null; S.pasteText = ''; S.inboxTab = 'archive'; render(); toast('Abgelegt'); } catch (err) { toast(fail(err)); }
+      break;
+    case 'info-open': S.openInfo = S.openInfo === el.dataset.id ? null : el.dataset.id; render(); break;
+    case 'info-reparse': { const x = S.infos.find((i) => i.id === el.dataset.id); S.inboxTab = 'paste'; S.saveInfo = false; if (S.ai) runParseAI(x.text); else runParse(x.text); break; }
+    case 'info-delete': if (confirm('Diesen Eintrag löschen?')) store.deleteInfo(el.dataset.id).catch((err) => toast(fail(err))); break;
+    case 'new-info': infoSheet(); break;
     case 'contact': contactSheet(contactById(el.dataset.id)); break;
     case 'new-contact': contactSheet(null); break;
     case 'compose-contact': composeSheet({ contact: contactById(el.dataset.id) }); break;
     case 'compose-task': { const t = S.tasks.find((x) => x.id === el.dataset.id); composeSheet({ task: t, contact: t?.contactId ? contactById(t.contactId) : null }); break; }
+    case 'area-edit': areaSheet(areaById(el.dataset.id)); break;
+    case 'area-new': areaSheet(null); break;
+    case 'inbox-settings': inboxSheet(); break;
     case 'ai-settings': aiSheet(); break;
     case 'assess-all': {
       S.aiBusy = true; render();
       try { const n = await assessList(S.tasks); toast(n ? `${n} Fristen eingeschätzt` : 'Keine offenen Aufgaben mit Frist'); } catch (err) { toast(fail(err)); }
       S.aiBusy = false; render(); break;
     }
-    case 'commit-import': commitImport(); break;
-    case 'info-only':
-      try { await saveInfoFromText(S.parsed); S.parsed = null; S.pasteText = ''; S.view = 'infos'; render(); toast('Unter Infos abgelegt'); } catch (err) { toast(fail(err)); }
-      break;
-    case 'info-open': S.openInfo = S.openInfo === el.dataset.id ? null : el.dataset.id; render(); break;
-    case 'info-reparse': { const x = S.infos.find((i) => i.id === el.dataset.id); S.view = 'import'; S.saveInfo = false; runParse(x.text); break; }
-    case 'info-delete':
-      if (confirm('Diese Info löschen?')) store.deleteInfo(el.dataset.id).catch((err) => toast(fail(err)));
-      break;
-    case 'new-info': infoSheet(); break;
     case 'invite': inviteSheet(); break;
     case 'join': {
       const c = prompt('Einladungscode eingeben');
-      if (c) store.joinProject(c).then(() => toast('Beigetreten')).catch((err) => toast(fail(err)));
+      if (c) store.joinProject(c).then(() => toast('Willkommen!')).catch((err) => toast(fail(err)));
       break;
     }
     case 'push': {
       if (store.mode !== 'cloud') { inviteSheet(); break; }
-      if (isIOS && !standalone) { toast('Öffne den Hausplaner zuerst über das Symbol auf dem Home-Bildschirm.'); break; }
+      if (isIOS && !standalone) { toast('Öffne Mindora zuerst über das Symbol auf dem Home-Bildschirm.'); break; }
       if (typeof Notification === 'undefined') { toast('Dieses Gerät unterstützt keine Push-Nachrichten (iPhone: ab iOS 16.4, vom Home-Bildschirm geöffnet).'); break; }
       // iOS zeigt die Abfrage nur, wenn sie direkt beim Antippen startet – also vor jedem „await“.
       const permP = Notification.permission === 'granted' ? Promise.resolve('granted') : Notification.requestPermission();
       toast('Push-Nachrichten werden aktiviert …');
       try {
         const r = await store.enablePush(permP);
-        const msg = { unsupported: 'Dieses Gerät unterstützt keine Push-Nachrichten im Browser (iPhone: ab iOS 16.4, vom Home-Bildschirm geöffnet).', denied: 'Nicht erlaubt. Ändern unter iPhone-Einstellungen → Mitteilungen → Hausplaner.', dismissed: 'Die Abfrage wurde geschlossen. Tippe noch einmal auf Aktivieren und wähle „Erlauben“.', novapid: 'In config.js fehlt der vapidKey (Schritt 2.6).', notoken: 'Push-Anmeldung fehlgeschlagen. Versuch es gleich noch einmal.' };
-        toast(r.ok ? 'Push-Nachrichten sind aktiv' : msg[r.reason]);
+        const msg = { unsupported: 'Dieses Gerät unterstützt keine Push-Nachrichten im Browser (iPhone: ab iOS 16.4, vom Home-Bildschirm geöffnet).', denied: 'Nicht erlaubt. Ändern unter iPhone-Einstellungen → Mitteilungen → Mindora.', dismissed: 'Die Abfrage wurde geschlossen. Tippe noch einmal auf Aktivieren und wähle „Erlauben“.', novapid: 'In config.js fehlt der vapidKey (Schritt 2.6).', notoken: 'Push-Anmeldung fehlgeschlagen. Versuch es gleich noch einmal.' };
+        toast(r.ok ? 'Push-Nachrichten sind aktiv 🔔' : msg[r.reason]);
       } catch (err) { toast(fail(err)); }
       render(); break;
     }
@@ -1022,34 +1370,36 @@ app.addEventListener('click', async (e) => {
   }
 });
 
+app.addEventListener('keydown', (e) => {
+  if ((e.key === 'Enter' || e.key === ' ') && e.target.matches('[role="button"][data-action]')) { e.preventDefault(); e.target.click(); }
+});
+function debounceSearch(key, stateKey) {
+  return (el) => {
+    S[stateKey] = el.value; clearTimeout(S.qT);
+    S.qT = setTimeout(() => { const pos = el.selectionStart; el.blur(); render(); const n = app.querySelector(`[data-input="${key}"]`); n?.focus(); n?.setSelectionRange(pos, pos); }, 250);
+  };
+}
+const searchInfo = debounceSearch('info-q', 'infoQuery');
+const searchContact = debounceSearch('contact-q', 'contactQuery');
 app.addEventListener('input', (e) => {
   const el = e.target; const k = el.dataset.input;
-  if (k === 'paste') {
-    S.pasteText = el.value;
-    const b = app.querySelector('#parse-btn'); if (b) b.disabled = !el.value.trim();
-  } else if (k === 'contact-q') {
-    S.contactQuery = el.value; clearTimeout(S.qT); S.qT = setTimeout(() => { const pos = el.selectionStart; el.blur(); render(); const n = app.querySelector('[data-input="contact-q"]'); n?.focus(); n?.setSelectionRange(pos, pos); }, 250);
-  } else if (k === 'info-q') {
-    S.infoQuery = el.value; clearTimeout(S.qT); S.qT = setTimeout(() => { const pos = el.selectionStart; el.blur(); render(); const n = app.querySelector('[data-input="info-q"]'); n?.focus(); n?.setSelectionRange(pos, pos); }, 250);
-  } else if (k?.startsWith('found-')) {
+  if (k === 'paste') { S.pasteText = el.value; const b = app.querySelector('#parse-btn'); if (b) b.disabled = !el.value.trim(); }
+  else if (k === 'info-q') searchInfo(el);
+  else if (k === 'contact-q') searchContact(el);
+  else if (k?.startsWith('found-')) {
     const t = S.parsed.tasks[+el.dataset.i];
     if (k === 'found-title') t.title = el.value;
     if (k === 'found-due') t.due = el.value || null;
-    if (k === 'found-phase') t.phase = el.value;
+    if (k === 'found-area') { t.areaId = el.value; t.phase = null; }
     if (k === 'found-lead') t.leadDays = el.value === '' ? null : Math.max(0, Math.min(120, parseInt(el.value, 10) || 0));
   }
 });
 app.addEventListener('change', (e) => {
   const el = e.target; const a = el.dataset.action;
-  if (a === 'pick') {
-    const t = S.parsed.tasks[+el.dataset.i]; t.selected = el.checked;
-    el.closest('.found').classList.toggle('off', !el.checked);
-    updateCommitBtn();
-  } else if (a === 'pick-contact') {
-    S.parsed.contacts[+el.dataset.i].selected = el.checked;
-    el.closest('.found').classList.toggle('off', !el.checked);
-    updateCommitBtn();
-  } else if (a === 'save-info') S.saveInfo = el.checked;
+  if (el.dataset.input === 'found-area') { const t = S.parsed.tasks[+el.dataset.i]; t.areaId = el.value; t.phase = null; }
+  if (a === 'pick') { S.parsed.tasks[+el.dataset.i].selected = el.checked; el.closest('.found').classList.toggle('off', !el.checked); updateCommitBtn(); }
+  else if (a === 'pick-contact') { S.parsed.contacts[+el.dataset.i].selected = el.checked; el.closest('.found').classList.toggle('off', !el.checked); updateCommitBtn(); }
+  else if (a === 'save-info') S.saveInfo = el.checked;
   else if (a === 'ocr' && el.files[0]) ocr(el.files[0]);
   else if (a === 'import-file' && el.files[0]) importData(el.files[0]);
 });
@@ -1071,8 +1421,8 @@ app.addEventListener('submit', async (e) => {
     } else if (kind === 'create') {
       let seed = null;
       try { const local = JSON.parse(localStorage.getItem('hausplaner-v1') || 'null'); if (local?.tasks?.length || local?.infos?.length || local?.contacts?.length) seed = local; } catch {}
-      if (seed && !confirm(`Auf diesem Gerät gibt es ${seed.tasks.length} Aufgaben aus dem lokalen Modus. Ins neue Projekt übernehmen?`)) seed = null;
-      await store.createProject(f.name.trim() || 'Unser Haus', seed);
+      if (seed && !confirm(`Auf diesem Gerät gibt es ${seed.tasks.length} Aufgaben aus dem lokalen Modus. Übernehmen?`)) seed = null;
+      await store.createProject(f.name.trim() || 'Unser Zuhause', seed);
       if (seed) localStorage.removeItem('hausplaner-v1');
     } else if (kind === 'join-setup') {
       await store.joinProject(f.code);
@@ -1080,7 +1430,7 @@ app.addEventListener('submit', async (e) => {
   } catch (err) { S.authError = fail(err); btn.disabled = false; render(); }
 });
 
-// ------------------------------------------------------------------ Start
+// ================================================================== Start
 store.init({
   onAuth(me) {
     const changed = S.me?.uid !== me?.uid;
@@ -1092,13 +1442,11 @@ store.init({
   onTasks(list) { S.tasks = list; render(); },
   onInfos(list) { S.infos = list; render(); },
   onContacts(list) { S.contacts = list; render(); },
+  onAreas(list) { S.areas = list; render(); },
   onAi(cfg) { S.ai = cfg; render(); },
   onError(e) { toast(fail(e)); },
   onPush(n) { toast(`${n.title || 'Erinnerung'}${n.body ? ': ' + n.body : ''}`); },
 }).catch((e) => { app.innerHTML = `<div class="boot">Start fehlgeschlagen: ${esc(fail(e))}<br><br>Prüfe die Internetverbindung und config.js.</div>`; });
 
-if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.register('sw.js').catch((e) => console.warn('Service Worker:', e));
-}
-// Ansicht um Mitternacht und beim Zurückkehren in die App aktualisieren (Heute/Morgen)
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch((e) => console.warn('Service Worker:', e));
 document.addEventListener('visibilitychange', () => { if (!document.hidden) render(); });

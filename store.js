@@ -48,15 +48,16 @@ class LocalStore {
   }
   emit() {
     const d = this.data;
-    this.h.onProject({ id: 'local', name: d.name || 'Unser Haus', members: ['local'], memberNames: { local: 'Ich' } });
+    this.h.onProject({ id: 'local', name: d.name || 'Mindora', members: ['local'], memberNames: { local: 'Ich' }, ...(d.settings || {}) });
     this.h.onTasks([...d.tasks]);
     this.h.onInfos([...d.infos]);
     this.h.onContacts([...d.contacts].sort((a, b) => a.name.localeCompare(b.name, 'de')));
     this.h.onAi(this.ai);
+    this.h.onAreas([...(d.areas || [])]);
   }
   async init(h) {
     this.h = h;
-    this.data = { name: 'Unser Haus', tasks: [], infos: [], contacts: [], ...this.load() };
+    this.data = { name: 'Mindora', tasks: [], infos: [], contacts: [], areas: [], settings: {}, ...this.load() };
     try { this.ai = JSON.parse(localStorage.getItem(AI_LOCAL)) || null; } catch { this.ai = null; }
     this.me = { uid: 'local', name: 'Ich', email: null };
     h.onAuth(this.me);
@@ -81,6 +82,13 @@ class LocalStore {
     this.data.contacts[i] = { ...this.data.contacts[i], ...patch }; this.save();
   }
   async deleteContact(id) { this.data.contacts = this.data.contacts.filter((c) => c.id !== id); this.save(); }
+  async setArea(id, data) {
+    const i = this.data.areas.findIndex((a) => a.id === id);
+    if (i < 0) this.data.areas.push({ id, ...data }); else this.data.areas[i] = { ...this.data.areas[i], ...data };
+    this.save();
+  }
+  async deleteArea(id) { this.data.areas = this.data.areas.filter((a) => a.id !== id); this.save(); }
+  async updateProject(patch) { this.data.settings = { ...(this.data.settings || {}), ...patch }; this.save(); }
   async setAi(settings) {
     this.ai = settings;
     try { settings ? localStorage.setItem(AI_LOCAL, JSON.stringify(settings)) : localStorage.removeItem(AI_LOCAL); } catch {}
@@ -136,6 +144,7 @@ class CloudStore {
       onSnapshot(collection(this.db, 'projects', pid, 'tasks'), (s) => this.h.onTasks(s.docs.map((d) => ({ id: d.id, ...d.data() }))), err),
       onSnapshot(collection(this.db, 'projects', pid, 'infos'), (s) => this.h.onInfos(s.docs.map((d) => ({ id: d.id, ...d.data() })).sort((a, b) => b.createdAt - a.createdAt)), err),
       onSnapshot(collection(this.db, 'projects', pid, 'contacts'), (s) => this.h.onContacts(s.docs.map((d) => ({ id: d.id, ...d.data() })).sort((a, b) => (a.name || '').localeCompare(b.name || '', 'de'))), err),
+      onSnapshot(collection(this.db, 'projects', pid, 'areas'), (s) => this.h.onAreas(s.docs.map((d) => ({ id: d.id, ...d.data() }))), err),
       onSnapshot(doc(this.db, 'projects', pid, 'private', 'ai'), (s) => this.h.onAi(s.exists() && s.data().apiKey ? s.data() : null), () => this.h.onAi(null)),
     ];
     this.unsubs.push(() => this.unsubP.forEach((u) => u()));
@@ -167,11 +176,12 @@ class CloudStore {
     const { doc, collection, setDoc, writeBatch } = this.F;
     const pref = doc(collection(this.db, 'projects'));
     await setDoc(pref, { name, members: [this.me.uid], memberNames: { [this.me.uid]: this.me.name }, createdBy: this.me.uid, createdAt: Date.now() });
-    if (seed && (seed.tasks?.length || seed.infos?.length || seed.contacts?.length)) {
+    if (seed && (seed.tasks?.length || seed.infos?.length || seed.contacts?.length || seed.areas?.length)) {
       const batch = writeBatch(this.db);
       for (const t of seed.tasks || []) { const { id, ...rest } = t; batch.set(doc(collection(pref, 'tasks')), { ...rest, createdBy: this.me.uid }); }
       for (const i of seed.infos || []) { const { id, ...rest } = i; batch.set(doc(collection(pref, 'infos')), { ...rest, createdBy: this.me.uid }); }
       for (const c of seed.contacts || []) { const { id, ...rest } = c; batch.set(doc(collection(pref, 'contacts')), rest); }
+      for (const a of seed.areas || []) { const { id, ...rest } = a; batch.set(doc(pref, 'areas', id), rest); }
       await batch.commit();
     }
     await setDoc(doc(this.db, 'users', this.me.uid), { projectId: pref.id, name: this.me.name }, { merge: true });
@@ -218,6 +228,9 @@ class CloudStore {
   async addContact(c) { const ref = this.F.doc(this.col('contacts')); await this.F.setDoc(ref, { createdAt: Date.now(), createdBy: this.me.uid, ...clean(c) }); return ref.id; }
   updateContact(id, patch) { return this.F.updateDoc(this.F.doc(this.col('contacts'), id), clean(patch)); }
   deleteContact(id) { return this.F.deleteDoc(this.F.doc(this.col('contacts'), id)); }
+  setArea(id, data) { return this.F.setDoc(this.F.doc(this.col('areas'), id), clean(data), { merge: true }); }
+  deleteArea(id) { return this.F.deleteDoc(this.F.doc(this.col('areas'), id)); }
+  updateProject(patch) { return this.F.updateDoc(this.F.doc(this.db, 'projects', this.projectId), clean(patch)); }
   setAi(settings) {
     const ref = this.F.doc(this.db, 'projects', this.projectId, 'private', 'ai');
     return settings ? this.F.setDoc(ref, { ...settings, updatedBy: this.me.uid, updatedAt: Date.now() }) : this.F.deleteDoc(ref);
