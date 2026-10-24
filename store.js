@@ -1,6 +1,7 @@
 // Datenhaltung: „lokal“ (nur dieses Gerät) oder „cloud“ (Firebase, geteilt + Push).
 
 const FB = 'https://www.gstatic.com/firebasejs/10.14.1/';
+const withTimeout = (p, ms, msg) => Promise.race([p, new Promise((_, no) => setTimeout(() => no(new Error(msg)), ms))]);
 const uid6 = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4);
 const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 
@@ -195,15 +196,18 @@ class CloudStore {
   deleteInfo(id) { return this.F.deleteDoc(this.F.doc(this.col('infos'), id)); }
 
   // --- Push
-  async enablePush() {
+  async enablePush(permP) {
+    const perm = await (permP || Notification.requestPermission());
+    if (perm === 'denied') return { ok: false, reason: 'denied' };
+    if (perm !== 'granted') return { ok: false, reason: 'dismissed' };
+    if (!this.cfg.vapidKey) return { ok: false, reason: 'novapid' };
     const m = await import(FB + 'firebase-messaging.js');
     if (!(await m.isSupported())) return { ok: false, reason: 'unsupported' };
-    if (!this.cfg.vapidKey) return { ok: false, reason: 'novapid' };
-    const perm = await Notification.requestPermission();
-    if (perm !== 'granted') return { ok: false, reason: 'denied' };
-    const reg = await navigator.serviceWorker.ready;
+    const reg = await withTimeout(navigator.serviceWorker.ready, 10000,
+      'Der Hintergrunddienst der App läuft nicht. Schließe die App ganz (nach oben wegwischen) und öffne sie neu.');
     const messaging = m.getMessaging(this.app);
-    const token = await m.getToken(messaging, { vapidKey: this.cfg.vapidKey, serviceWorkerRegistration: reg });
+    const token = await withTimeout(m.getToken(messaging, { vapidKey: this.cfg.vapidKey, serviceWorkerRegistration: reg }), 20000,
+      'Keine Antwort vom Push-Dienst. Prüfe die Internetverbindung und den vapidKey in config.js.');
     if (!token) return { ok: false, reason: 'notoken' };
     await this.F.setDoc(this.F.doc(this.db, 'users', this.me.uid), { tokens: this.F.arrayUnion(token) }, { merge: true });
     localStorage.setItem('hausplaner-push-token', token);

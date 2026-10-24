@@ -644,9 +644,13 @@ app.addEventListener('click', async (e) => {
     case 'push': {
       if (store.mode !== 'cloud') { inviteSheet(); break; }
       if (isIOS && !standalone) { toast('Öffne den Hausplaner zuerst über das Symbol auf dem Home-Bildschirm.'); break; }
+      if (typeof Notification === 'undefined') { toast('Dieses Gerät unterstützt keine Push-Nachrichten (iPhone: ab iOS 16.4, vom Home-Bildschirm geöffnet).'); break; }
+      // iOS zeigt die Abfrage nur, wenn sie direkt beim Antippen startet – also vor jedem „await“.
+      const permP = Notification.permission === 'granted' ? Promise.resolve('granted') : Notification.requestPermission();
+      toast('Push-Nachrichten werden aktiviert …');
       try {
-        const r = await store.enablePush();
-        const msg = { unsupported: 'Dieses Gerät unterstützt keine Push-Nachrichten im Browser (iPhone: ab iOS 16.4, vom Home-Bildschirm geöffnet).', denied: 'Nicht erlaubt. Ändern unter Einstellungen → Mitteilungen → Hausplaner.', novapid: 'In config.js fehlt der vapidKey.', notoken: 'Push-Anmeldung fehlgeschlagen. Versuch es gleich noch einmal.' };
+        const r = await store.enablePush(permP);
+        const msg = { unsupported: 'Dieses Gerät unterstützt keine Push-Nachrichten im Browser (iPhone: ab iOS 16.4, vom Home-Bildschirm geöffnet).', denied: 'Nicht erlaubt. Ändern unter iPhone-Einstellungen → Mitteilungen → Hausplaner.', dismissed: 'Die Abfrage wurde geschlossen. Tippe noch einmal auf Aktivieren und wähle „Erlauben“.', novapid: 'In config.js fehlt der vapidKey (Schritt 2.6).', notoken: 'Push-Anmeldung fehlgeschlagen. Versuch es gleich noch einmal.' };
         toast(r.ok ? 'Push-Nachrichten sind aktiv' : msg[r.reason]);
       } catch (err) { toast(fail(err)); }
       render(); break;
