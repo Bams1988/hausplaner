@@ -1,0 +1,43 @@
+rules_version = '2';
+// Sicherheitsregeln für den Hausplaner.
+// Nur angemeldete Mitglieder eines Bauprojekts sehen und ändern dessen Daten.
+service cloud.firestore {
+  match /databases/{db}/documents {
+    function signedIn() { return request.auth != null; }
+    function isMember(pid) {
+      return signedIn() && request.auth.uid in get(/databases/$(db)/documents/projects/$(pid)).data.members;
+    }
+
+    // Eigenes Profil (Name, Projekt, Push-Geräte)
+    match /users/{uid} {
+      allow read, write: if signedIn() && request.auth.uid == uid;
+    }
+
+    // Einladungscodes: nur einzeln abrufbar (kein Auflisten), 7 Tage gültig
+    match /invites/{code} {
+      allow get: if signedIn();
+      allow create: if isMember(request.resource.data.projectId);
+      allow delete: if signedIn() && isMember(resource.data.projectId);
+    }
+
+    match /projects/{pid} {
+      allow read: if signedIn() && request.auth.uid in resource.data.members;
+      allow create: if signedIn() && request.resource.data.members == [request.auth.uid];
+      allow update: if signedIn() && (
+        request.auth.uid in resource.data.members
+        || (
+          // Beitreten mit gültigem Code: nur sich selbst hinzufügen
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['members', 'memberNames', 'joinCode'])
+          && request.resource.data.members == resource.data.members.concat([request.auth.uid])
+          && get(/databases/$(db)/documents/invites/$(request.resource.data.joinCode)).data.projectId == pid
+          && get(/databases/$(db)/documents/invites/$(request.resource.data.joinCode)).data.expiresAt > request.time
+        )
+      );
+      allow delete: if false;
+
+      match /{sub=**} {
+        allow read, write: if isMember(pid);
+      }
+    }
+  }
+}
