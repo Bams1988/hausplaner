@@ -1,5 +1,6 @@
 import { createStore, computeRemindAt } from './store.js';
 import { parseEmails, isoDate, similarity } from './parser.js';
+import { extractFromText, draftEmail, assessTasks, testConnection, urgencyOf, aiKeyOf, STATUS, MODELS, DEFAULT_MODEL } from './ai.js';
 
 // ------------------------------------------------------------------ Zustand
 const PHASES = ['Allgemein', 'Finanzierung', 'Pläne & Behörden', 'Grundstück & Anschlüsse', 'Bemusterung', 'Versicherung', 'Bau & Abnahme'];
@@ -9,7 +10,7 @@ const REMINDERS = [
 ];
 const S = {
   view: 'tasks', filter: 'open', phase: 'all', mine: false,
-  me: null, authReady: false, project: null, projectState: 'loading', tasks: [], infos: [],
+  me: null, authReady: false, project: null, projectState: 'loading', tasks: [], infos: [], contacts: [], ai: null, aiBusy: false, contactQuery: '',
   pasteText: '', parsed: null, saveInfo: true, openInfo: null, infoQuery: '', authTab: 'login', authError: '',
   pendingRender: false,
 };
@@ -44,6 +45,18 @@ function relText(d) {
   if (d === -1) return 'seit gestern überfällig';
   return `seit ${-d} Tagen überfällig`;
 }
+const aiCfg = () => (S.ai ? { apiKey: S.ai.apiKey, model: S.ai.model || DEFAULT_MODEL } : null);
+const contactById = (id) => S.contacts.find((c) => c.id === id) || null;
+const norm = (s) => String(s || '').toLowerCase().replace(/\b(herr|frau|dr\.?|dipl\.?-?\w*)\s+/g, '').replace(/[^a-zäöüß]/g, '');
+function findContact({ email, name }) {
+  const e = (email || '').trim().toLowerCase();
+  if (e) { const c = S.contacts.find((x) => (x.email || '').toLowerCase() === e); if (c) return c; }
+  const n = norm(name);
+  return n ? S.contacts.find((x) => norm(x.name) === n) || null : null;
+}
+const urgRank = (t) => { const u = urgencyOf(t); return u ? STATUS[u.status].rank : -1; };
+const byUrgency = (a, b) => urgRank(b) - urgRank(a) || ((a.startBy || a.due || '9999').localeCompare(b.startBy || b.due || '9999')) || byDue(a, b);
+const badge = (u) => (u && u.status !== 'im_plan' ? `<span class="badge s-${u.status}">${esc(STATUS[u.status].label)}</span>` : '');
 const byDue = (a, b) => (a.due || '9999').localeCompare(b.due || '9999') || (a.time || '99').localeCompare(b.time || '99') || (a.createdAt || 0) - (b.createdAt || 0);
 
 const I = {
@@ -51,6 +64,10 @@ const I = {
   mail: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3.5 6.5 8.5 6.5 8.5-6.5"/></svg>',
   infos: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/></svg>',
   more: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><circle cx="12" cy="8" r="3.2"/><path d="M5.5 19.5c1.2-3.2 3.6-4.8 6.5-4.8s5.3 1.6 6.5 4.8"/></svg>',
+  people: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8.5" r="3"/><path d="M3.5 19c.9-3 3-4.6 5.5-4.6s4.6 1.6 5.5 4.6"/><path d="M15.5 5.8a3 3 0 0 1 0 5.4M17.5 14.6c1.5.6 2.5 2 3 4.4"/></svg>',
+  phone: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4h3.5l1.7 4.3-2.2 1.4a11 11 0 0 0 6.3 6.3l1.4-2.2L20 15.5V19a1.5 1.5 0 0 1-1.6 1.5C10.7 20 4 13.3 3.5 5.6A1.5 1.5 0 0 1 5 4Z"/></svg>',
+  envelope: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3.5 6.5 8.5 6.5 8.5-6.5"/></svg>',
+  spark: '<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="vertical-align:-3px"><path d="M12 2.5c.5 4.6 2.9 7 7.5 7.5-4.6.5-7 2.9-7.5 7.5-.5-4.6-2.9-7-7.5-7.5 4.6-.5 7-2.9 7.5-7.5Z"/><path d="M19 15c.2 2 1.2 3 3 3.2-1.8.2-2.8 1.2-3 3.3-.2-2.1-1.2-3.1-3-3.3 1.8-.2 2.8-1.2 3-3.2Z" opacity=".6"/></svg>',
   plus: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>',
   check: '<svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg>',
   bell: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px"><path d="M6 16V11a6 6 0 0 1 12 0v5l1.5 2h-15Z"/><path d="M10 20.5a2 2 0 0 0 4 0"/></svg>',
@@ -93,20 +110,24 @@ function render() {
     if (S.projectState === 'loading') { app.innerHTML = '<div class="boot">Bauprojekt wird geladen …</div>'; return; }
     if (S.projectState === 'none') { app.innerHTML = viewSetup(); return; }
   }
-  const views = { tasks: viewTasks, import: viewImport, infos: viewInfos, more: viewMore };
-  app.innerHTML = views[S.view]() + tabbar() + (S.view === 'tasks' ? `<button class="fab" data-action="new-task" aria-label="Aufgabe anlegen">${I.plus}</button>` : '');
+  const views = { tasks: viewTasks, import: viewImport, contacts: viewContacts, infos: viewInfos, more: viewMore };
+  const fab = S.view === 'tasks' ? `<button class="fab" data-action="new-task" aria-label="Aufgabe anlegen">${I.plus}</button>`
+    : S.view === 'contacts' ? `<button class="fab" data-action="new-contact" aria-label="Kontakt anlegen">${I.plus}</button>` : '';
+  app.innerHTML = views[S.view]() + tabbar() + fab;
 }
 app.addEventListener('focusout', () => setTimeout(() => { if (S.pendingRender && !app.contains(document.activeElement)) render(); }, 50));
 
 function tabbar() {
   const tab = (id, label, icon) => `<button data-action="tab" data-tab="${id}" ${S.view === id ? 'aria-current="page"' : ''}>${icon}<span>${label}</span></button>`;
-  return `<nav class="tabbar">${tab('tasks', 'Aufgaben', I.tasks)}${tab('import', 'Einlesen', I.mail)}${tab('infos', 'Infos', I.infos)}${tab('more', 'Mehr', I.more)}</nav>`;
+  return `<nav class="tabbar">${tab('tasks', 'Aufgaben', I.tasks)}${tab('import', 'Einlesen', I.mail)}${tab('contacts', 'Kontakte', I.people)}${tab('infos', 'Infos', I.infos)}${tab('more', 'Mehr', I.more)}</nav>`;
 }
 
 // --- Aufgaben
 function viewTasks() {
-  const open = S.tasks.filter((t) => !t.done).sort(byDue);
+  const open = S.tasks.filter((t) => !t.done).sort(byUrgency);
   const next = open[0];
+  const nu = next ? urgencyOf(next) : null;
+  const nc = next?.contactId ? contactById(next.contactId) : null;
   const late = open.filter((t) => t.due && dayDiff(t.due) < 0).length;
   let banner = '';
   if (isIOS && !standalone && !localStorage.getItem('hp-hide-install')) {
@@ -116,12 +137,13 @@ function viewTasks() {
   }
   const schild = next ? `
     <section class="bauschild" aria-label="Nächster Schritt">
-      <p class="bauschild-label">Als Nächstes</p>
+      <p class="bauschild-label">${nu && nu.status !== 'im_plan' ? esc(STATUS[nu.status].label) : 'Als Nächstes'}</p>
       <p class="bauschild-task">${esc(next.title)}</p>
+      ${nu && nu.status !== 'im_plan' && (nu.next || nu.reason) ? `<p class="bauschild-why">${esc(nu.next || nu.reason)}</p>` : ''}
       <p class="bauschild-when">${next.due ? esc(relText(dayDiff(next.due))) + (Math.abs(dayDiff(next.due)) > 1 ? ' · ' + esc(dueLabel(next).text) : next.time ? `, ${esc(next.time)} Uhr` : '') : 'ohne Termin'}</p>
       <div class="bauschild-row">
         <span class="bauschild-count">${open.length} offen${late ? `, ${late} überfällig` : ''}</span>
-        <button class="btn small" data-action="toggle" data-id="${esc(next.id)}">Erledigt</button>
+        <span class="btn-row">${nc?.email ? `<button class="btn small" data-action="compose-task" data-id="${esc(next.id)}">E-Mail</button>` : ''}<button class="btn small" data-action="toggle" data-id="${esc(next.id)}">Erledigt</button></span>
       </div>
     </section>` : `
     <section class="bauschild" aria-label="Nächster Schritt">
@@ -191,7 +213,10 @@ function row(t) {
   const due = dueLabel(t);
   const meta = [];
   if (due) meta.push(`<span class="${due.late ? 'late' : ''}">${esc(due.text)}</span>`);
-  if (t.phase && t.phase !== 'Allgemein') meta.push(`<span>${esc(t.phase)}</span>`);
+  if (!t.done) { const b = badge(urgencyOf(t)); if (b) meta.unshift(b); }
+  const c = t.contactId ? contactById(t.contactId) : null;
+  if (c) meta.push(`<span>${esc(c.name)}</span>`);
+  else if (t.phase && t.phase !== 'Allgemein') meta.push(`<span>${esc(t.phase)}</span>`);
   if (!t.done && t.remindAt && t.remindAt > Date.now()) meta.push(`<span title="Erinnerung aktiv">${I.bell}</span>`);
   const who = members().length > 1 && t.assignee && t.assignee !== 'all' ? `<span class="who" title="${esc(nameOf(t.assignee))}">${esc(initial(t.assignee))}</span>` : '';
   return `<div class="row ${t.done ? 'done' : ''}">
@@ -208,16 +233,28 @@ function viewImport() {
   let results = '';
   if (p) {
     const sel = p.tasks.filter((t) => t.selected).length;
-    results = p.tasks.length ? `
+    const csel = (p.contacts || []).filter((c) => c.selected).length;
+    const contactsHtml = p.contacts?.length ? `
+      <h2 class="section-title">${p.contacts.length} ${p.contacts.length === 1 ? 'Kontakt' : 'Kontakte'}</h2>
+      ${p.contacts.map((c, i) => foundContact(c, i)).join('')}` : '';
+    results = p.tasks.length || p.contacts?.length ? `
+      ${p.ai && p.summary ? `<div class="ai-box" style="margin-top:22px">${I.spark} <span>${esc(p.summary)}</span></div>` : ''}
       <h2 class="section-title">${p.tasks.length} ${p.tasks.length === 1 ? 'Aufgabe' : 'Aufgaben'} gefunden</h2>
-      <p class="hint">Häkchen setzen, Text und Datum bei Bedarf anpassen. Bei Aufgaben aus älteren Nachrichten im Verlauf kurz prüfen, ob sie noch offen sind.</p>
+      <p class="hint">${p.ai ? 'Von der KI vorgeschlagen. Prüfe Titel, Frist und Vorlauf und wähle ab, was nicht passt.' : 'Häkchen setzen, Text und Datum bei Bedarf anpassen. Bei Aufgaben aus älteren Nachrichten im Verlauf kurz prüfen, ob sie noch offen sind.'}</p>
       ${p.tasks.map((t, i) => foundItem(t, i)).join('')}
+      ${contactsHtml}
       <label class="opt"><input type="checkbox" data-action="save-info" ${S.saveInfo ? 'checked' : ''}> E-Mail zusätzlich unter Infos ablegen</label>
-      <div class="sticky-action"><button class="btn block" data-action="commit-import" id="commit-btn" ${sel ? '' : 'disabled'}>${commitLabel(sel)}</button></div>`
+      <div class="sticky-action"><button class="btn block" data-action="commit-import" id="commit-btn" ${sel || csel ? '' : 'disabled'}>${commitLabel(sel, csel)}</button></div>`
       : `<div class="empty"><strong>Keine Aufgaben erkannt</strong>In diesem Text steht nichts, was nach einer Bitte oder Frist klingt. Du kannst die Aufgabe selbst anlegen.<br><br>
          <button class="btn secondary" data-action="new-task">Aufgabe selbst anlegen</button>
          <button class="btn ghost" data-action="info-only">Nur unter Infos ablegen</button></div>`;
   }
+  const has = S.pasteText.trim();
+  const mainBtn = S.ai
+    ? `<button class="btn block" style="margin-top:14px" data-action="parse-ai" ${has && !S.aiBusy ? '' : 'disabled'} id="parse-btn">${S.aiBusy ? '<span class="spin"></span> KI liest den Text …' : `${I.spark} Mit KI auswerten`}</button>
+       <button class="link" data-action="parse" ${S.aiBusy ? 'disabled' : ''}>Ohne KI auswerten (feste Regeln)</button>`
+    : `<button class="btn block" style="margin-top:14px" data-action="parse" ${has ? '' : 'disabled'} id="parse-btn">Aufgaben finden</button>
+       <p class="hint">Tipp: Mit dem KI-Assistenten (Mehr → KI-Assistent) erkennt die App auch Ansprechpartner, schätzt Vorlaufzeiten und versteht frei formulierte Mails.</p>`;
   return `<main class="view">
     <h1 class="title">E-Mail einlesen</h1>
     <p class="subtitle">Kopiere den ganzen Verlauf aus der Mail-App oder einen Text aus der Allkauf-App hier hinein.</p>
@@ -227,25 +264,78 @@ function viewImport() {
       <label class="btn secondary small" style="position:relative">Screenshot lesen<input type="file" accept="image/*" data-action="ocr" style="position:absolute;inset:0;opacity:0"></label>
       ${S.pasteText ? '<button class="btn ghost small" data-action="clear-paste">Leeren</button>' : ''}
     </div>
-    <button class="btn block" style="margin-top:14px" data-action="parse" ${S.pasteText.trim() ? '' : 'disabled'} id="parse-btn">Aufgaben finden</button>
+    ${mainBtn}
     ${results}
   </main>`;
 }
-const commitLabel = (n) => (n ? `${n} ${n === 1 ? 'Aufgabe' : 'Aufgaben'} übernehmen` : 'Nichts ausgewählt');
+function commitLabel(n, c = 0) {
+  if (!n && !c) return 'Nichts ausgewählt';
+  const parts = [];
+  if (n) parts.push(`${n} ${n === 1 ? 'Aufgabe' : 'Aufgaben'}`);
+  if (c) parts.push(`${c} ${c === 1 ? 'Kontakt' : 'Kontakte'}`);
+  return parts.join(' und ') + ' übernehmen';
+}
+const KIND = { frist: 'Frist', termin: 'Termin', geschaetzt: 'Vorschlag der KI', keine: '' };
 
 function foundItem(t, i) {
   const src = [t.from && `von ${t.from}`, t.messageDate && `vom ${fmtDate(t.messageDate, { day: 'numeric', month: 'short' })}`].filter(Boolean).join(' ');
+  const sb = t.due && t.leadDays != null ? (() => { const d = parseISO(t.due); d.setDate(d.getDate() - t.leadDays); return isoDate(d); })() : null;
   return `<div class="found ${t.selected ? '' : 'off'}" data-i="${i}">
     <input type="checkbox" data-action="pick" data-i="${i}" ${t.selected ? 'checked' : ''} aria-label="Übernehmen">
     <div class="found-body">
       <textarea class="found-title" data-input="found-title" data-i="${i}" rows="2" aria-label="Titel">${esc(t.title)}</textarea>
       <div class="found-line">
         <input type="date" data-input="found-due" data-i="${i}" value="${esc(t.due || '')}" aria-label="Fällig am">
+        ${t.leadDays != null ? `<label class="mini">Vorlauf <input type="number" min="0" max="120" inputmode="numeric" data-input="found-lead" data-i="${i}" value="${esc(t.leadDays)}" aria-label="Vorlauf in Tagen"> Tage</label>` : ''}
         <select data-input="found-phase" data-i="${i}" aria-label="Bereich">${PHASES.map((p) => `<option ${p === t.phase ? 'selected' : ''}>${esc(p)}</option>`).join('')}</select>
       </div>
+      ${t.ai ? `<div class="found-src">${[KIND[t.dueKind] && t.due ? KIND[t.dueKind] : '', sb ? `anfangen bis ${fmtDate(sb, { day: 'numeric', month: 'short' })}` : '', t.contactName ? `Ansprechpartner: ${t.contactName}` : ''].filter(Boolean).map(esc).join(' · ')}</div>
+        ${t.leadReason ? `<div class="found-src">${esc(t.leadReason)}</div>` : ''}
+        ${t.details ? `<div class="found-src">${esc(t.details)}</div>` : ''}
+        ${t.doneInThread ? '<div class="found-warn">Laut Verlauf vermutlich schon erledigt</div>' : ''}` : ''}
       ${src ? `<div class="found-src">Aus der Nachricht ${esc(src)}${t.messageIndex > 0 ? ' (älter im Verlauf)' : ''}</div>` : ''}
       ${t.existing ? `<div class="found-warn">Ähnliche Aufgabe gibt es schon: „${esc(t.existing)}“</div>` : ''}
     </div></div>`;
+}
+function foundContact(c, i) {
+  const line = [c.role, c.company].filter(Boolean).join(', ');
+  const data = [c.email, c.phone, c.mobile].filter(Boolean).join(' · ');
+  const state = c.match ? (c.addsInfo ? `Schon gespeichert – fehlende Angaben werden ergänzt` : 'Schon gespeichert, nichts Neues') : 'Neuer Kontakt';
+  return `<div class="found ${c.selected ? '' : 'off'}">
+    <input type="checkbox" data-action="pick-contact" data-i="${i}" ${c.selected ? 'checked' : ''} aria-label="Kontakt übernehmen">
+    <div class="found-body">
+      <div style="font-weight:600">${esc(c.name)}</div>
+      ${line ? `<div class="found-src" style="margin-top:2px">${esc(line)}</div>` : ''}
+      <div class="found-src" style="margin-top:2px">${esc(data)}</div>
+      <div class="found-src">${esc(state)}</div>
+    </div></div>`;
+}
+
+// --- Kontakte
+const telHref = (n) => 'tel:' + String(n).replace(/[^\d+]/g, '');
+function viewContacts() {
+  const q = S.contactQuery.trim().toLowerCase();
+  const list = S.contacts.filter((c) => !q || [c.name, c.company, c.role, c.email].join(' ').toLowerCase().includes(q));
+  const rows = list.map((c) => {
+    const sub = [c.role, c.company].filter(Boolean).join(', ');
+    const tel = c.mobile || c.phone;
+    const openN = S.tasks.filter((t) => !t.done && t.contactId === c.id).length;
+    return `<div class="row contact">
+      <span class="avatar" aria-hidden="true">${esc((c.name || '?').split(/\s+/).map((w) => w[0]).slice(0, 2).join('').toUpperCase())}</span>
+      <button class="row-main" data-action="contact" data-id="${esc(c.id)}">
+        <div class="row-title">${esc(c.name)}</div>
+        <div class="row-meta">${sub ? `<span>${esc(sub)}</span>` : ''}${openN ? `<span>${openN} offen</span>` : ''}</div>
+      </button>
+      ${c.email ? `<button class="icon-btn" data-action="compose-contact" data-id="${esc(c.id)}" aria-label="E-Mail an ${esc(c.name)}">${I.envelope}</button>` : ''}
+      ${tel ? `<a class="icon-btn" href="${esc(telHref(tel))}" aria-label="${esc(c.name)} anrufen">${I.phone}</a>` : ''}
+    </div>`;
+  }).join('');
+  return `<main class="view">
+    <h1 class="title">Kontakte</h1>
+    <p class="subtitle">Ansprechpartner bei allkauf, Bank, Behörden und Handwerkern.</p>
+    ${S.contacts.length > 5 ? `<input class="input" type="search" data-input="contact-q" value="${esc(S.contactQuery)}" placeholder="Suchen" style="margin-bottom:12px" aria-label="Kontakte durchsuchen">` : ''}
+    ${rows ? `<div class="list">${rows}</div>` : `<div class="empty"><strong>${q ? 'Nichts gefunden' : 'Noch keine Kontakte'}</strong>${q ? 'Versuch einen anderen Suchbegriff.' : 'Lies eine E-Mail mit dem KI-Assistenten ein – Ansprechpartner aus der Signatur landen dann hier. Oder lege einen Kontakt mit dem Plus an.'}</div>`}
+  </main>`;
 }
 
 // --- Infos
@@ -306,6 +396,13 @@ function viewMore() {
     </div>
     <p class="hint">Erinnert wird zur eingestellten Zeit jeder Aufgabe. Jeden Morgen ab 7 Uhr kommt zusätzlich eine Übersicht, wenn etwas fällig ist. Jedes Gerät muss einmal selbst aktiviert werden.</p>
 
+    <h2 class="section-title">KI-Assistent</h2>
+    <div class="settings">
+      <button class="setting" data-action="ai-settings"><span class="status-dot ${S.ai ? 'on' : ''}"></span><span class="grow">Claude von Anthropic<small>${S.ai ? `Aktiv · ${esc((MODELS.find((m) => m[0] === S.ai.model) || [0, S.ai.model])[1].split(' – ')[0])}` : 'Nicht eingerichtet'}</small></span><span class="end">${S.ai ? 'Ändern' : 'Einrichten'}</span></button>
+      ${S.ai ? `<button class="setting" data-action="assess-all" ${S.aiBusy ? 'disabled' : ''}><span class="grow">${S.aiBusy ? 'Fristen werden geprüft …' : 'Alle Fristen jetzt prüfen'}<small>Die KI schätzt ein, was bis wann zu schaffen ist</small></span></button>` : ''}
+    </div>
+    <p class="hint">${S.ai ? (store.mode === 'cloud' ? 'Jeden Morgen prüft die KI alle offenen Fristen. Was jetzt angegangen werden muss, kommt als Push-Nachricht.' : 'Im lokalen Modus prüft die KI die Fristen nur, wenn du es hier antippst. Mit Cloud passiert das jeden Morgen automatisch.') : 'Liest E-Mails, erkennt Aufgaben, Fristen und Ansprechpartner, schreibt Mail-Entwürfe und warnt, wenn eine Frist knapp wird.'}</p>
+
     <h2 class="section-title">Aufgaben</h2>
     <div class="settings">
       <button class="setting" data-action="template"><span class="grow">Typische Bauherren-Aufgaben<small>Checkliste vom Bauantrag bis zur Abnahme hinzufügen</small></span></button>
@@ -313,7 +410,7 @@ function viewMore() {
 
     <h2 class="section-title">Daten</h2>
     <div class="settings">
-      <button class="setting" data-action="export"><span class="grow">Sicherung speichern<small>Alle Aufgaben und Infos als Datei</small></span></button>
+      <button class="setting" data-action="export"><span class="grow">Sicherung speichern<small>Alle Aufgaben, Kontakte und Infos als Datei</small></span></button>
       <label class="setting" style="cursor:pointer;position:relative"><span class="grow">Sicherung einspielen<small>Aufgaben und Infos aus einer Datei hinzufügen</small></span><input type="file" accept="application/json,.json" data-action="import-file" style="position:absolute;inset:0;opacity:0"></label>
     </div>
 
@@ -375,19 +472,46 @@ function openSheet(html, onMount) {
 function closeSheet() { sheetRoot.innerHTML = ''; if (S.pendingRender) render(); }
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && sheetRoot.innerHTML) closeSheet(); });
 
+function contactOptions(selected) {
+  return `<option value="">– keiner –</option>${S.contacts.map((c) => `<option value="${esc(c.id)}" ${c.id === selected ? 'selected' : ''}>${esc(c.name)}${c.company ? ` (${esc(c.company)})` : ''}</option>`).join('')}`;
+}
+function urgencyBox(t) {
+  const u = urgencyOf(t);
+  if (!u) return '';
+  const sb = u.startBy ? `Anfangen spätestens: ${fmtDate(u.startBy, { weekday: 'short', day: 'numeric', month: 'short' })}` : '';
+  return `<div class="ai-box u-${u.status}" data-urg>
+    <div class="ai-box-head">${u.ai ? I.spark : ''}<strong>${esc(STATUS[u.status].label)}</strong>${u.ai ? '<span class="muted">KI-Einschätzung</span>' : ''}</div>
+    ${u.reason ? `<p>${esc(u.reason)}</p>` : ''}
+    ${u.next ? `<p><strong>Nächster Schritt:</strong> ${esc(u.next)}</p>` : ''}
+    ${sb ? `<p class="muted">${esc(sb)}</p>` : ''}
+    ${S.ai ? `<button type="button" class="link" data-act="assess">Mit KI neu einschätzen</button>` : ''}
+  </div>`;
+}
+
 function taskSheet(task) {
-  const t = task || { title: '', due: '', time: '', reminder: 'day1', phase: S.phase !== 'all' ? S.phase : 'Allgemein', assignee: 'all', notes: '' };
+  const t = task || { title: '', due: '', time: '', reminder: 'day1', phase: S.phase !== 'all' ? S.phase : 'Allgemein', assignee: 'all', notes: '', leadDays: null, contactId: null };
   const memOpts = members().length > 1 ? `<label class="field"><span>Zuständig</span><select name="assignee">
       <option value="all" ${!t.assignee || t.assignee === 'all' ? 'selected' : ''}>Beide</option>
       ${members().map((u) => `<option value="${esc(u)}" ${t.assignee === u ? 'selected' : ''}>${esc(nameOf(u))}</option>`).join('')}</select></label>` : '';
+  const c = t.contactId ? contactById(t.contactId) : null;
   const sheet = openSheet(`
     <div class="sheet-head"><h2>${task ? 'Aufgabe' : 'Neue Aufgabe'}</h2><button class="btn ghost" data-dismiss>Abbrechen</button></div>
+    ${task && !task.done ? urgencyBox(task) : ''}
+    ${task ? `<div class="btn-row" style="margin-bottom:14px">
+      <button type="button" class="btn secondary small" data-act="mail">${I.envelope} ${c?.email ? `E-Mail an ${esc(c.name.split(' ').slice(-1)[0])}` : 'E-Mail schreiben'}</button>
+      ${c && (c.mobile || c.phone) ? `<a class="btn secondary small" href="${esc(telHref(c.mobile || c.phone))}">${I.phone} Anrufen</a>` : ''}
+    </div>` : ''}
     <form data-sheet-form>
       <label class="field"><span>Was ist zu tun?</span><textarea name="title" rows="2" required style="min-height:64px">${esc(t.title)}</textarea></label>
       <div class="two">
         <label class="field"><span>Fällig am</span><input type="date" name="due" value="${esc(t.due || '')}"></label>
         <label class="field"><span>Uhrzeit</span><input type="time" name="time" value="${esc(t.time || '')}"></label>
       </div>
+      <div class="two">
+        <label class="field"><span>Vorlauf (Tage)</span><input type="number" name="leadDays" min="0" max="120" inputmode="numeric" value="${t.leadDays ?? ''}" placeholder="z. B. 14"></label>
+        <label class="field"><span>Ansprechpartner</span><select name="contactId">${contactOptions(t.contactId)}</select></label>
+      </div>
+      <p class="hint" data-lead-hint style="margin-top:-6px"></p>
       <label class="field"><span>Erinnerung</span><select name="reminder">${REMINDERS.map(([v, l]) => `<option value="${v}" ${(t.reminder || 'none') === v ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
       <label class="field" data-custom ${t.reminder === 'custom' ? '' : 'hidden'}><span>Erinnern am</span><input type="datetime-local" name="remindCustom" value="${esc(t.remindCustom || '')}"></label>
       <p class="hint" data-remind-hint style="margin-top:-6px"></p>
@@ -403,8 +527,12 @@ function taskSheet(task) {
         ${task.createdBy && members().length > 1 ? `<p class="hint">Angelegt von ${esc(nameOf(task.createdBy))}${task.done && task.doneBy ? `, erledigt von ${esc(nameOf(task.doneBy))}` : ''}</p>` : ''}` : ''}
     </form>`);
   const form = sheet.querySelector('form');
-  const upd = () => {
+  const formData = () => {
     const f = Object.fromEntries(new FormData(form));
+    return { title: f.title.trim(), due: f.due || null, time: f.time || null, reminder: f.reminder, remindCustom: f.remindCustom || null, phase: f.phase, notes: f.notes.trim(), assignee: f.assignee || 'all', leadDays: f.leadDays === '' ? null : Math.max(0, Math.min(120, parseInt(f.leadDays, 10) || 0)), contactId: f.contactId || null };
+  };
+  const upd = () => {
+    const f = formData();
     sheet.querySelector('[data-custom]').hidden = f.reminder !== 'custom';
     const at = computeRemindAt(f);
     const hint = sheet.querySelector('[data-remind-hint]');
@@ -412,13 +540,15 @@ function taskSheet(task) {
     else if (!f.due && f.reminder !== 'custom') hint.textContent = 'Für diese Erinnerung braucht die Aufgabe ein Datum.';
     else if (at) hint.textContent = `Erinnerung: ${new Date(at).toLocaleString('de-DE', { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })} Uhr${at < Date.now() ? ' – liegt in der Vergangenheit' : ''}`;
     else hint.textContent = '';
+    const lh = sheet.querySelector('[data-lead-hint]');
+    if (f.due && f.leadDays != null) { const d = parseISO(f.due); d.setDate(d.getDate() - f.leadDays); lh.textContent = `Anfangen spätestens am ${d.toLocaleDateString('de-DE', { weekday: 'short', day: 'numeric', month: 'short' }).replace(/\.$/, '')}. Ab dann kommt eine Push-Nachricht „Jetzt angehen“.`; }
+    else lh.textContent = f.due ? 'Vorlauf = wie viele Tage vor der Frist du anfangen musst (z. B. weil die Bank Zeit braucht).' : '';
   };
   form.addEventListener('input', upd); upd();
   if (!task) setTimeout(() => form.title.focus(), 280);
   form.onsubmit = async (e) => {
     e.preventDefault();
-    const f = Object.fromEntries(new FormData(form));
-    const data = { title: f.title.trim(), due: f.due || null, time: f.time || null, reminder: f.reminder, remindCustom: f.remindCustom || null, phase: f.phase, notes: f.notes.trim(), assignee: f.assignee || 'all' };
+    const data = formData();
     if (!data.title) return;
     try {
       if (task) await store.updateTask(task.id, data, task);
@@ -427,12 +557,174 @@ function taskSheet(task) {
       toast(task ? 'Gespeichert' : 'Aufgabe angelegt');
     } catch (err) { toast(fail(err)); }
   };
+  sheet.querySelector('[data-act="mail"]')?.addEventListener('click', () => {
+    const cur = { ...task, ...formData() };
+    composeSheet({ task: cur, contact: cur.contactId ? contactById(cur.contactId) : null });
+  });
+  sheet.querySelector('[data-act="assess"]')?.addEventListener('click', async (e) => {
+    e.target.disabled = true; e.target.textContent = 'KI schätzt ein …';
+    try {
+      await assessList([S.tasks.find((x) => x.id === task.id) || task]);
+      const fresh = S.tasks.find((x) => x.id === task.id);
+      sheet.querySelector('[data-urg]').outerHTML = urgencyBox(fresh);
+      sheet.querySelector('[data-act="assess"]')?.addEventListener('click', () => taskSheet(fresh));
+    } catch (err) { toast(fail(err)); e.target.disabled = false; e.target.textContent = 'Mit KI neu einschätzen'; }
+  });
   sheet.querySelector('[data-act="done"]')?.addEventListener('click', () => { closeSheet(); toggleTask(task.id); });
   sheet.querySelector('[data-act="delete"]')?.addEventListener('click', async () => {
     if (!confirm('Aufgabe wirklich löschen?')) return;
     closeSheet();
     try { await store.deleteTask(task.id); toast('Gelöscht', { label: 'Rückgängig', fn: () => { const { id, ...rest } = task; store.addTask(rest); } }); } catch (err) { toast(fail(err)); }
   });
+}
+
+// --- Kontakt ansehen / bearbeiten
+function contactSheet(c) {
+  const isNew = !c;
+  c = c || { name: '', company: '', role: '', email: '', phone: '', mobile: '', address: '', notes: '' };
+  const tasks = isNew ? [] : S.tasks.filter((t) => !t.done && t.contactId === c.id).sort(byDue);
+  const tel = c.mobile || c.phone;
+  const f = (name, label, type = 'text', extra = '') => `<label class="field"><span>${label}</span><input name="${name}" type="${type}" value="${esc(c[name] || '')}" ${extra}></label>`;
+  const sheet = openSheet(`
+    <div class="sheet-head"><h2>${isNew ? 'Neuer Kontakt' : esc(c.name)}</h2><button class="btn ghost" data-dismiss>${isNew ? 'Abbrechen' : 'Schließen'}</button></div>
+    ${isNew ? '' : `<div class="btn-row" style="margin-bottom:16px">
+      ${c.email ? `<button type="button" class="btn small" data-act="mail">${I.envelope} E-Mail schreiben</button>` : ''}
+      ${c.phone ? `<a class="btn secondary small" href="${esc(telHref(c.phone))}">${I.phone} ${esc(c.phone)}</a>` : ''}
+      ${c.mobile ? `<a class="btn secondary small" href="${esc(telHref(c.mobile))}">${I.phone} Mobil</a>` : ''}
+    </div>
+    ${tasks.length ? `<h3 class="sub-title">Offene Aufgaben</h3><div class="list" style="margin-bottom:18px">${tasks.map(row).join('')}</div>` : ''}`}
+    <form>
+      ${f('name', 'Name', 'text', 'required autocomplete="off"')}
+      <div class="two">${f('role', 'Rolle')}${f('company', 'Firma')}</div>
+      ${f('email', 'E-Mail', 'email', 'autocomplete="off" autocapitalize="off"')}
+      <div class="two">${f('phone', 'Telefon', 'tel')}${f('mobile', 'Mobil', 'tel')}</div>
+      ${f('address', 'Adresse')}
+      <label class="field"><span>Notizen</span><textarea name="notes" rows="3">${esc(c.notes || '')}</textarea></label>
+      <button class="btn block" type="submit">Speichern</button>
+      ${isNew ? '' : '<button type="button" class="btn danger block" data-act="delete" style="margin-top:8px">Kontakt löschen</button>'}
+    </form>`);
+  const form = sheet.querySelector('form');
+  if (isNew) setTimeout(() => form.name.focus(), 280);
+  form.onsubmit = async (e) => {
+    e.preventDefault();
+    const d = Object.fromEntries(new FormData(form));
+    for (const k in d) d[k] = d[k].trim();
+    d.email = d.email.toLowerCase();
+    if (!d.name) return;
+    try {
+      if (isNew) await store.addContact({ ...d, source: 'manual' }); else await store.updateContact(c.id, d, c);
+      closeSheet(); toast(isNew ? 'Kontakt angelegt' : 'Gespeichert');
+    } catch (err) { toast(fail(err)); }
+  };
+  sheet.querySelector('[data-act="mail"]')?.addEventListener('click', () => composeSheet({ contact: c }));
+  sheet.querySelector('[data-act="delete"]')?.addEventListener('click', async () => {
+    if (!confirm(`${c.name} löschen?`)) return;
+    try { await store.deleteContact(c.id); closeSheet(); toast('Kontakt gelöscht'); } catch (err) { toast(fail(err)); }
+  });
+  sheet.querySelectorAll('.row-main[data-action="edit"]').forEach((b) => b.addEventListener('click', () => taskSheet(S.tasks.find((t) => t.id === b.dataset.id))));
+  sheet.querySelectorAll('.check[data-action="toggle"]').forEach((b) => b.addEventListener('click', () => { toggleTask(b.dataset.id); closeSheet(); }));
+}
+
+// --- E-Mail schreiben (öffnet die Mail-App mit fertigem Text)
+function composeSheet({ task = null, contact = null } = {}) {
+  const withMail = S.contacts.filter((x) => x.email);
+  const sender = S.me?.name && S.me.name !== 'Ich' ? S.me.name : '';
+  const greet = 'Guten Tag,';
+  const defBody = `${greet}\n\n\n\nMit freundlichen Grüßen\n${sender}`;
+  const sheet = openSheet(`
+    <div class="sheet-head"><h2>E-Mail</h2><button class="btn ghost" data-dismiss>Abbrechen</button></div>
+    <form>
+      ${withMail.length ? `<label class="field"><span>An</span><select name="pick">${withMail.map((x) => `<option value="${esc(x.email)}" ${contact?.id === x.id ? 'selected' : ''}>${esc(x.name)} – ${esc(x.email)}</option>`).join('')}<option value="" ${contact?.email ? '' : 'selected'}>Andere Adresse …</option></select></label>` : ''}
+      <label class="field" data-other ${withMail.length && contact?.email ? 'hidden' : ''}><span>E-Mail-Adresse</span><input name="to" type="email" autocapitalize="off" value="${esc(!withMail.length || !contact?.email ? contact?.email || '' : '')}"></label>
+      ${S.ai ? `<div class="ai-compose">
+        <input class="input" name="instruction" placeholder="${task ? 'Optional: Worum soll es gehen?' : 'Worum soll es gehen? z. B. Termin für Bemusterung anfragen'}">
+        <button type="button" class="btn secondary small" data-act="ai">${I.spark} Mit KI formulieren</button>
+      </div>` : ''}
+      <label class="field"><span>Betreff</span><input name="subject" value="${esc(task ? task.title : '')}"></label>
+      <label class="field"><span>Text</span><textarea name="body" rows="11">${esc(defBody)}</textarea></label>
+      <button class="btn block" type="submit">${I.envelope} In Mail-App öffnen</button>
+      <button type="button" class="btn ghost block" data-act="copy" style="margin-top:6px">Text kopieren</button>
+      <p class="hint">Die Mail öffnet sich fertig ausgefüllt in deiner Mail-App. Dort prüfst du sie und tippst auf Senden – so geht sie von deiner eigenen Adresse raus.</p>
+    </form>`);
+  const form = sheet.querySelector('form');
+  const pick = form.pick;
+  const other = sheet.querySelector('[data-other]');
+  pick?.addEventListener('change', () => { other.hidden = !!pick.value; });
+  const toAddr = () => (pick && pick.value) || form.to.value.trim();
+  const recipient = () => S.contacts.find((x) => x.email && x.email === toAddr()) || contact;
+  sheet.querySelector('[data-act="ai"]')?.addEventListener('click', async (e) => {
+    const btn = e.currentTarget;
+    if (!task && !form.instruction.value.trim()) { toast('Schreib kurz, worum es gehen soll.'); form.instruction.focus(); return; }
+    btn.disabled = true; btn.innerHTML = '<span class="spin"></span> KI schreibt …';
+    try {
+      const d = await draftEmail(aiCfg(), { task, contact: recipient(), sender, project: S.project?.name, instruction: form.instruction.value.trim() });
+      form.subject.value = d.subject; form.body.value = d.body;
+    } catch (err) { toast(fail(err)); }
+    btn.disabled = false; btn.innerHTML = `${I.spark} Neu formulieren`;
+  });
+  sheet.querySelector('[data-act="copy"]').addEventListener('click', async () => {
+    try { await navigator.clipboard.writeText(`${form.subject.value}\n\n${form.body.value}`); toast('Text kopiert'); } catch { toast('Kopieren nicht möglich.'); }
+  });
+  form.onsubmit = async (e) => {
+    e.preventDefault();
+    const to = toAddr();
+    if (to && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) { toast('Die E-Mail-Adresse sieht nicht richtig aus.'); return; }
+    const url = `mailto:${to}?subject=${encodeURIComponent(form.subject.value)}&body=${encodeURIComponent(form.body.value)}`;
+    if (task?.id) {
+      const cur = S.tasks.find((x) => x.id === task.id);
+      if (cur) store.updateTask(cur.id, { notes: `${cur.notes ? cur.notes + '\n\n' : ''}${new Date().toLocaleDateString('de-DE')}: E-Mail an ${recipient()?.name || to} – „${form.subject.value}“` }, cur).catch(() => {});
+    }
+    closeSheet();
+    window.location.href = url;
+  };
+}
+
+// --- KI einrichten
+function aiSheet() {
+  const cur = S.ai || {};
+  const sheet = openSheet(`
+    <div class="sheet-head"><h2>KI-Assistent</h2><button class="btn ghost" data-dismiss>Abbrechen</button></div>
+    <p class="hint" style="margin-top:0">Der Hausplaner nutzt Claude von Anthropic. Dafür brauchst du einen eigenen API-Schlüssel aus der Anthropic Console (Anleitung, Stufe 4). Abgerechnet wird nach Verbrauch – eine E-Mail auszuwerten kostet meist 1–3 Cent.</p>
+    <form>
+      <label class="field"><span>API-Schlüssel</span><input name="apiKey" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="sk-ant-…" value="${esc(cur.apiKey || '')}" required></label>
+      <label class="field"><span>Modell</span><select name="model">${MODELS.map(([v, l]) => `<option value="${v}" ${(cur.model || DEFAULT_MODEL) === v ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select></label>
+      <p class="hint">${store.mode === 'cloud' ? 'Der Schlüssel wird in eurem Bauprojekt gespeichert. So kann auch deine Partnerin die KI nutzen, und die tägliche Fristprüfung läuft damit. Nur Mitglieder des Projekts können ihn lesen.' : 'Der Schlüssel bleibt auf diesem Gerät.'}</p>
+      <p class="error" data-err hidden></p>
+      <button class="btn block" type="submit">Prüfen und speichern</button>
+      ${S.ai ? '<button type="button" class="btn danger block" data-act="remove" style="margin-top:8px">KI-Assistent ausschalten</button>' : ''}
+    </form>`);
+  const form = sheet.querySelector('form');
+  form.onsubmit = async (e) => {
+    e.preventDefault();
+    const btn = form.querySelector('[type="submit"]'); const err = sheet.querySelector('[data-err]');
+    const cfg = { apiKey: form.apiKey.value.trim(), model: form.model.value };
+    btn.disabled = true; btn.innerHTML = '<span class="spin"></span> Verbindung wird geprüft …'; err.hidden = true;
+    try {
+      await testConnection(cfg);
+      await store.setAi(cfg);
+      closeSheet(); toast('KI-Assistent ist aktiv');
+    } catch (x) { err.textContent = fail(x); err.hidden = false; btn.disabled = false; btn.textContent = 'Prüfen und speichern'; }
+  };
+  sheet.querySelector('[data-act="remove"]')?.addEventListener('click', async () => {
+    if (!confirm('KI-Assistent ausschalten und Schlüssel löschen?')) return;
+    try { await store.setAi(null); closeSheet(); toast('KI-Assistent ausgeschaltet'); } catch (x) { toast(fail(x)); }
+  });
+}
+
+// --- Fristen von der KI einschätzen lassen
+async function assessList(list) {
+  const todo = list.filter((t) => !t.done && t.due);
+  if (!todo.length) return 0;
+  let n = 0;
+  for (let i = 0; i < todo.length; i += 30) {
+    const res = await assessTasks(aiCfg(), todo.slice(i, i + 30));
+    for (const r of res) {
+      const t = S.tasks.find((x) => x.id === r.id); if (!t) continue;
+      await store.updateTask(t.id, { aiStatus: r.status, aiReason: r.reason, aiNext: r.next, aiStartBy: r.startBy, aiFor: aiKeyOf(t), aiAt: Date.now() }, t);
+      n++;
+    }
+  }
+  return n;
 }
 
 async function toggleTask(id) {
@@ -537,25 +829,76 @@ function runParse(text) {
   render();
   if (res.tasks.length) setTimeout(() => app.querySelector('.section-title')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 60);
 }
+async function runParseAI(text) {
+  S.pasteText = text; S.aiBusy = true; S.parsed = null; render();
+  try {
+    const r = await extractFromText(aiCfg(), text, {
+      me: { name: S.me?.name !== 'Ich' ? S.me?.name : '', email: S.me?.email, partner: members().filter((u) => u !== S.me?.uid).map(nameOf).join(', ') },
+      contacts: S.contacts, openTasks: S.tasks.filter((t) => !t.done),
+    });
+    const open = S.tasks.filter((t) => !t.done);
+    const contacts = r.contacts.map((c) => {
+      const match = findContact(c);
+      const addsInfo = match ? ['company', 'role', 'email', 'phone', 'mobile', 'address'].some((k) => c[k] && !match[k]) : true;
+      return { ...c, match: match?.id || null, addsInfo, selected: !match || addsInfo };
+    });
+    const tasks = r.tasks.map((t) => {
+      const ex = open.find((e) => similarity(e.title, t.title) >= 0.75);
+      return { ...t, ai: true, doneInThread: t.done, existing: ex ? ex.title : null, selected: !t.done && !ex, notes: t.details, from: r.from, messageDate: r.date, subject: r.subject };
+    });
+    S.parsed = { ai: true, raw: text, summary: r.summary, tasks, contacts, messages: [{ subject: r.subject, from: r.from, date: r.date }] };
+  } catch (e) {
+    toast(fail(e));
+  }
+  S.aiBusy = false;
+  render();
+  if (S.parsed) setTimeout(() => app.querySelector('.ai-box, .section-title')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 60);
+}
+
 async function commitImport() {
   const p = S.parsed; if (!p) return;
   const sel = p.tasks.filter((t) => t.selected && t.title.trim());
+  const btn = app.querySelector('#commit-btn'); if (btn) btn.disabled = true;
+  // 1) Kontakte anlegen oder ergänzen
+  const idByKey = new Map();
+  const keyOf = (x) => [(x.email || '').toLowerCase(), norm(x.name)];
+  try {
+    for (const c of p.contacts || []) {
+      let id = c.match;
+      if (c.selected) {
+        const { selected, match, addsInfo, ...data } = c;
+        if (id) {
+          const ex = contactById(id);
+          const patch = {}; for (const k of ['company', 'role', 'email', 'phone', 'mobile', 'address', 'notes']) if (data[k] && !ex?.[k]) patch[k] = data[k];
+          if (Object.keys(patch).length) await store.updateContact(id, patch, ex);
+        } else id = await store.addContact({ ...data, source: 'mail-ki' });
+      }
+      if (id) for (const k of keyOf(c)) if (k) idByKey.set(k, id);
+    }
+  } catch (e) { toast(fail(e)); if (btn) btn.disabled = false; return; }
+  const contactFor = (t) => {
+    if (!t.contactEmail && !t.contactName) return null;
+    return idByKey.get((t.contactEmail || '').toLowerCase()) || idByKey.get(norm(t.contactName)) || findContact({ email: t.contactEmail, name: t.contactName })?.id || null;
+  };
   try {
     await store.addTasks(sel.map((t) => {
       const src = [t.from && `von ${t.from}`, t.messageDate && `vom ${fmtDate(t.messageDate, { day: 'numeric', month: 'numeric', year: 'numeric' })}`].filter(Boolean).join(' ');
+      const notes = [t.notes, t.quote ? `„${t.quote}“` : '', t.leadReason ? `Vorlauf: ${t.leadReason}` : ''].filter(Boolean).join('\n\n');
       return {
         title: t.title.trim(), due: t.due || null, time: t.time || null, phase: t.phase,
-        reminder: !t.due ? 'none' : dayDiff(t.due) <= 1 ? 'day0' : 'day1', notes: `${t.notes}${src ? `\n\nAus der E-Mail ${src}` : ''}${t.subject ? `\nBetreff: ${t.subject}` : ''}`, source: 'mail',
+        leadDays: t.leadDays ?? null, contactId: p.ai ? contactFor(t) : null, dueKind: t.dueKind || null,
+        reminder: !t.due ? 'none' : dayDiff(t.due) <= 1 ? 'day0' : 'day1', notes: `${notes}${src ? `\n\nAus der E-Mail ${src}` : ''}${t.subject ? `\nBetreff: ${t.subject}` : ''}`, source: p.ai ? 'mail-ki' : 'mail',
       };
     }));
     if (S.saveInfo) await saveInfoFromText(p);
-    S.parsed = null; S.pasteText = ''; S.view = 'tasks'; S.filter = 'open';
+    S.parsed = null; S.pasteText = ''; S.view = sel.length ? 'tasks' : 'contacts'; S.filter = 'open';
     render();
-    toast(`${sel.length} ${sel.length === 1 ? 'Aufgabe' : 'Aufgaben'} übernommen`);
-  } catch (e) { toast(fail(e)); }
+    const nc = (p.contacts || []).filter((c) => c.selected).length;
+    toast(commitLabel(sel.length, nc).replace(' übernehmen', ' übernommen'));
+  } catch (e) { toast(fail(e)); if (btn) btn.disabled = false; }
 }
 function saveInfoFromText(p) {
-  const m = p.messages[0] || {};
+  const m = p.messages?.[0] || {};
   const firstLine = p.raw.trim().split('\n').find((l) => l.trim())?.slice(0, 80);
   return store.addInfo({ title: m.subject || p.messages.find((x) => x.subject)?.subject || firstLine || 'E-Mail', from: m.from || p.messages.find((x) => x.from)?.from || null, date: m.date || null, text: p.raw.trim(), kind: 'mail' });
 }
@@ -579,7 +922,7 @@ async function ocr(file) {
 
 // ------------------------------------------------------------------ Daten sichern
 async function exportData() {
-  const data = { app: 'hausplaner', version: 1, exportedAt: new Date().toISOString(), project: S.project?.name, tasks: S.tasks, infos: S.infos };
+  const data = { app: 'hausplaner', version: 1, exportedAt: new Date().toISOString(), project: S.project?.name, tasks: S.tasks, infos: S.infos, contacts: S.contacts };
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
   const name = `hausplaner-sicherung-${todayISO()}.json`;
   const file = new File([blob], name, { type: 'application/json' });
@@ -594,6 +937,7 @@ async function importData(file) {
     const tasks = data.tasks.map(({ id, ...t }) => t).filter((t) => !S.tasks.some((x) => x.title === t.title && x.due === t.due));
     if (tasks.length) await store.addTasks(tasks);
     for (const { id, ...i } of data.infos || []) if (!S.infos.some((x) => x.text === i.text)) await store.addInfo(i);
+    for (const { id, ...c } of data.contacts || []) if (c.name && !findContact(c)) await store.addContact(c);
     toast(`${tasks.length} Aufgaben eingespielt`);
   } catch (e) { toast(fail(e)); }
 }
@@ -625,6 +969,17 @@ app.addEventListener('click', async (e) => {
       break;
     case 'clear-paste': S.pasteText = ''; S.parsed = null; render(); break;
     case 'parse': runParse(app.querySelector('#paste').value); break;
+    case 'parse-ai': runParseAI(app.querySelector('#paste').value); break;
+    case 'contact': contactSheet(contactById(el.dataset.id)); break;
+    case 'new-contact': contactSheet(null); break;
+    case 'compose-contact': composeSheet({ contact: contactById(el.dataset.id) }); break;
+    case 'compose-task': { const t = S.tasks.find((x) => x.id === el.dataset.id); composeSheet({ task: t, contact: t?.contactId ? contactById(t.contactId) : null }); break; }
+    case 'ai-settings': aiSheet(); break;
+    case 'assess-all': {
+      S.aiBusy = true; render();
+      try { const n = await assessList(S.tasks); toast(n ? `${n} Fristen eingeschätzt` : 'Keine offenen Aufgaben mit Frist'); } catch (err) { toast(fail(err)); }
+      S.aiBusy = false; render(); break;
+    }
     case 'commit-import': commitImport(); break;
     case 'info-only':
       try { await saveInfoFromText(S.parsed); S.parsed = null; S.pasteText = ''; S.view = 'infos'; render(); toast('Unter Infos abgelegt'); } catch (err) { toast(fail(err)); }
@@ -672,6 +1027,8 @@ app.addEventListener('input', (e) => {
   if (k === 'paste') {
     S.pasteText = el.value;
     const b = app.querySelector('#parse-btn'); if (b) b.disabled = !el.value.trim();
+  } else if (k === 'contact-q') {
+    S.contactQuery = el.value; clearTimeout(S.qT); S.qT = setTimeout(() => { const pos = el.selectionStart; el.blur(); render(); const n = app.querySelector('[data-input="contact-q"]'); n?.focus(); n?.setSelectionRange(pos, pos); }, 250);
   } else if (k === 'info-q') {
     S.infoQuery = el.value; clearTimeout(S.qT); S.qT = setTimeout(() => { const pos = el.selectionStart; el.blur(); render(); const n = app.querySelector('[data-input="info-q"]'); n?.focus(); n?.setSelectionRange(pos, pos); }, 250);
   } else if (k?.startsWith('found-')) {
@@ -679,6 +1036,7 @@ app.addEventListener('input', (e) => {
     if (k === 'found-title') t.title = el.value;
     if (k === 'found-due') t.due = el.value || null;
     if (k === 'found-phase') t.phase = el.value;
+    if (k === 'found-lead') t.leadDays = el.value === '' ? null : Math.max(0, Math.min(120, parseInt(el.value, 10) || 0));
   }
 });
 app.addEventListener('change', (e) => {
@@ -686,12 +1044,20 @@ app.addEventListener('change', (e) => {
   if (a === 'pick') {
     const t = S.parsed.tasks[+el.dataset.i]; t.selected = el.checked;
     el.closest('.found').classList.toggle('off', !el.checked);
-    const n = S.parsed.tasks.filter((x) => x.selected).length;
-    const b = app.querySelector('#commit-btn'); b.disabled = !n; b.textContent = commitLabel(n);
+    updateCommitBtn();
+  } else if (a === 'pick-contact') {
+    S.parsed.contacts[+el.dataset.i].selected = el.checked;
+    el.closest('.found').classList.toggle('off', !el.checked);
+    updateCommitBtn();
   } else if (a === 'save-info') S.saveInfo = el.checked;
   else if (a === 'ocr' && el.files[0]) ocr(el.files[0]);
   else if (a === 'import-file' && el.files[0]) importData(el.files[0]);
 });
+function updateCommitBtn() {
+  const n = S.parsed.tasks.filter((x) => x.selected).length;
+  const c = (S.parsed.contacts || []).filter((x) => x.selected).length;
+  const b = app.querySelector('#commit-btn'); b.disabled = !n && !c; b.textContent = commitLabel(n, c);
+}
 app.addEventListener('submit', async (e) => {
   const form = e.target; const kind = form.dataset.form; if (!kind) return;
   e.preventDefault();
@@ -704,7 +1070,7 @@ app.addEventListener('submit', async (e) => {
       else await store.signIn(f.email.trim(), f.pw);
     } else if (kind === 'create') {
       let seed = null;
-      try { const local = JSON.parse(localStorage.getItem('hausplaner-v1') || 'null'); if (local?.tasks?.length || local?.infos?.length) seed = local; } catch {}
+      try { const local = JSON.parse(localStorage.getItem('hausplaner-v1') || 'null'); if (local?.tasks?.length || local?.infos?.length || local?.contacts?.length) seed = local; } catch {}
       if (seed && !confirm(`Auf diesem Gerät gibt es ${seed.tasks.length} Aufgaben aus dem lokalen Modus. Ins neue Projekt übernehmen?`)) seed = null;
       await store.createProject(f.name.trim() || 'Unser Haus', seed);
       if (seed) localStorage.removeItem('hausplaner-v1');
@@ -725,6 +1091,8 @@ store.init({
   onProject(p) { S.project = p; S.projectState = p ? 'ready' : 'none'; render(); },
   onTasks(list) { S.tasks = list; render(); },
   onInfos(list) { S.infos = list; render(); },
+  onContacts(list) { S.contacts = list; render(); },
+  onAi(cfg) { S.ai = cfg; render(); },
   onError(e) { toast(fail(e)); },
   onPush(n) { toast(`${n.title || 'Erinnerung'}${n.body ? ': ' + n.body : ''}`); },
 }).catch((e) => { app.innerHTML = `<div class="boot">Start fehlgeschlagen: ${esc(fail(e))}<br><br>Prüfe die Internetverbindung und config.js.</div>`; });

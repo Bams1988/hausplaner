@@ -190,7 +190,7 @@ button { cursor: pointer; -webkit-tap-highlight-color: transparent; }
   display: flex; background: color-mix(in srgb, var(--bg) 88%, transparent); -webkit-backdrop-filter: blur(16px); backdrop-filter: blur(16px);
   border-top: 1px solid var(--line);
 }
-.tabbar button { flex: 1; border: 0; background: none; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; font-size: 11px; font-weight: 600; color: var(--ink-3); }
+.tabbar button { flex: 1; min-width: 0; border: 0; background: none; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; font-size: 10.5px; font-weight: 600; color: var(--ink-3); }
 .tabbar button[aria-current="page"] { color: var(--ink); }
 .tabbar svg { width: 24px; height: 24px; }
 .fab {
@@ -232,3 +232,36 @@ button { cursor: pointer; -webkit-tap-highlight-color: transparent; }
 
 .opt { display: flex; gap: 10px; align-items: center; margin: 16px 2px 0; font-size: 15px; }
 .opt input { width: 22px; height: 22px; accent-color: var(--ink); margin: 0; }
+
+/* ---------- Dringlichkeit ---------- */
+.badge { display: inline-block; font-size: 12px; font-weight: 700; padding: 1px 7px; border-radius: 6px; line-height: 1.5; }
+.s-jetzt_starten { background: var(--signal); color: var(--signal-ink); }
+.s-kritisch { background: #F0A23B; color: #1F2125; }
+.s-unrealistisch { background: var(--alarm); color: #fff; }
+.bauschild-why { margin: 8px 6px 0; font-size: 15px; line-height: 1.35; }
+.bauschild-row .btn-row { gap: 8px; flex-wrap: nowrap; }
+
+/* ---------- KI ---------- */
+.ai-box { background: var(--surface); border-radius: var(--r-md); padding: 12px 14px; margin-bottom: 14px; font-size: 14px; border-left: 4px solid var(--line); }
+.ai-box p { margin: 6px 0 0; }
+.ai-box .link { padding: 8px 0 0; }
+.ai-box-head { display: flex; gap: 8px; align-items: center; }
+.ai-box-head .muted { font-size: 12px; margin-left: auto; }
+.ai-box.u-jetzt_starten { border-left-color: var(--signal); }
+.ai-box.u-kritisch { border-left-color: #F0A23B; }
+.ai-box.u-unrealistisch { border-left-color: var(--alarm); }
+.ai-box.u-im_plan { border-left-color: var(--ok); }
+.ai-compose { display: flex; gap: 8px; margin: 0 0 14px; flex-wrap: wrap; }
+.ai-compose .input { flex: 1 1 200px; min-width: 0; }
+.spin { display: inline-block; width: 15px; height: 15px; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: rot .8s linear infinite; vertical-align: -2px; }
+@keyframes rot { to { transform: rotate(360deg); } }
+.mini { display: inline-flex; align-items: center; gap: 5px; font-size: 13px; color: var(--ink-2); }
+.mini input { width: 56px; }
+.sub-title { font: 600 18px/1.1 var(--display); margin: 4px 2px 8px; }
+
+/* ---------- Kontakte ---------- */
+.row.contact { align-items: center; }
+.row.contact + .row.contact::before { left: 64px; }
+.avatar { flex: none; width: 38px; height: 38px; border-radius: 50%; background: var(--surface-2); color: var(--ink-2); display: grid; place-items: center; font-weight: 700; font-size: 14px; }
+.icon-btn { flex: none; width: 40px; height: 40px; border-radius: 50%; border: 0; background: var(--surface-2); color: var(--ink); display: grid; place-items: center; text-decoration: none; }
+.btn svg { flex: none; }

@@ -1,6 +1,6 @@
 // Service Worker: Offline-Start und Push-Nachrichten.
-const VERSION = 'hausplaner-v2';
-const SHELL = ['./', 'index.html', 'styles.css', 'app.js', 'store.js', 'parser.js', 'config.js', 'manifest.webmanifest', 'icons/icon-180.png', 'icons/icon-192.png', 'icons/icon-512.png'];
+const VERSION = 'hausplaner-v3';
+const SHELL = ['./', 'index.html', 'styles.css', 'app.js', 'store.js', 'parser.js', 'ai.js', 'config.js', 'manifest.webmanifest', 'icons/icon-180.png', 'icons/icon-192.png', 'icons/icon-512.png'];
 
 importScripts('config.js');
 const cfg = self.HAUS_CONFIG || {};

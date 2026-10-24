@@ -9,6 +9,7 @@ Die Einrichtung hat drei Stufen. Schon nach Stufe 1 kannst du die App benutzen.
 | 1. Online stellen (GitHub) | App auf dem iPhone, Daten nur auf deinem Gerät | ca. 10 Min. |
 | 2. Cloud (Firebase) | Teilen mit deiner Frau, Daten auf allen Geräten | ca. 15 Min. |
 | 3. Erinnerungen | Push-Nachrichten zu Fristen und Morgen-Übersicht | ca. 10 Min. |
+| 4. KI-Assistent (optional) | E-Mails mit KI auswerten, Kontakte, Mail-Entwürfe, tägliche Fristprüfung | ca. 10 Min. |
 
 Am besten machst du das an einem privaten Computer (Windows oder Mac), mit einem Browser – installieren musst du nichts.
 
@@ -119,13 +120,43 @@ Ab jetzt läuft alles von selbst:
 
 ---
 
+## Stufe 4 – KI-Assistent (optional)
+
+Der KI-Assistent nutzt **Claude von Anthropic**. Er liest eingefügte E-Mails und macht daraus Aufgaben mit Fristen und Vorlaufzeit, legt Ansprechpartner mit Kontaktdaten an, schreibt Mail-Entwürfe und prüft jeden Morgen, ob die offenen Aufgaben bis zur Frist noch zu schaffen sind.
+
+**Kosten:** Abgerechnet wird nach Verbrauch über ein Guthaben, das du vorher auflädst. Eine E-Mail auswerten oder eine Mail entwerfen kostet meist 1–3 Cent, die tägliche Fristprüfung etwa 1 Cent pro Tag. Mit 5 € Guthaben kommt ihr in der Regel mehrere Monate aus.
+
+**Datenschutz:** Die eingefügten Texte werden zur Auswertung an Anthropic geschickt. Laut Anthropic werden über die API gesendete Daten standardmäßig nicht zum Trainieren der KI verwendet.
+
+### 4.1 API-Schlüssel besorgen
+1. **console.anthropic.com** öffnen und ein Konto anlegen.
+2. Unter **Billing** (Abrechnung) Guthaben aufladen, z. B. 5 $.
+3. Unter **Limits** ein monatliches Ausgabelimit setzen, z. B. 5 $. So kann nie mehr verbraucht werden.
+4. Unter **API Keys** → **Create Key** → Name `Hausplaner` → Schlüssel kopieren. Er beginnt mit `sk-ant-` und wird nur **einmal** angezeigt.
+
+### 4.2 In der App eintragen
+1. Hausplaner öffnen → **Mehr → KI-Assistent → Einrichten**.
+2. Schlüssel einfügen, Modell **Claude Sonnet 5.5** lassen → **Prüfen und speichern**.
+
+Der Schlüssel wird in eurem Bauprojekt gespeichert. Deine Frau kann die KI damit ebenfalls nutzen, und die tägliche Fristprüfung (Stufe 3) verwendet ihn automatisch. An GitHub musst du dafür nichts ändern.
+
+---
+
 ## So benutzt du den Hausplaner
 
 **E-Mails einlesen:** Im Mail-Programm den Text der Nachricht markieren und kopieren (gern der ganze Verlauf mit „Von:“, „Gesendet:“) → Reiter **Einlesen** → einfügen → **Aufgaben finden**. Die App erkennt Bitten („Bitte senden Sie…“, „Wir benötigen…“), Fragen an dich, Fristen („bis spätestens 06.11.“, „innerhalb von 14 Tagen“, „KW 47“) und Termine. Du prüfst die Vorschläge, passt sie an und übernimmst sie. Die E-Mail wird auf Wunsch unter **Infos** abgelegt.
 
 **Allkauf-App:** Text dort markieren und einfügen – oder einen **Screenshot** machen und unter Einlesen **Screenshot lesen** wählen. Die Texterkennung läuft im iPhone selbst; beim ersten Mal lädt sie ca. 15 MB.
 
-**Die Erkennung arbeitet mit festen Regeln, nicht mit KI.** Sie findet die typischen Formulierungen in geschäftlichen E-Mails zuverlässig, übersieht aber ungewöhnlich formulierte Aufgaben und schlägt gelegentlich etwas vor, das keine Aufgabe ist. Deshalb prüfst du die Liste vor dem Übernehmen.
+**Mit KI-Assistent** heißt der Knopf **Mit KI auswerten**. Die KI schlägt vor:
+- Aufgaben mit Frist (oder einem eigenen Vorschlag, wenn nur „zeitnah“ dasteht) und **Vorlauf** – wie viele Tage du vor der Frist anfangen musst, z. B. weil die Bank zwei Wochen braucht,
+- **Kontakte** aus den Signaturen (Name, Rolle, Firma, E-Mail, Telefon), die unter **Kontakte** landen und mit den Aufgaben verknüpft werden.
+
+Du prüfst alles und tippst auf **Übernehmen**. Ohne KI-Assistent arbeitet die Erkennung mit festen Regeln. Sie findet typische Formulierungen zuverlässig, übersieht aber frei formulierte Aufgaben.
+
+**Jetzt angehen:** Jede Aufgabe mit Frist und Vorlauf hat einen Starttermin. Ist der erreicht, steht sie oben auf dem gelben Schild und trägt ein Kennzeichen: **Jetzt angehen**, **Wird knapp** oder **Kaum zu schaffen**. Mit KI-Assistent schätzt Claude jeden Morgen alle Fristen neu ein (Wartezeiten, Wochenenden, Feiertage) und nennt den nächsten Schritt. Wird eine Aufgabe neu dringend, kommt eine Push-Nachricht. In jeder Aufgabe kannst du die Einschätzung mit **Mit KI neu einschätzen** sofort aktualisieren.
+
+**E-Mails schreiben:** In einer Aufgabe auf **E-Mail an …** tippen, oder unter **Kontakte** auf das Briefsymbol. Mit **Mit KI formulieren** schreibt Claude einen passenden Entwurf, optional nach deiner Vorgabe („um Fristverlängerung bitten“). **In Mail-App öffnen** übergibt alles fertig ausgefüllt an deine Mail-App. Dort tippst du auf Senden, so geht die Mail von deiner eigenen Adresse raus. In der Aufgabe wird vermerkt, dass du geschrieben hast. Über das Telefonsymbol rufst du direkt an.
 
 **Checkliste:** Unter **Mehr → Typische Bauherren-Aufgaben** gibt es eine Startliste vom Bauantrag bis zur Abnahme.
 
@@ -148,6 +179,9 @@ Allkauf bietet keine öffentliche Schnittstelle. Der Login ist mit Google Authen
 | „Keine Berechtigung …“ | Schritt 2.5.3: Regeln aus `firestore.rules` veröffentlichen. |
 | Push lässt sich nicht aktivieren | App muss vom **Home-Bildschirm** gestartet sein, iOS 16.4 oder neuer. Falls einmal abgelehnt: iPhone-Einstellungen → Mitteilungen → Hausplaner → Erlauben. |
 | Test-Nachricht kommt nicht | GitHub → Actions → letzten Lauf öffnen und die rote Meldung lesen. Häufig: Secret nicht vollständig kopiert, oder Push auf dem iPhone noch nicht aktiviert. |
+| „Der API-Schlüssel ist ungültig“ | Schlüssel in der Anthropic Console neu erzeugen und unter Mehr → KI-Assistent eintragen. |
+| „Guthaben aufgebraucht“ | In der Anthropic Console unter Billing Guthaben aufladen. |
+| Keine „Jetzt angehen“-Push | Kommt einmal morgens ab 7 Uhr und nur, wenn eine Aufgabe **neu** dringend wird. Die Aufgabe braucht Frist und Vorlauf. |
 | Erinnerungen kommen gar nicht mehr | GitHub → Actions → „Erinnerungen“ → falls dort „disabled“ steht: **Enable workflow**. |
 
-**Kosten:** GitHub Pages, GitHub Actions (öffentliches Repository) und Firebase Spark sind kostenlos. Für zwei Personen bleibt ihr weit unter allen Grenzen.
+**Kosten:** GitHub Pages, GitHub Actions (öffentliches Repository) und Firebase Spark sind kostenlos. Für zwei Personen bleibt ihr weit unter allen Grenzen. Nur der optionale KI-Assistent kostet etwas, siehe Stufe 4.
