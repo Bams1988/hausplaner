@@ -1,0 +1,45 @@
+name: Erinnerungen
+
+on:
+  schedule:
+    - cron: '*/15 * * * *'   # alle 15 Minuten (GitHub startet manchmal etwas später)
+  workflow_dispatch:
+    inputs:
+      test:
+        description: 'Test-Nachricht an alle Geräte senden'
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+jobs:
+  send:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Abhängigkeiten installieren
+        working-directory: scripts
+        run: npm install --no-audit --no-fund
+      - name: Erinnerungen senden
+        working-directory: scripts
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          APP_URL: ${{ vars.APP_URL }}
+          TEST_PUSH: ${{ github.event_name == 'workflow_dispatch' && inputs.test }}
+        run: node send-reminders.mjs
+      # GitHub pausiert Zeitpläne nach 60 Tagen ohne Änderung im Repository.
+      # Dieser Schritt macht alle 50 Tage einen leeren Commit, damit die Erinnerungen weiterlaufen.
+      - name: Zeitplan aktiv halten
+        run: |
+          last=$(git log -1 --format=%ct)
+          if [ $(( $(date +%s) - last )) -gt 4320000 ]; then
+            git config user.name "hausplaner-bot"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git commit --allow-empty -m "Zeitplan aktiv halten"
+            git push
+          fi
