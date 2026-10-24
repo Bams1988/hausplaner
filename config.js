@@ -8,13 +8,13 @@
 // =====================================================================
 self.HAUS_CONFIG = {
   firebase: {
-    apiKey: '',
-    authDomain: '',
-    projectId: '',
-    storageBucket: '',
-    messagingSenderId: '',
-    appId: '',
+    apiKey: 'AIzaSyDhSuCzhwKJex0ZRX8t1Gqdf9VmcJIt390',
+    authDomain: 'hausplaner-41d33.firebaseapp.com',
+    projectId: 'hausplaner-41d33',
+    storageBucket: 'hausplaner-41d33.firebasestorage.app',
+    messagingSenderId: '751051509232',
+    appId: '1:751051509232:web:81149c295ba47ecec1e135',
   },
   // Firebase-Konsole → Projekteinstellungen → Cloud Messaging → Web-Push-Zertifikate
-  vapidKey: '',
+  vapidKey: 'BOdrrZ7vR0EROPIWFCfyDC9G3jBjZWBB9x-I7913kKQcEvxsuYcUgNmjY0SZzeGF6IhEiH1OkckWKnHlC_tCRtU',
 };
