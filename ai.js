@@ -25,8 +25,7 @@ const todayLine = (d = new Date()) => `Heute ist ${WD[d.getDay()]}, der ${iso(d)
 
 export class AiError extends Error {}
 
-async function call({ apiKey, model }, { system, user, tool, maxTokens = 4096, timeoutMs = 90000 }) {
-  if (!apiKey) throw new AiError('Kein API-Schlüssel hinterlegt (Mehr → KI-Assistent).');
+async function post(apiKey, body, timeoutMs) {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), timeoutMs);
   let res;
@@ -40,14 +39,7 @@ async function call({ apiKey, model }, { system, user, tool, maxTokens = 4096, t
         'anthropic-version': '2023-06-01',
         'anthropic-dangerous-direct-browser-access': 'true',
       },
-      body: JSON.stringify({
-        model: model || DEFAULT_MODEL,
-        max_tokens: maxTokens,
-        system,
-        tools: [tool],
-        tool_choice: { type: 'tool', name: tool.name },
-        messages: [{ role: 'user', content: user }],
-      }),
+      body: JSON.stringify(body),
     });
   } catch (e) {
     throw new AiError(e.name === 'AbortError' ? 'Die KI hat nicht rechtzeitig geantwortet. Versuch es noch einmal.' : 'Keine Verbindung zur KI. Besteht eine Internetverbindung?');
@@ -64,17 +56,41 @@ async function call({ apiKey, model }, { system, user, tool, maxTokens = 4096, t
     if (res.status >= 500) throw new AiError('Die KI ist gerade überlastet. Versuch es in ein paar Minuten noch einmal.');
     throw new AiError(`KI-Fehler ${res.status}: ${msg || 'unbekannt'}`);
   }
-  const data = await res.json();
-  const block = (data.content || []).find((b) => b.type === 'tool_use');
-  if (!block) throw new AiError('Die KI hat keine verwertbare Antwort geliefert.');
-  if (data.stop_reason === 'max_tokens') throw new AiError('Der Text war zu lang für eine Auswertung. Füge weniger auf einmal ein (z. B. nur die neuesten Nachrichten).');
-  return block.input;
+  return res.json();
+}
+
+// Antwort als JSON aus einem Textblock lesen (Rückfall, falls das Werkzeug nicht aufgerufen wurde)
+function jsonFromText(content) {
+  const text = (content || []).filter((b) => b.type === 'text').map((b) => b.text).join('\n');
+  const start = text.indexOf('{'); const end = text.lastIndexOf('}');
+  if (start < 0 || end <= start) return null;
+  try { return JSON.parse(text.slice(start, end + 1)); } catch { return null; }
+}
+
+// Ruft Claude auf und erwartet das Ergebnis als Aufruf des Werkzeugs `tool`.
+// Neuere Modelle erlauben kein erzwungenes Werkzeug – deshalb „auto“ mit klarer Anweisung
+// und notfalls eine Nachfrage.
+async function call({ apiKey, model }, { system, user, tool, maxTokens = 4096, timeoutMs = 90000 }) {
+  if (!apiKey) throw new AiError('Kein API-Schlüssel hinterlegt (Mehr → KI-Assistent).');
+  const sys = `${system}\n\nGib dein Ergebnis ausschließlich über einen einzigen Aufruf des Werkzeugs „${tool.name}“ zurück – ohne Text davor oder danach.`;
+  const messages = [{ role: 'user', content: user }];
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const data = await post(apiKey, { model: model || DEFAULT_MODEL, max_tokens: maxTokens, system: sys, tools: [tool], messages }, timeoutMs);
+    const block = (data.content || []).find((b) => b.type === 'tool_use' && b.name === tool.name);
+    if (block) return block.input;
+    const parsed = jsonFromText(data.content);
+    if (parsed && typeof parsed === 'object') return parsed;
+    if (data.stop_reason === 'max_tokens') throw new AiError('Der Text war zu lang für eine Auswertung. Füge weniger auf einmal ein (z. B. nur die neuesten Nachrichten).');
+    messages.push({ role: 'assistant', content: data.content && data.content.length ? data.content : [{ type: 'text', text: '…' }] });
+    messages.push({ role: 'user', content: `Bitte gib das Ergebnis jetzt über das Werkzeug „${tool.name}“ zurück.` });
+  }
+  throw new AiError('Die KI hat keine verwertbare Antwort geliefert. Versuch es noch einmal.');
 }
 
 // Kurzer Verbindungstest (kostet weniger als 0,1 Cent)
 export async function testConnection(cfg) {
   await call(cfg, {
-    system: 'Antworte knapp.', user: 'Bestätige die Verbindung.', maxTokens: 50, timeoutMs: 30000,
+    system: 'Antworte knapp.', user: 'Bestätige die Verbindung.', maxTokens: 1024, timeoutMs: 45000,
     tool: { name: 'bestaetigen', description: 'Bestätigt die Verbindung.', input_schema: { type: 'object', required: ['ok'], properties: { ok: { type: 'boolean' } } } },
   });
   return true;
@@ -153,7 +169,7 @@ Regeln:
   const tasks = openTasks.length ? `\n\nBereits vorhandene offene Aufgaben (keine Dubletten anlegen; wenn sich eine Frist ändert, die Aufgabe trotzdem aufnehmen):\n${openTasks.slice(0, 80).map((t) => `- ${t.title}${t.due ? ` (fällig ${t.due})` : ''}`).join('\n')}` : '';
   const clipped = text.length > 60000 ? text.slice(0, 60000) + '\n[… gekürzt]' : text;
   const user = `Werte diesen Text aus:${known}${tasks}\n\n<text>\n${clipped}\n</text>`;
-  const r = await call(cfg, { system, user, tool: EXTRACT_TOOL, maxTokens: 8000 });
+  const r = await call(cfg, { system, user, tool: EXTRACT_TOOL, maxTokens: 16000, timeoutMs: 150000 });
   return {
     subject: r.betreff || null,
     from: r.absender || null,
@@ -203,7 +219,7 @@ Schreibe auf Deutsch, höflich, sachlich und knapp (Sie-Form, außer die Vorlage
     task ? `Anlass (Aufgabe): ${task.title}${task.due ? `\nFrist: ${task.due}` : ''}${task.notes ? `\nHintergrund:\n${task.notes.slice(0, 2500)}` : ''}` : '',
     instruction ? `Wunsch des Absenders: ${instruction}` : (task ? 'Ziel: die Aufgabe voranbringen – z. B. Unterlagen senden, Termin abstimmen, nachfragen oder um Fristverlängerung bitten, je nachdem was passt.' : 'Ziel: kurze, freundliche Kontaktaufnahme.'),
   ].filter(Boolean).join('\n');
-  const r = await call(cfg, { system, user: parts, tool: DRAFT_TOOL, maxTokens: 1500, timeoutMs: 60000 });
+  const r = await call(cfg, { system, user: parts, tool: DRAFT_TOOL, maxTokens: 3000, timeoutMs: 60000 });
   return { subject: r.betreff || '', body: r.text || '' };
 }
 
@@ -239,7 +255,7 @@ Berücksichtige Wartezeiten auf Dritte (Bank, Notar, Behörden, Vermesser, Handw
     vorlauf_tage_geschaetzt: t.leadDays ?? null, angelegt_am: t.createdAt ? iso(new Date(t.createdAt)) : null,
     notizen: (t.notes || '').slice(0, 600),
   }));
-  const r = await call(cfg, { system, user: `Offene Aufgaben:\n${JSON.stringify(list, null, 1)}`, tool: ASSESS_TOOL, maxTokens: 6000 });
+  const r = await call(cfg, { system, user: `Offene Aufgaben:\n${JSON.stringify(list, null, 1)}`, tool: ASSESS_TOOL, maxTokens: 12000, timeoutMs: 150000 });
   const byId = new Map(tasks.map((t) => [t.id, t]));
   return (r.bewertungen || []).filter((b) => byId.has(b.id) && STATUS[b.status]).map((b) => ({
     id: b.id, status: b.status, startBy: validDate(b.starten_bis), reason: b.grund || '', next: b.naechster_schritt || '',
