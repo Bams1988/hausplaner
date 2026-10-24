@@ -1,6 +1,7 @@
 // Verschickt fällige Erinnerungen und die Morgen-Übersicht als Push-Nachricht.
 // Läuft automatisch alle 15 Minuten über GitHub Actions (siehe .github/workflows/reminders.yml).
 import admin from 'firebase-admin';
+import { assessTasks, urgencyOf, aiKeyOf, STATUS } from '../ai.js';
 
 const sa = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT || '{}');
 if (!sa.project_id) {
@@ -22,6 +23,7 @@ const berlin = new Intl.DateTimeFormat('sv-SE', { timeZone: TZ, year: 'numeric',
 const part = (t) => berlin.find((p) => p.type === t).value;
 const today = `${part('year')}-${part('month')}-${part('day')}`;
 const hour = Number(part('hour'));
+const todayDate = new Date(`${today}T12:00:00`); // „heute“ in Berliner Zeit
 
 const fmtDue = (t) => {
   if (!t.due) return '';
@@ -86,7 +88,54 @@ for (const p of projects.docs) {
     await doc.ref.update({ reminded: true, remindedAt: now });
   }
 
-  // 2) Morgen-Übersicht (einmal pro Tag ab 7 Uhr)
+  // 2) Täglicher Fristen-Check: Ist es noch realistisch? Muss die Aufgabe jetzt angegangen werden?
+  if (hour >= DIGEST_HOUR && p.get('lastAssess') !== today) {
+    const tasks = new Map(open.filter((d) => d.get('due')).map((d) => [d.id, { id: d.id, ref: d.ref, ...d.data() }]));
+    let aiCfg = null;
+    try {
+      const s = await p.ref.collection('private').doc('ai').get();
+      if (s.exists && s.get('apiKey')) aiCfg = { apiKey: s.get('apiKey'), model: s.get('model') };
+    } catch (e) { console.warn('KI-Einstellungen nicht lesbar:', e.message); }
+
+    if (aiCfg && tasks.size) {
+      const list = [...tasks.values()];
+      for (let i = 0; i < list.length; i += 30) {
+        try {
+          const res = await assessTasks(aiCfg, list.slice(i, i + 30), { now: todayDate });
+          for (const r of res) {
+            const t = tasks.get(r.id);
+            const patch = { aiStatus: r.status, aiReason: r.reason, aiNext: r.next, aiStartBy: r.startBy, aiFor: aiKeyOf(t), aiAt: now };
+            Object.assign(t, patch);
+            await t.ref.update(patch);
+          }
+        } catch (e) { console.warn('KI-Prüfung fehlgeschlagen, nutze Vorlauf-Regel:', e.message); }
+      }
+    }
+
+    // Benachrichtigen, wenn eine Aufgabe neu dringend geworden ist
+    const alerts = [];
+    for (const t of tasks.values()) {
+      const u = urgencyOf(t, todayDate);
+      if (!u || u.status === 'im_plan') continue;
+      const key = `${u.status}|${aiKeyOf(t)}`;
+      if (t.urgNotified === key) continue;
+      alerts.push({ t, u, key });
+    }
+    alerts.sort((a, b) => STATUS[b.u.status].rank - STATUS[a.u.status].rank);
+    if (alerts.length > 3) {
+      const body = alerts.slice(0, 4).map(({ t, u }) => `• ${STATUS[u.status].label}: ${t.title}`).join('\n') + (alerts.length > 4 ? `\n… und ${alerts.length - 4} weitere` : '');
+      sent += await send(all, `${alerts.length} Aufgaben jetzt angehen`, body, 'urgent');
+    } else {
+      for (const { t, u } of alerts) {
+        const targets = t.assignee && t.assignee !== 'all' ? all.filter((x) => x.uid === t.assignee) : all;
+        sent += await send(targets, `${STATUS[u.status].label}: ${t.title}`.slice(0, 120), (u.next || u.reason || `Fällig ${fmtDue(t)}`).slice(0, 200), 'urg-' + t.id);
+      }
+    }
+    for (const { t, key } of alerts) await t.ref.update({ urgNotified: key });
+    await p.ref.update({ lastAssess: today });
+  }
+
+  // 3) Morgen-Übersicht (einmal pro Tag ab 7 Uhr)
   if (hour >= DIGEST_HOUR && p.get('lastDigest') !== today) {
     const due = open.map((d) => d.data()).filter((t) => t.due && t.due <= today).sort((a, b) => a.due.localeCompare(b.due));
     if (due.length) {
