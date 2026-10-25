@@ -1,4 +1,4 @@
-name: Erinnerungen
+name: Mindora
 
 on:
   schedule:
@@ -13,10 +13,14 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: mindora
+  cancel-in-progress: false
+
 jobs:
-  send:
+  run:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -25,20 +29,23 @@ jobs:
       - name: Abhängigkeiten installieren
         working-directory: scripts
         run: npm install --no-audit --no-fund
-      - name: Erinnerungen senden
+      - name: E-Mails abholen, erinnern, Fristen prüfen
         working-directory: scripts
         env:
           FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          INBOX_USER: ${{ secrets.INBOX_USER }}
+          INBOX_PASSWORD: ${{ secrets.INBOX_PASSWORD }}
+          INBOX_PROJECT: ${{ vars.INBOX_PROJECT }}
           APP_URL: ${{ vars.APP_URL }}
           TEST_PUSH: ${{ github.event_name == 'workflow_dispatch' && inputs.test }}
         run: node send-reminders.mjs
       # GitHub pausiert Zeitpläne nach 60 Tagen ohne Änderung im Repository.
-      # Dieser Schritt macht alle 50 Tage einen leeren Commit, damit die Erinnerungen weiterlaufen.
+      # Dieser Schritt macht alle 50 Tage einen leeren Commit, damit alles weiterläuft.
       - name: Zeitplan aktiv halten
         run: |
           last=$(git log -1 --format=%ct)
           if [ $(( $(date +%s) - last )) -gt 4320000 ]; then
-            git config user.name "hausplaner-bot"
+            git config user.name "mindora-bot"
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
             git commit --allow-empty -m "Zeitplan aktiv halten"
             git push
