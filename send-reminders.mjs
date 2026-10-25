@@ -143,6 +143,39 @@ for (const p of projects.docs) {
     await p.ref.update({ lastAssess: today });
   }
 
+  // 3a) Neue Kommentare den anderen Mitgliedern melden
+  try {
+    const neu = (await p.ref.collection('comments').where('notified', '==', false).get()).docs;
+    const names = p.get('memberNames') || {};
+    for (const d of neu) {
+      const c = d.data();
+      if (c.at && c.at > now - 864e5) {
+        const task = (await p.ref.collection('tasks').doc(String(c.taskId || '-')).get()).data();
+        const who = names[c.by] || c.byName || 'Jemand';
+        sent += await send(all.filter((x) => x.uid !== c.by), `💬 ${who} zu „${task?.title || 'einer Aufgabe'}“`.slice(0, 120), String(c.text || '').slice(0, 200), 'c-' + d.id);
+      }
+      await d.ref.update({ notified: true });
+    }
+  } catch (e) { console.warn('Kommentare:', e.message); }
+
+  // 3b) Zahlungen: 3 Tage vorher und am Fälligkeitstag erinnern (ab 7 Uhr)
+  if (hour >= DIGEST_HOUR) {
+    try {
+      const offen = (await p.ref.collection('costs').where('paid', '==', false).get()).docs;
+      for (const d of offen) {
+        const c = d.data();
+        if (!c.due) continue;
+        const days = Math.round((new Date(`${c.due}T12:00:00`) - todayDate) / 864e5);
+        const stage = days <= 0 ? 'due' : days <= 3 ? 'soon' : null;
+        if (!stage || days < -7 || c.payNotified === `${stage}|${c.due}`) continue;
+        const amount = c.amount != null ? Number(c.amount).toLocaleString('de-DE', { style: 'currency', currency: 'EUR' }) : '';
+        const head = stage === 'soon' ? 'Zahlung bald fällig' : days < 0 ? 'Zahlung überfällig' : 'Zahlung heute fällig';
+        sent += await send(all, `💶 ${head}: ${c.title}`.slice(0, 120), [amount, `fällig ${fmtDue(c)}`].filter(Boolean).join(' · '), 'pay-' + d.id);
+        await d.ref.update({ payNotified: `${stage}|${c.due}` });
+      }
+    } catch (e) { console.warn('Zahlungen:', e.message); }
+  }
+
   // 3) Morgen-Übersicht (einmal pro Tag ab 7 Uhr)
   if (hour >= DIGEST_HOUR && p.get('lastDigest') !== today) {
     const due = open.map((d) => d.data()).filter((t) => t.due && t.due <= today).sort((a, b) => a.due.localeCompare(b.due));
