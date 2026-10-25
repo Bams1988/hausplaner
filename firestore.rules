@@ -1,14 +1,18 @@
 rules_version = '2';
-// Sicherheitsregeln für den Hausplaner.
-// Nur angemeldete Mitglieder eines Bauprojekts sehen und ändern dessen Daten.
+// Sicherheitsregeln für MindSpace.
+// Mitglieder sehen die Daten ihres gemeinsamen Bereichs. Mitglieder mit eingeschränktem Zugriff
+// (project.access[uid] = Liste von Bereichs-IDs) sehen nur Aufgaben, Kosten, Dateien und Kommentare
+// dieser Bereiche – E-Mail-Ablage, KI-Schlüssel und Einstellungen bleiben für sie unsichtbar.
 service cloud.firestore {
   match /databases/{db}/documents {
     function signedIn() { return request.auth != null; }
-    function isMember(pid) {
-      return signedIn() && request.auth.uid in get(/databases/$(db)/documents/projects/$(pid)).data.members;
-    }
+    function proj(pid) { return get(/databases/$(db)/documents/projects/$(pid)).data; }
+    function isMember(pid) { return signedIn() && request.auth.uid in proj(pid).members; }
+    function scopeOf(pid) { return proj(pid).get('access', {}).get(request.auth.uid, 'all'); }
+    function isFull(pid) { return isMember(pid) && scopeOf(pid) == 'all'; }
+    function canArea(pid, areaId) { return isMember(pid) && (scopeOf(pid) == 'all' || areaId in scopeOf(pid)); }
 
-    // Eigenes Profil (Name, Projekt, Push-Geräte)
+    // Eigenes Profil (Name, Projekt, Sprache, Push-Geräte)
     match /users/{uid} {
       allow read, write: if signedIn() && request.auth.uid == uid;
     }
@@ -16,27 +20,63 @@ service cloud.firestore {
     // Einladungscodes: nur einzeln abrufbar (kein Auflisten), 7 Tage gültig
     match /invites/{code} {
       allow get: if signedIn();
-      allow create: if isMember(request.resource.data.projectId);
-      allow delete: if signedIn() && isMember(resource.data.projectId);
+      allow create: if signedIn() && isFull(request.resource.data.projectId);
+      allow delete: if signedIn() && isFull(resource.data.projectId);
     }
 
     match /projects/{pid} {
       allow read: if signedIn() && request.auth.uid in resource.data.members;
       allow create: if signedIn() && request.resource.data.members == [request.auth.uid];
       allow update: if signedIn() && (
-        request.auth.uid in resource.data.members
+        (request.auth.uid in resource.data.members && resource.data.get('access', {}).get(request.auth.uid, 'all') == 'all')
         || (
-          // Beitreten mit gültigem Code: nur sich selbst hinzufügen
-          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['members', 'memberNames', 'joinCode'])
+          // Beitreten mit gültigem Code: nur sich selbst hinzufügen, mit dem Zugriff aus der Einladung
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['members', 'memberNames', 'joinCode', 'access'])
           && request.resource.data.members == resource.data.members.concat([request.auth.uid])
+          && request.resource.data.get('access', {}).diff(resource.data.get('access', {})).affectedKeys().hasOnly([request.auth.uid])
+          && request.resource.data.get('access', {}).get(request.auth.uid, 'all') == get(/databases/$(db)/documents/invites/$(request.resource.data.joinCode)).data.get('scope', 'all')
           && get(/databases/$(db)/documents/invites/$(request.resource.data.joinCode)).data.projectId == pid
           && get(/databases/$(db)/documents/invites/$(request.resource.data.joinCode)).data.expiresAt > request.time
         )
       );
       allow delete: if false;
 
-      match /{sub=**} {
+      // Daten je Bereich
+      match /tasks/{id} {
+        allow read, delete: if canArea(pid, resource.data.areaId);
+        allow create: if canArea(pid, request.resource.data.areaId);
+        allow update: if canArea(pid, resource.data.areaId) && canArea(pid, request.resource.data.areaId);
+      }
+      match /costs/{id} {
+        allow read, delete: if canArea(pid, resource.data.areaId);
+        allow create: if canArea(pid, request.resource.data.areaId);
+        allow update: if canArea(pid, resource.data.areaId) && canArea(pid, request.resource.data.areaId);
+      }
+      match /files/{id} {
+        allow read, delete: if canArea(pid, resource.data.areaId);
+        allow create: if canArea(pid, request.resource.data.areaId);
+        allow update: if canArea(pid, resource.data.areaId) && canArea(pid, request.resource.data.areaId);
+      }
+      match /fileParts/{id} {
+        allow read, delete: if canArea(pid, resource.data.areaId);
+        allow create, update: if canArea(pid, request.resource.data.areaId);
+      }
+      match /comments/{id} {
+        allow read: if canArea(pid, resource.data.areaId);
+        allow create: if canArea(pid, request.resource.data.areaId) && request.resource.data.by == request.auth.uid;
+        allow delete: if isFull(pid) || (canArea(pid, resource.data.areaId) && resource.data.by == request.auth.uid);
+        allow update: if isFull(pid);
+      }
+      match /areas/{areaId} {
+        allow read: if canArea(pid, areaId);
+        allow write: if isFull(pid);
+      }
+      match /contacts/{id} {
         allow read, write: if isMember(pid);
+      }
+      // Alles andere (E-Mail-Ablage, KI-Schlüssel, Protokolle) nur mit vollem Zugriff
+      match /{sub=**} {
+        allow read, write: if isFull(pid);
       }
     }
   }

@@ -31,6 +31,8 @@ const pad = (n) => String(n).padStart(2, '0');
 const iso = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 const de = (s) => (s ? `${+s.slice(8, 10)}.${+s.slice(5, 7)}.${s.slice(0, 4)}` : '');
 const todayLine = (d = new Date()) => `Heute ist ${WD[d.getDay()]}, der ${iso(d)}.`;
+// Ausgabesprache der KI-Texte (Oberfläche Deutsch oder Englisch)
+const langLine = (lang) => (lang === 'en' ? '\n\nWICHTIG: Schreibe alle Texte, die du zurückgibst (Titel, Details, Zusammenfassung, Gründe, nächste Schritte, Beschreibungen), auf Englisch. Zitate bleiben in Originalsprache.' : '');
 
 export class AiError extends Error {}
 
@@ -137,6 +139,10 @@ function extractTool(areas) {
               kontakt_name: { type: ['string', 'null'], description: 'Name des zuständigen Ansprechpartners, falls zuordenbar.' },
               zitat: { type: ['string', 'null'], description: 'Die entscheidende Textstelle wörtlich, max. 200 Zeichen.' },
               erledigt: { type: 'boolean', description: 'true, wenn der weitere Verlauf zeigt, dass es bereits erledigt ist.' },
+              wiederholung: { type: ['string', 'null'], enum: ['daily', 'weekdays', 'weekly', 'biweekly', 'monthly', 'quarterly', 'yearly', null], description: 'Nur bei ausdrücklich wiederkehrenden Aufgaben.' },
+              gehoert_zu_id: { type: ['string', 'null'], description: 'ID einer bereits vorhandenen offenen Aufgabe aus der Liste, wenn es inhaltlich um DIESELBE Sache geht (gleicher Vorgang, gleiche Unterlage, gleicher Termin) – dann wird gebündelt statt doppelt angelegt. Sonst null.' },
+              ergaenzung: { type: ['string', 'null'], description: 'Nur bei gehoert_zu_id: was an neuen Informationen dazukommt (neue Frist, Betrag, Rückmeldung), 1–2 Sätze.' },
+              anhaenge: { type: 'array', items: { type: 'integer' }, description: 'Nummern der Anhänge, die zu dieser Aufgabe gehören.' },
             },
           },
         },
@@ -153,6 +159,20 @@ function extractTool(areas) {
               art: { type: 'string', enum: ['rate', 'rechnung', 'sonderwunsch', 'eigenleistung', 'neben', 'finanzierung', 'sonst'], description: 'rate = Abschlag nach Baufortschritt; rechnung = sonstige Rechnung; sonderwunsch = Mehrkosten für Sonderwünsche; neben = Baunebenkosten wie Notar, Vermessung, Anschlüsse; finanzierung = Bankgebühren, Zinsen.' },
               bereich_id: { type: 'string', enum: areas.map((a) => a.id) },
               empfaenger: { type: ['string', 'null'], description: 'Wer das Geld bekommt.' },
+              anhang: { type: ['integer', 'null'], description: 'Nummer des Anhangs mit der Rechnung, falls vorhanden.' },
+            },
+          },
+        },
+        anhaenge_info: {
+          type: 'array',
+          description: 'Je Anhang eine kurze Beschreibung für die spätere Suche.',
+          items: {
+            type: 'object', required: ['nr', 'beschreibung'],
+            properties: {
+              nr: { type: 'integer' },
+              beschreibung: { type: 'string', description: 'Was das Dokument ist und die wichtigsten Angaben (Art, Absender, Datum, Beträge, Nummern), max. 200 Zeichen. Z. B. „Bauvertrag allkauf, unterschrieben 12.03.2026, Festpreis 382.000 €“.' },
+              titel: { type: ['string', 'null'], description: 'Sprechender Dateiname ohne Endung, z. B. „Bauvertrag allkauf 2026-03-12“.' },
+              bereich_id: { type: 'string', enum: areas.map((a) => a.id) },
             },
           },
         },
@@ -178,9 +198,9 @@ function extractTool(areas) {
   };
 }
 
-export async function extractFromText(cfg, text, { me = {}, contacts = [], openTasks = [], areas = DEFAULT_AREAS, now = new Date() } = {}) {
+export async function extractFromText(cfg, text, { me = {}, contacts = [], openTasks = [], areas = DEFAULT_AREAS, now = new Date(), lang = 'de', source = 'mail', attachments = [] } = {}) {
   areas = areas && areas.length ? areas : DEFAULT_AREAS;
-  const system = `Du bist Mindora, der persönliche Assistent einer Familie. Du liest E-Mails und Texte und machst daraus eine klare, verlässliche Aufgabenliste – damit Planung sich leicht anfühlt.
+  const system = `Du bist MindSpace, der persönliche Assistent einer Familie. Du liest E-Mails und Texte und machst daraus eine klare, verlässliche Aufgabenliste – damit Planung sich leicht anfühlt.
 
 ${todayLine(now)}
 Die Familie: ${[me.name, me.email].filter(Boolean).join(', ') || 'unbekannt'}${me.partner ? `, ${me.partner}` : ''}. Sie baut unter anderem mit dem Fertighaus-Anbieter allkauf ein Haus.
@@ -195,14 +215,27 @@ Regeln:
 - Datumsangaben immer als echtes Datum berechnen: „innerhalb von 14 Tagen“ ab Datum der Nachricht, „KW 47“ = Freitag dieser Woche, „Ende November“ = letzter Tag des Monats.
 - Vorlauf realistisch für Deutschland schätzen, z. B. Bankunterlagen 1–3 Wochen, Notar/Grundbuch 2–4 Wochen, Behörden 2–6 Wochen, Handwerkerangebote 2–3 Wochen, Arzttermin vereinbaren 1–4 Wochen, eigene Unterschrift/Upload 1–2 Tage, Termin wahrnehmen 0–1 Tag.
 - Kontakte: nur echte Personen oder Stellen mit mindestens einer Kontaktangabe (aus Signaturen, Kopfzeilen, Text). Nicht die Familie selbst. Telefonnummern so übernehmen, wie sie dastehen.
-- Zahlungen: Rechnungen, Abschlagsforderungen und Gebühren zusätzlich unter „zahlungen“ erfassen (Betrag brutto in Euro). Für eine reine Zahlungsaufforderung KEINE zusätzliche Aufgabe „… überweisen“ anlegen – Mindora erinnert an Zahlungen selbst. Nur wenn außer dem Überweisen noch etwas zu tun ist, gibt es eine Aufgabe.
-- Erfinde nichts. Fehlt eine Angabe, setze null.`;
+- Zahlungen: Rechnungen, Abschlagsforderungen und Gebühren zusätzlich unter „zahlungen“ erfassen (Betrag brutto in Euro). Für eine reine Zahlungsaufforderung KEINE zusätzliche Aufgabe „… überweisen“ anlegen – MindSpace erinnert an Zahlungen selbst. Nur wenn außer dem Überweisen noch etwas zu tun ist, gibt es eine Aufgabe.
+- Bündeln: Gibt es in der Liste der vorhandenen Aufgaben schon eine, bei der es um dieselbe Sache geht, setze gehoert_zu_id auf deren ID und beschreibe in ergaenzung, was neu ist. Lege keine Dubletten an. Nur bei wirklich gleichem Vorgang bündeln, nicht bloß beim gleichen Thema.
+- Anhänge: Lies angehängte Dokumente und Bilder vollständig. Wichtige Angaben daraus (Fristen, Beträge, Unterlagen, Termine) fließen in Aufgaben, Details und Zahlungen ein. Ordne jeder Aufgabe die passenden Anhänge zu und beschreibe jeden Anhang in anhaenge_info.${source === 'voice' ? `
+- Der Text ist eine gesprochene oder getippte Notiz des Nutzers selbst (keine E-Mail). Mache daraus eine oder mehrere Aufgaben für ihn. Relative Angaben („morgen“, „nächsten Freitag“, „in zwei Wochen“) ab heute rechnen. Uhrzeiten übernehmen. Wiederholungen („jeden Montag“, „monatlich“) im Feld wiederholung angeben. Kontakte nur, wenn ausdrücklich Kontaktdaten genannt werden.` : ''}
+- Erfinde nichts. Fehlt eine Angabe, setze null.${langLine(lang)}`;
 
   const known = contacts.length ? `\n\nBereits gespeicherte Kontakte (für die Zuordnung):\n${contacts.slice(0, 80).map((c) => `- ${c.name}${c.company ? ` (${c.company})` : ''}${c.email ? ` <${c.email}>` : ''}`).join('\n')}` : '';
-  const tasks = openTasks.length ? `\n\nBereits vorhandene offene Aufgaben (keine Dubletten anlegen; wenn sich eine Frist ändert, die Aufgabe trotzdem aufnehmen):\n${openTasks.slice(0, 80).map((t) => `- ${t.title}${t.due ? ` (fällig ${t.due})` : ''}`).join('\n')}` : '';
+  const tasks = openTasks.length ? `\n\nBereits vorhandene offene Aufgaben – [ID] Titel (keine Dubletten anlegen, sondern über gehoert_zu_id bündeln):\n${openTasks.slice(0, 120).map((t) => `- [${t.id}] ${t.title}${t.due ? ` (fällig ${t.due})` : ''}${t.areaId ? ` {${t.areaId}}` : ''}`).join('\n')}` : '';
   const clipped = text.length > 60000 ? text.slice(0, 60000) + '\n[… gekürzt]' : text;
-  const user = `Werte diesen Text aus:${known}${tasks}\n\n<text>\n${clipped}\n</text>`;
-  const r = await call(cfg, { system, user, tool: extractTool(areas), maxTokens: 16000, timeoutMs: 150000 });
+  const att = (attachments || []).slice(0, 10);
+  const attList = att.length ? `\n\nAnhänge (Nummer: Dateiname):\n${att.map((a, i) => `${i + 1}: ${a.name}`).join('\n')}` : '';
+  const userText = `Werte ${source === 'voice' ? 'diese Notiz' : 'diesen Text'} aus:${known}${tasks}${attList}\n\n<text>\n${clipped}\n</text>`;
+  const user = att.length ? [
+    ...att.map((a, i) => (/pdf/i.test(a.mediaType)
+      ? { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: a.data }, title: `Anhang ${i + 1}: ${a.name}` }
+      : { type: 'image', source: { type: 'base64', media_type: a.mediaType, data: a.data } })),
+    { type: 'text', text: userText },
+  ] : userText;
+  const r = await call(cfg, { system, user, tool: extractTool(areas), maxTokens: 16000, timeoutMs: 180000 });
+  const openIds = new Set(openTasks.map((t) => t.id));
+  const attIdx = (n) => (Number.isInteger(n) && n >= 1 && n <= att.length ? n - 1 : null);
   const ids = new Set(areas.map((a) => a.id));
   const fallbackArea = ids.has('alltag') ? 'alltag' : areas[0].id;
   return {
@@ -227,6 +260,10 @@ Regeln:
         contactName: a.kontakt_name || null,
         quote: a.zitat || '',
         done: !!a.erledigt,
+        matchId: a.gehoert_zu_id && openIds.has(a.gehoert_zu_id) ? a.gehoert_zu_id : null,
+        addition: a.ergaenzung || '',
+        attachments: [...new Set((Array.isArray(a.anhaenge) ? a.anhaenge : []).map(attIdx).filter((x) => x != null))],
+        repeat: ['daily', 'weekdays', 'weekly', 'biweekly', 'monthly', 'quarterly', 'yearly'].includes(a.wiederholung) ? a.wiederholung : null,
       };
     }).filter((t) => t.title),
     payments: (Array.isArray(r.zahlungen) ? r.zahlungen : []).map((z) => ({
@@ -236,7 +273,11 @@ Regeln:
       kind: ['rate', 'rechnung', 'sonderwunsch', 'eigenleistung', 'neben', 'finanzierung', 'sonst'].includes(z.art) ? z.art : 'rechnung',
       areaId: ids.has(z.bereich_id) ? z.bereich_id : (ids.has('hausbau') ? 'hausbau' : fallbackArea),
       payee: z.empfaenger || null,
+      attachment: attIdx(z.anhang),
     })).filter((z) => z.title),
+    attachmentInfo: (Array.isArray(r.anhaenge_info) ? r.anhaenge_info : []).map((x) => ({
+      index: attIdx(x.nr), desc: String(x.beschreibung || '').slice(0, 300), title: x.titel ? String(x.titel).slice(0, 80) : null, areaId: ids.has(x.bereich_id) ? x.bereich_id : null,
+    })).filter((x) => x.index != null),
     contacts: (r.kontakte || []).map((k) => ({
       name: String(k.name || '').trim(), company: k.firma || '', role: k.rolle || '', email: (k.email || '').trim().toLowerCase(),
       phone: k.telefon || '', mobile: k.mobil || '', address: k.adresse || '', notes: k.notiz || '',
@@ -257,9 +298,9 @@ const DRAFT_TOOL = {
     },
   },
 };
-export async function draftEmail(cfg, { task, contact, sender, project, instruction = '', now = new Date() }) {
+export async function draftEmail(cfg, { task, contact, sender, project, instruction = '', now = new Date(), lang = 'de' }) {
   const system = `Du schreibst E-Mails im Namen einer Familie (sie baut u. a. mit allkauf ein Haus). ${todayLine(now)}
-Schreibe auf Deutsch, freundlich, sachlich und knapp (Sie-Form, außer die Vorlage duzt). Nenne konkrete Bezüge (Vorgang, Unterlagen, Termine, Fristen), aber erfinde keine Fakten, Aktenzeichen oder Zusagen. Unterschreibe mit dem Namen des Absenders.`;
+Schreibe auf ${lang === 'en' ? 'Englisch (außer der Empfänger ist erkennbar deutschsprachig, dann Deutsch)' : 'Deutsch'}, freundlich, sachlich und knapp (Sie-Form, außer die Vorlage duzt). Nenne konkrete Bezüge (Vorgang, Unterlagen, Termine, Fristen), aber erfinde keine Fakten, Aktenzeichen oder Zusagen. Unterschreibe mit dem Namen des Absenders.`;
   const parts = [
     `Absender: ${sender || 'die Bauherren'}`,
     project ? `Bereich: ${project}` : '',
@@ -294,10 +335,10 @@ const ASSESS_TOOL = {
     },
   },
 };
-export async function assessTasks(cfg, tasks, { now = new Date() } = {}) {
+export async function assessTasks(cfg, tasks, { now = new Date(), lang = 'de' } = {}) {
   if (!tasks.length) return [];
-  const system = `Du bist Mindora, ein ruhiger, ermutigender persönlicher Assistent. Du bewertest, ob offene Aufgaben einer berufstätigen Familie bis zu ihrer Frist noch realistisch zu schaffen sind und ob man sie jetzt angehen sollte. ${todayLine(now)}
-Berücksichtige Wartezeiten auf Dritte (Bank, Notar, Behörden, Ärzte, Handwerker), Wochenenden und Feiertage und Postlaufzeiten. Formuliere Grund und nächsten Schritt positiv und machbar. Sei realistisch, nicht ängstlich: „jetzt_starten“ nur, wenn ein späterer Beginn die Frist gefährdet. Bewerte jede Aufgabe genau einmal mit ihrer id.`;
+  const system = `Du bist MindSpace, ein ruhiger, ermutigender persönlicher Assistent. Du bewertest, ob offene Aufgaben einer berufstätigen Familie bis zu ihrer Frist noch realistisch zu schaffen sind und ob man sie jetzt angehen sollte. ${todayLine(now)}
+Berücksichtige Wartezeiten auf Dritte (Bank, Notar, Behörden, Ärzte, Handwerker), Wochenenden und Feiertage und Postlaufzeiten. Formuliere Grund und nächsten Schritt positiv und machbar. Sei realistisch, nicht ängstlich: „jetzt_starten“ nur, wenn ein späterer Beginn die Frist gefährdet. Bewerte jede Aufgabe genau einmal mit ihrer id.${langLine(lang)}`;
   const list = tasks.map((t) => ({
     id: t.id, titel: t.title, faellig: t.due, uhrzeit: t.time || null, bereich: t.areaName || t.phase || null,
     vorlauf_tage_geschaetzt: t.leadDays ?? null, angelegt_am: t.createdAt ? iso(new Date(t.createdAt)) : null,
@@ -308,6 +349,28 @@ Berücksichtige Wartezeiten auf Dritte (Bank, Notar, Behörden, Ärzte, Handwerk
   return (r.bewertungen || []).filter((b) => byId.has(b.id) && STATUS[b.status]).map((b) => ({
     id: b.id, status: b.status, startBy: validDate(b.starten_bis), reason: b.grund || '', next: b.naechster_schritt || '',
   }));
+}
+
+// ------------------------------------------------------------------ 4. Suchen: Was sucht der Nutzer, wo liegt es?
+const SEARCH_TOOL = {
+  name: 'suchergebnis',
+  description: 'Gibt die passenden Einträge zurück.',
+  input_schema: {
+    type: 'object', required: ['antwort', 'treffer'],
+    properties: {
+      antwort: { type: 'string', description: 'Ein bis zwei kurze Sätze: was gefunden wurde und wo es liegt (Bereich → Aufgabe/Kosten). Wenn nichts passt, das freundlich sagen.' },
+      treffer: {
+        type: 'array', description: 'Die passendsten Einträge, bester zuerst, höchstens 8.',
+        items: { type: 'object', required: ['id'], properties: { id: { type: 'string', description: 'ID aus dem Verzeichnis, z. B. f:abc oder t:xyz.' }, grund: { type: ['string', 'null'], description: 'Warum es passt, max. 80 Zeichen.' } } },
+      },
+    },
+  },
+};
+export async function searchWithAI(cfg, query, index, { now = new Date(), lang = 'de' } = {}) {
+  const system = `Du bist die Suche von MindSpace. Der Nutzer sucht etwas in seinen Aufgaben, Dateien, Kosten, Kontakten und E-Mails – oft umgangssprachlich oder gesprochen („wo ist nochmal der Bauvertrag“, „was hat die Bank wegen der Zinsen geschrieben“). Finde die passenden Einträge im Verzeichnis, auch über Synonyme und Zusammenhänge (Rechnung ↔ Abschlag, Vertrag ↔ Bauvertrag, Grundriss ↔ Plan). ${todayLine(now)}
+Antworte nur mit IDs aus dem Verzeichnis. Dateien (f:) sind besonders wichtig, wenn nach Dokumenten gefragt wird – nenne dann in der Antwort, an welcher Aufgabe und in welchem Bereich sie liegen.${langLine(lang)}`;
+  const r = await call(cfg, { system, user: `Suche: ${query}\n\nVerzeichnis (eine Zeile je Eintrag):\n${index}`, tool: SEARCH_TOOL, maxTokens: 2000, timeoutMs: 60000 });
+  return { answer: r.antwort || '', hits: (Array.isArray(r.treffer) ? r.treffer : []).filter((h) => h && h.id).map((h) => ({ id: String(h.id), why: h.grund || '' })) };
 }
 
 // ------------------------------------------------------------------ Regel-Variante ohne KI

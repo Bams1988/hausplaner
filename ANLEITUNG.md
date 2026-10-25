@@ -1,6 +1,6 @@
-# Mindora – Einrichtung
+# MindSpace – Einrichtung
 
-Mindora ist dein persönlicher Assistent für alle Lebensbereiche: Aufgaben, Fristen, ein Projektplan, der von selbst wächst, und ein E-Mail-Eingang, aus dem die KI Aufgaben macht. Mindora ist eine Web-App, die du auf dem iPhone zum Home-Bildschirm hinzufügst. Danach startet sie wie eine normale App: eigenes Symbol, Vollbild, Push-Nachrichten. Kein App Store, kein Mac.
+MindSpace ist dein persönlicher Assistent für alle Lebensbereiche: Aufgaben, Fristen, ein Projektplan, der von selbst wächst, und ein E-Mail-Eingang, aus dem die KI Aufgaben macht. MindSpace ist eine Web-App, die du auf dem iPhone zum Home-Bildschirm hinzufügst. Danach startet sie wie eine normale App: eigenes Symbol, Vollbild, Push-Nachrichten. Kein App Store, kein Mac.
 
 Die Einrichtung hat fünf Stufen. Schon nach Stufe 1 kannst du die App benutzen.
 
@@ -13,6 +13,12 @@ Die Einrichtung hat fünf Stufen. Schon nach Stufe 1 kannst du die App benutzen.
 | 5. E-Mail-Eingang | Mails einfach weiterleiten – Aufgaben entstehen innerhalb von 1–2 Minuten | ca. 15 Min. |
 
 > **Du hattest schon den Hausplaner eingerichtet?** Dann lies zuerst den Abschnitt **„Umstieg vom Hausplaner“** ganz unten. Stufe 1–4 musst du nicht wiederholen.
+
+> **Update auf Version 10 (MindSpace)** – wenn MindSpace/Mindora bei dir schon läuft, reichen diese Schritte:
+> 1. **GitHub → Add file → Upload files:** `app.js`, `store.js`, `ai.js`, `i18n.js` (neu), `styles.css`, `sw.js`, `index.html`, `manifest.webmanifest`, `firestore.rules`, `ANLEITUNG.md` an die gewohnte Stelle, dazu den Ordner-Inhalt `icons/` (alle 5 Dateien, auch `logo.svg`) in den Ordner `icons` und `send-reminders.mjs` in den Ordner `scripts`. `config.js` nicht anfassen. → **Commit changes**.
+> 2. **Firebase → Firestore Database → Regeln:** alles löschen, Inhalt der neuen `firestore.rules` einfügen → **Veröffentlichen**. (Wichtig für das Einladen zu einzelnen Projekten.)
+> 3. **Postbote:** in script.google.com den gesamten Code löschen, Inhalt von `MindSpace-Postbote.gs` einfügen, speichern. Fragt Google beim nächsten Ausführen nach Berechtigungen, **zulassen**.
+> 4. Auf jedem Gerät unter **Mehr → App → Neueste Version laden**. Dort steht dann **Version 10**. Damit das neue Symbol erscheint: MindSpace vom Home-Bildschirm löschen und neu hinzufügen (Daten bleiben erhalten).
 
 Am besten machst du das an einem privaten Computer (Windows oder Mac), mit einem Browser – installieren musst du nichts.
 
@@ -31,7 +37,7 @@ Am besten machst du das an einem privaten Computer (Windows oder Mac), mit einem
 5. **Settings → Pages**. Bei *Branch* `main` und `/ (root)` wählen, **Save**.
 6. Nach 1–2 Minuten steht oben die Adresse, z. B. `https://DEINNAME.github.io/hausplaner/`.
 
-**Auf dem iPhone:** Adresse in **Safari** öffnen → unten auf **Teilen** (Quadrat mit Pfeil) → **Zum Home-Bildschirm** → **Hinzufügen**. Ab jetzt Mindora immer über dieses Symbol öffnen.
+**Auf dem iPhone:** Adresse in **Safari** öffnen → unten auf **Teilen** (Quadrat mit Pfeil) → **Zum Home-Bildschirm** → **Hinzufügen**. Ab jetzt MindSpace immer über dieses Symbol öffnen.
 
 Die App läuft jetzt im *lokalen Modus*: alles funktioniert, die Daten bleiben aber auf diesem iPhone.
 
@@ -47,7 +53,7 @@ Firebase ist ein Dienst von Google. Der kostenlose Tarif „Spark“ reicht für
 
 ### 2.2 Web-App registrieren
 1. Auf der Projektübersicht das Symbol **`</>`** (Web) anklicken.
-2. Spitzname `Mindora`, Hosting **nicht** anhaken → **App registrieren**.
+2. Spitzname `MindSpace`, Hosting **nicht** anhaken → **App registrieren**.
 3. Es erscheint ein Code-Block mit `const firebaseConfig = { apiKey: "...", ... }`. Diese Werte brauchst du gleich.
 
 ### 2.3 Werte in `config.js` eintragen
@@ -82,7 +88,7 @@ Firebase ist ein Dienst von Google. Der kostenlose Tarif „Spark“ reicht für
 4. Auf GitHub **Commit changes**.
 
 ### 2.7 Loslegen
-1. Mindora auf dem iPhone schließen (in der App-Übersicht nach oben wischen) und neu öffnen. Es erscheint die Anmeldung.
+1. MindSpace auf dem iPhone schließen (in der App-Übersicht nach oben wischen) und neu öffnen. Es erscheint die Anmeldung.
 2. **Konto erstellen** → **Loslegen**. Aufgaben aus dem lokalen Modus werden auf Wunsch übernommen.
 3. **Mehr → Partnerin oder Partner einladen** → **Einladung senden** (z. B. per WhatsApp an deine Frau).
 4. Deine Frau öffnet den Link in Safari, fügt die App zum Home-Bildschirm hinzu, erstellt ein Konto und gibt den Code ein.
@@ -113,8 +119,8 @@ Ein kleines Programm in deinem GitHub-Repository schaut alle 5 Minuten nach fäl
 3. Den Inhalt der Datei `reminders.yml` (liegt im Hauptordner der ZIP) hineinkopieren → **Commit changes**.
 
 ### 3.4 Push auf dem iPhone aktivieren und testen
-1. Mindora vom Home-Bildschirm öffnen → **Mehr → Push-Nachrichten → Aktivieren** → **Erlauben**. (Deine Frau macht das auf ihrem iPhone genauso.)
-2. GitHub → Reiter **Actions** → links **Mindora** → **Run workflow** → Haken „Test-Nachricht“ lassen → **Run workflow**.
+1. MindSpace vom Home-Bildschirm öffnen → **Mehr → Push-Nachrichten → Aktivieren** → **Erlauben**. (Deine Frau macht das auf ihrem iPhone genauso.)
+2. GitHub → Reiter **Actions** → links **MindSpace** → **Run workflow** → Haken „Test-Nachricht“ lassen → **Run workflow**.
 3. Nach etwa einer Minute kommt auf beiden iPhones „Test: Push-Nachrichten funktionieren.“
 
 Ab jetzt läuft alles von selbst:
@@ -135,10 +141,10 @@ Der KI-Assistent nutzt **Claude von Anthropic**. Er liest eingefügte E-Mails un
 1. **console.anthropic.com** öffnen und ein Konto anlegen.
 2. Unter **Billing** (Abrechnung) Guthaben aufladen, z. B. 5 $.
 3. Unter **Limits** ein monatliches Ausgabelimit setzen, z. B. 5 $. So kann nie mehr verbraucht werden.
-4. Unter **API Keys** → **Create Key** → Name `Mindora` → Schlüssel kopieren. Er beginnt mit `sk-ant-` und wird nur **einmal** angezeigt.
+4. Unter **API Keys** → **Create Key** → Name `MindSpace` → Schlüssel kopieren. Er beginnt mit `sk-ant-` und wird nur **einmal** angezeigt.
 
 ### 4.2 In der App eintragen
-1. Mindora öffnen → **Mehr → KI-Assistent → Einrichten**.
+1. MindSpace öffnen → **Mehr → KI-Assistent → Einrichten**.
 2. Schlüssel einfügen, Modell **Claude Sonnet 5.5** lassen → **Prüfen und speichern**.
 
 Der Schlüssel wird in eurem Bauprojekt gespeichert. Deine Frau kann die KI damit ebenfalls nutzen, und die tägliche Fristprüfung (Stufe 3) verwendet ihn automatisch. An GitHub musst du dafür nichts ändern.
@@ -147,16 +153,16 @@ Der Schlüssel wird in eurem Bauprojekt gespeichert. Deine Frau kann die KI dami
 
 ## Stufe 5 – E-Mail-Eingang (Gmail, jede Minute)
 
-Mindora bekommt ein eigenes Gmail-Postfach. Ein kleines Programm – der **Mindora-Postbote** – läuft direkt in diesem Gmail-Konto bei Google und schaut **jede Minute** nach neuen Mails. Es lässt sie von der KI auswerten, legt Aufgaben (markiert als **neu**) und Kontakte an, speichert die Mail in der Ablage und schickt dir eine Push-Nachricht. Kostenlos, ohne App-Passwort. Voraussetzung: Stufe 2, 3 und 4 sind eingerichtet.
+MindSpace bekommt ein eigenes Gmail-Postfach. Ein kleines Programm – der **MindSpace-Postbote** – läuft direkt in diesem Gmail-Konto bei Google und schaut **jede Minute** nach neuen Mails. Es lässt sie von der KI auswerten, legt Aufgaben (markiert als **neu**) und Kontakte an, speichert die Mail in der Ablage und schickt dir eine Push-Nachricht. Kostenlos, ohne App-Passwort. Voraussetzung: Stufe 2, 3 und 4 sind eingerichtet.
 
 ### 5.1 Neues Gmail-Konto
-Auf **accounts.google.com** ein neues Google-Konto anlegen, z. B. `mindora.deinname@gmail.com` – nur für Mindora, nicht dein privates.
+Auf **accounts.google.com** ein neues Google-Konto anlegen, z. B. `mindora.deinname@gmail.com` – nur für MindSpace, nicht dein privates.
 
 ### 5.2 Postbote anlegen
-1. Mit dem **Mindora-Gmail-Konto** angemeldet **script.google.com** öffnen (oben rechts prüfen, dass das richtige Konto aktiv ist).
-2. **Neues Projekt**. Oben links auf „Unbenanntes Projekt“ klicken → Name `Mindora Postbote` → **Umbenennen**.
+1. Mit dem **MindSpace-Gmail-Konto** angemeldet **script.google.com** öffnen (oben rechts prüfen, dass das richtige Konto aktiv ist).
+2. **Neues Projekt**. Oben links auf „Unbenanntes Projekt“ klicken → Name `MindSpace Postbote` → **Umbenennen**.
 3. Im Editor den vorhandenen Text (`function myFunction() …`) komplett löschen.
-4. Die Datei **`Mindora-Postbote.gs`** mit einem Texteditor öffnen, **alles** kopieren und einfügen. Mit dem Disketten-Symbol (oder Strg+S) speichern.
+4. Die Datei **`MindSpace-Postbote.gs`** mit einem Texteditor öffnen, **alles** kopieren und einfügen. Mit dem Disketten-Symbol (oder Strg+S) speichern.
 
 ### 5.3 Zugang zu Firebase hinterlegen
 1. Links auf das **Zahnrad (Projekteinstellungen)**.
@@ -169,7 +175,7 @@ Auf **accounts.google.com** ein neues Google-Konto anlegen, z. B. `mindora.deinn
 ### 5.4 Einschalten
 1. Links auf **Editor** (Symbol `< >`).
 2. Oben in der Leiste im Auswahlfeld neben „Ausführen“ die Funktion **`einrichten`** wählen → **Ausführen**.
-3. Google fragt nach Berechtigungen: **Berechtigungen prüfen** → Mindora-Konto wählen → es erscheint „Google hat diese App nicht überprüft“. Das ist normal, weil es dein eigenes Programm ist: **Erweitert** → **Zu Mindora Postbote (unsicher) wechseln** → **Zulassen**.
+3. Google fragt nach Berechtigungen: **Berechtigungen prüfen** → MindSpace-Konto wählen → es erscheint „Google hat diese App nicht überprüft“. Das ist normal, weil es dein eigenes Programm ist: **Erweitert** → **Zu MindSpace Postbote (unsicher) wechseln** → **Zulassen**.
 4. Unten im **Ausführungsprotokoll** erscheinen grüne Häkchen:
    „✓ Firebase-Zugang gefunden“, „✓ Gemeinsamer Bereich …“, „✓ Zeitplan eingerichtet …“.
 
@@ -179,21 +185,21 @@ Ab jetzt läuft der Postbote von selbst jede Minute – auch wenn der Computer a
 Falls du vorher `INBOX_USER` und `INBOX_PASSWORD` bei GitHub eingetragen hast: unter **Settings → Secrets and variables → Actions** beide **löschen** (Mülleimer). Sonst lesen zwei Programme dasselbe Postfach.
 
 ### 5.6 Testen
-1. Eine E-Mail an die Mindora-Adresse weiterleiten – **von der Adresse, mit der du bei Mindora angemeldet bist**.
-2. Nach 1–2 Minuten kommt „📬 … neue Aufgaben“. In Mindora steht sie unter **Eingang → Neu**.
+1. Eine E-Mail an die MindSpace-Adresse weiterleiten – **von der Adresse, mit der du bei MindSpace angemeldet bist**.
+2. Nach 1–2 Minuten kommt „📬 … neue Aufgaben“. In MindSpace steht sie unter **Eingang → Neu**.
 
-**Was passiert mit anderen Absendern?** Mindora liest nur Mails von euren eigenen Adressen und von erlaubten Absendern. Kommt etwas von einem anderen Absender (z. B. weil du bei GMX eine automatische Weiterleitung für allkauf eingerichtet hast), zeigt Mindora unter **Eingang** „Nicht gelesen: …“ mit einem Knopf **Erlauben**. Danach die Mail einmal neu weiterleiten.
+**Was passiert mit anderen Absendern?** MindSpace liest nur Mails von euren eigenen Adressen und von erlaubten Absendern. Kommt etwas von einem anderen Absender (z. B. weil du bei GMX eine automatische Weiterleitung für allkauf eingerichtet hast), zeigt MindSpace unter **Eingang** „Nicht gelesen: …“ mit einem Knopf **Erlauben**. Danach die Mail einmal neu weiterleiten.
 
-**Nachsehen, was der Postbote macht:** script.google.com → Mindora Postbote → links **Ausführungen**. Jede Minute steht dort ein Lauf; bei verarbeiteten Mails steht im Protokoll z. B. „Verarbeitet: „Bauvorhaben“ – 2 neue Aufgaben“ oder „Ignoriert: … Absender ist nicht erlaubt“. In Gmail bekommen verarbeitete Mails das Label **Mindora**.
+**Nachsehen, was der Postbote macht:** script.google.com → MindSpace Postbote → links **Ausführungen**. Jede Minute steht dort ein Lauf; bei verarbeiteten Mails steht im Protokoll z. B. „Verarbeitet: „Bauvorhaben“ – 2 neue Aufgaben“ oder „Ignoriert: … Absender ist nicht erlaubt“. In Gmail bekommen verarbeitete Mails das Label **MindSpace**.
 
 ---
 
-## Mindora am Computer
+## MindSpace am Computer
 
-Mindora läuft auch auf Windows-PC und Mac als eigenes Programm – mit eigenem Fenster und Symbol in Taskleiste oder Dock. Es ist dieselbe App wie auf dem iPhone, alle Daten sind sofort überall gleich. Eine Installation mit Admin-Rechten ist nicht nötig.
+MindSpace läuft auch auf Windows-PC und Mac als eigenes Programm – mit eigenem Fenster und Symbol in Taskleiste oder Dock. Es ist dieselbe App wie auf dem iPhone, alle Daten sind sofort überall gleich. Eine Installation mit Admin-Rechten ist nicht nötig.
 
 **Windows mit Microsoft Edge (empfohlen)**
-1. In Edge deine Mindora-Adresse öffnen (z. B. `https://bams1988.github.io/hausplaner/`) und anmelden.
+1. In Edge deine MindSpace-Adresse öffnen (z. B. `https://bams1988.github.io/hausplaner/`) und anmelden.
 2. Oben rechts auf **…** → **Apps** → **Diese Website als App installieren** → **Installieren**.
 3. Im Fenster, das danach kommt, **An Taskleiste anheften** und **Desktopverknüpfung erstellen** anhaken.
 
@@ -203,18 +209,33 @@ In der Adresszeile rechts auf das Symbol **Installieren** klicken (Bildschirm mi
 **Mac mit Safari**
 Menü **Ablage** → **Zum Dock hinzufügen**.
 
-Alternativ in Mindora unter **Mehr → App → Als Programm installieren** (Edge und Chrome).
+Alternativ in MindSpace unter **Mehr → App → Als Programm installieren** (Edge und Chrome).
 
 **Am Computer gibt es zusätzlich:**
 - Seitenleiste links statt Leiste unten, breite Übersicht in zwei Spalten, Monatskalender mit Aufgabentiteln.
 - Tastenkürzel: **N** = neue Aufgabe, **/** = Schnelleingabe, **1–5** = Übersicht, Aufgaben, Plan, Eingang, Mehr, **Esc** = schließen.
 - Dateien (PDF, Fotos) einfach mit der Maus in eine geöffnete Aufgabe, Zahlung oder in „Fotos & Dokumente“ ziehen.
-- Rechtsklick auf das Mindora-Symbol in der Taskleiste: **Neue Aufgabe**, **Planer**, **Eingang**, **Kosten**.
+- Rechtsklick auf das MindSpace-Symbol in der Taskleiste: **Neue Aufgabe**, **Planer**, **Eingang**, **Kosten**.
 - Push-Nachrichten: unter **Mehr → Push-Nachrichten → Aktivieren** – auf jedem Computer einmal.
 
-**Hinweis Firmen-PC:** Manche Firmen sperren das Installieren von Web-Apps oder Benachrichtigungen. Dann Mindora einfach als Lesezeichen im Browser nutzen – funktioniert genauso, nur im Browser-Tab.
+**Hinweis Firmen-PC:** Manche Firmen sperren das Installieren von Web-Apps oder Benachrichtigungen. Dann MindSpace einfach als Lesezeichen im Browser nutzen – funktioniert genauso, nur im Browser-Tab.
 
-## So benutzt du Mindora
+## So benutzt du MindSpace
+
+**Suchen:** Lupe oben rechts (am Computer links in der Seitenleiste oder **Strg+K**). Tippen findet sofort Aufgaben, Kommentare, Fotos & Dokumente, Kosten, Kontakte und E-Mails. Mit **Enter** oder dem **Mikrofon** fragst du die KI, z. B. „Wo ist nochmal der Bauvertrag?“ – sie zeigt, in welchem Projekt und an welcher Aufgabe die Datei liegt, und du öffnest sie direkt.
+
+**Sprachnotiz:** Mikrofon in der Schnelleingabe (am Computer Taste **M**). Sprechen, z. B. „Morgen um 10 die Bank wegen der Zinsbindung anrufen und jeden Dienstag Müll rausbringen“ – die KI macht daraus Aufgaben mit Datum, Uhrzeit, Bereich und Wiederholung. Du prüfst kurz und tippst **Übernehmen**. Klappt das Mitschreiben nicht, nutze das Mikrofon der iPhone-Tastatur.
+
+**Bündeln statt doppelt:** Passt etwas Neues zu einer offenen Aufgabe (gleicher Vorgang), legt MindSpace keine zweite an. Die neue Info landet als Eintrag im **Verlauf** der vorhandenen Aufgabe, eine frühere Frist wird übernommen. Das gilt für die Schnelleingabe, Sprachnotizen, eingefügte E-Mails und den E-Mail-Eingang. Beim Einfügen kannst du das Bündeln je Aufgabe abwählen; in der Schnelleingabe hilft „Doch neu“.
+
+**Anhänge aus E-Mails:** Der Postbote liest PDFs und Bilder im Anhang mit (z. B. Unterlagenlisten, Rechnungen, Bescheide). Wichtige Angaben fließen in Aufgaben und Zahlungen ein, die Anhänge werden an der passenden Aufgabe bzw. Zahlung abgelegt und gehören damit zum Projekt. Jede Datei bekommt eine kurze Beschreibung – so findet die Suche auch Inhalte.
+
+**Einladen – zu allem oder zu einzelnen Projekten:** **Mehr → Jemanden einladen**. „Alle Projekte“ für deine Partnerin, „Nur bestimmte Projekte“ z. B. für Großeltern (nur Familie) oder einen Bauberater (nur Hausbau). Eingeschränkte Mitglieder sehen nur Aufgaben, Kosten, Dateien und Kommentare ihrer Projekte – keine E-Mail-Ablage, keinen KI-Schlüssel, keine Einstellungen – und bekommen nur dazu Push-Nachrichten. Unter **Mehr → Gemeinsam planen** tippst du auf eine Person, um ihren Zugriff zu ändern oder sie zu entfernen.
+
+**Sprache & Design:** **Mehr → Darstellung**: Deutsch oder Englisch, Hell, Dunkel oder Automatisch (wie das System). Die KI antwortet und Push-Nachrichten kommen in der gewählten Sprache.
+
+**Face ID / Fingerabdruck:** **Mehr → Sicherheit → Einschalten**. Danach ist MindSpace beim Öffnen (und nach 2 Minuten im Hintergrund) gesperrt und wird mit Face ID, Touch ID oder Windows Hello entsperrt. Die erste Anmeldung pro Gerät bleibt mit E-Mail und Passwort; „Stattdessen mit Passwort anmelden“ hilft, falls die Biometrie mal nicht klappt.
+
 
 **Übersicht:** Oben die Schnelleingabe („Bank anrufen morgen 10 Uhr #hausbau“, „Müll rausbringen jeden Dienstag“). Darunter vier Kacheln (Heute, Überfällig, Jetzt starten, 7 Tage) – antippen zeigt die passenden Aufgaben. Dazu Wochenblick, Kosten und Projekte.
 
@@ -224,7 +245,7 @@ Alternativ in Mindora unter **Mehr → App → Als Programm installieren** (Edge
 
 **Plan:** **7 Tage** (jeder Tag ein Abschnitt), **Monat** (Kalender mit Punkten) und **Projekte** (Fortschritt Schritt für Schritt, dazu Kosten und Fotos des Projekts).
 
-**Wiederkehrende Aufgaben:** In der Aufgabe unter **Wiederholen** (täglich, werktags, wöchentlich, alle 2 Wochen, monatlich, vierteljährlich, jährlich) – oder direkt in der Schnelleingabe: „jeden Montag“, „monatlich“, „jährlich“. Beim Abhaken legt Mindora den nächsten Termin automatisch an.
+**Wiederkehrende Aufgaben:** In der Aufgabe unter **Wiederholen** (täglich, werktags, wöchentlich, alle 2 Wochen, monatlich, vierteljährlich, jährlich) – oder direkt in der Schnelleingabe: „jeden Montag“, „monatlich“, „jährlich“. Beim Abhaken legt MindSpace den nächsten Termin automatisch an.
 
 **Kosten & Zahlungen:** **Mehr → Kosten & Zahlungen** (oder im Projekt Hausbau). Mit **Ratenplan aus Vorlage** legst du die Abschläge nach Baufortschritt an – Gesamtpreis eintragen, Prozente aus eurem allkauf-Vertrag übernehmen. Dazu kommen Rechnungen, Sonderwünsche und Nebenkosten. Mit **Budget festlegen** siehst du, wie viel Puffer bleibt. Haken = bezahlt. Für offene Zahlungen mit Datum kommt 3 Tage vorher und am Fälligkeitstag eine Push-Nachricht. Rechnungen in E-Mails erkennt die KI und legt sie hier an.
 
@@ -232,7 +253,7 @@ Alternativ in Mindora unter **Mehr → App → Als Programm installieren** (Edge
 
 **Kommentare:** Unten in jeder Aufgabe steht der **Verlauf** (angelegt, erledigt von wem) und darunter das Kommentarfeld. Die anderen bekommen eine Push-Nachricht. In der Liste zeigen 💬 und 📎, wo es Kommentare oder Dateien gibt.
 
-**E-Mails einlesen:** Weiterleiten an das Mindora-Postfach (Stufe 5) – oder im Mail-Programm den Text markieren und kopieren → **Eingang → Einfügen** → einfügen → auswerten. Die App erkennt Bitten („Bitte senden Sie…“, „Wir benötigen…“), Fragen an dich, Fristen („bis spätestens 06.11.“, „innerhalb von 14 Tagen“, „KW 47“) und Termine. Du prüfst die Vorschläge, passt sie an und übernimmst sie. Die E-Mail wird auf Wunsch unter **Eingang → Ablage** gespeichert.
+**E-Mails einlesen:** Weiterleiten an das MindSpace-Postfach (Stufe 5) – oder im Mail-Programm den Text markieren und kopieren → **Eingang → Einfügen** → einfügen → auswerten. Die App erkennt Bitten („Bitte senden Sie…“, „Wir benötigen…“), Fragen an dich, Fristen („bis spätestens 06.11.“, „innerhalb von 14 Tagen“, „KW 47“) und Termine. Du prüfst die Vorschläge, passt sie an und übernimmst sie. Die E-Mail wird auf Wunsch unter **Eingang → Ablage** gespeichert.
 
 **Allkauf-App:** Text dort markieren und einfügen – oder einen **Screenshot** machen und unter **Eingang → Einfügen → Screenshot lesen** wählen. Die Texterkennung läuft im iPhone selbst; beim ersten Mal lädt sie ca. 15 MB.
 
@@ -254,7 +275,7 @@ Du prüfst alles und tippst auf **Übernehmen**. Ohne KI-Assistent arbeitet die 
 
 ## Warum keine direkte Verbindung zur Allkauf-App?
 
-Allkauf bietet keine öffentliche Schnittstelle. Der Login ist mit Google Authenticator gesichert: Bei jeder Anmeldung wird ein neuer 6-stelliger Code verlangt. Eine automatische Verbindung ginge nur, wenn der geheime Authenticator-Schlüssel in Mindora gespeichert würde und das Programm die Allkauf-Seite wie ein Mensch bedient. Das ist unsicher (wer den Schlüssel hat, hat euren Zugang), bricht bei jeder Änderung der Allkauf-App und verstößt sehr wahrscheinlich gegen deren Nutzungsbedingungen. Kopieren oder Screenshot sind der sichere Weg. Frag Allkauf ruhig, ob es eine Exportfunktion oder E-Mail-Benachrichtigungen gibt – die kannst du dann direkt einlesen.
+Allkauf bietet keine öffentliche Schnittstelle. Der Login ist mit Google Authenticator gesichert: Bei jeder Anmeldung wird ein neuer 6-stelliger Code verlangt. Eine automatische Verbindung ginge nur, wenn der geheime Authenticator-Schlüssel in MindSpace gespeichert würde und das Programm die Allkauf-Seite wie ein Mensch bedient. Das ist unsicher (wer den Schlüssel hat, hat euren Zugang), bricht bei jeder Änderung der Allkauf-App und verstößt sehr wahrscheinlich gegen deren Nutzungsbedingungen. Kopieren oder Screenshot sind der sichere Weg. Frag Allkauf ruhig, ob es eine Exportfunktion oder E-Mail-Benachrichtigungen gibt – die kannst du dann direkt einlesen.
 
 ---
 
@@ -265,13 +286,13 @@ Allkauf bietet keine öffentliche Schnittstelle. Der Login ist mit Google Authen
 | Nach Änderungen an config.js passiert nichts | App komplett schließen und neu öffnen. Notfalls 2 Minuten warten (GitHub braucht kurz) und erneut öffnen. |
 | „Diese Web-Adresse ist in Firebase noch nicht freigegeben“ | Schritt 2.4.3: `DEINNAME.github.io` bei den autorisierten Domains eintragen. |
 | „Keine Berechtigung …“ | Schritt 2.5.3: Regeln aus `firestore.rules` veröffentlichen. |
-| Push lässt sich nicht aktivieren | App muss vom **Home-Bildschirm** gestartet sein, iOS 16.4 oder neuer. Falls einmal abgelehnt: iPhone-Einstellungen → Mitteilungen → Mindora → Erlauben. |
+| Push lässt sich nicht aktivieren | App muss vom **Home-Bildschirm** gestartet sein, iOS 16.4 oder neuer. Falls einmal abgelehnt: iPhone-Einstellungen → Mitteilungen → MindSpace → Erlauben. |
 | Test-Nachricht kommt nicht | GitHub → Actions → letzten Lauf öffnen und die rote Meldung lesen. Häufig: Secret nicht vollständig kopiert, oder Push auf dem iPhone noch nicht aktiviert. |
 | „Der API-Schlüssel ist ungültig“ | Schlüssel in der Anthropic Console neu erzeugen und unter Mehr → KI-Assistent eintragen. |
 | „Guthaben aufgebraucht“ | In der Anthropic Console unter Billing Guthaben aufladen. |
 | Keine „Jetzt angehen“-Push | Kommt einmal morgens ab 7 Uhr und nur, wenn eine Aufgabe **neu** dringend wird. Die Aufgabe braucht Frist und Vorlauf. |
-| Erinnerungen kommen gar nicht mehr | GitHub → Actions → „Mindora“ → falls dort „disabled“ steht: **Enable workflow**. |
-| Weitergeleitete Mail ergibt keine Aufgabe | script.google.com → Mindora Postbote → **Ausführungen** → letzten Lauf öffnen und die Meldung lesen. „Ignoriert“: von deiner Mindora-Login-Adresse weiterleiten oder den Absender in der App erlauben. |
+| Erinnerungen kommen gar nicht mehr | GitHub → Actions → „MindSpace“ → falls dort „disabled“ steht: **Enable workflow**. |
+| Weitergeleitete Mail ergibt keine Aufgabe | script.google.com → MindSpace Postbote → **Ausführungen** → letzten Lauf öffnen und die Meldung lesen. „Ignoriert“: von deiner MindSpace-Login-Adresse weiterleiten oder den Absender in der App erlauben. |
 | „Es gibt mehrere gemeinsame Bereiche“ | Die Meldung nennt die IDs. Die richtige im Postboten unter Projekteinstellungen → Skripteigenschaften als `PROJEKT_ID` eintragen. |
 
 **Kosten:** GitHub Pages, GitHub Actions (öffentliches Repository) und Firebase Spark sind kostenlos. Für zwei Personen bleibt ihr weit unter allen Grenzen. Nur der optionale KI-Assistent kostet etwas, siehe Stufe 4.

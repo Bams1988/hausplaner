@@ -65,7 +65,7 @@ class LocalStore {
   }
   emit() {
     const d = this.data;
-    this.h.onProject({ id: 'local', name: d.name || 'Mindora', members: ['local'], memberNames: { local: 'Ich' }, ...(d.settings || {}) });
+    this.h.onProject({ id: 'local', name: d.name || 'MindSpace', members: ['local'], memberNames: { local: 'Ich' }, ...(d.settings || {}) });
     this.h.onTasks([...d.tasks]);
     this.h.onInfos([...d.infos]);
     this.h.onContacts([...d.contacts].sort((a, b) => a.name.localeCompare(b.name, 'de')));
@@ -77,7 +77,7 @@ class LocalStore {
   }
   async init(h) {
     this.h = h;
-    this.data = { name: 'Mindora', tasks: [], infos: [], contacts: [], areas: [], costs: [], comments: [], files: [], settings: {}, ...this.load() };
+    this.data = { name: 'MindSpace', tasks: [], infos: [], contacts: [], areas: [], costs: [], comments: [], files: [], settings: {}, ...this.load() };
     for (const k of ['costs', 'comments', 'files']) this.data[k] = this.data[k] || [];
     try { this.ai = JSON.parse(localStorage.getItem(AI_LOCAL)) || null; } catch { this.ai = null; }
     this.me = { uid: 'local', name: 'Ich', email: null };
@@ -133,6 +133,7 @@ class LocalStore {
   async updateFile(id, patch) { const i = this.data.files.findIndex((f) => f.id === id); if (i < 0) return; this.data.files[i] = { ...this.data.files[i], ...patch }; this.save(); }
   async getFileBlob(meta) { const b = await idbDo('readonly', (st) => st.get(meta.id)); if (!b) throw new Error('Datei nicht gefunden.'); return b; }
   async deleteFile(meta) { await idbDo('readwrite', (st) => st.delete(meta.id)).catch(() => {}); this.data.files = this.data.files.filter((f) => f.id !== meta.id); this.save(); }
+  async setUserPref() {}
   exportLocal() { return this.data; }
 }
 
@@ -172,24 +173,92 @@ class CloudStore {
     if (!udata.projectId) this.h.onProject(null);
   }
 
+  // Zugriff: Mitglieder ohne Eintrag in project.access (oder 'all') sehen alles,
+  // eingeschränkte Mitglieder nur die Bereiche aus ihrer Liste.
+  scopeFrom(project) {
+    const a = project?.access?.[this.me?.uid];
+    return Array.isArray(a) ? a : 'all';
+  }
   watchProject(pid) {
     this.unsubP?.forEach((u) => u());
+    this.unsubD?.forEach((u) => u()); this.unsubD = []; this.scopeKey = null;
     this.projectId = pid;
     if (!pid) { this.h.onProject(null); return; }
-    const { doc, collection, onSnapshot } = this.F;
-    const err = (e) => this.h.onError(e);
+    const { doc, onSnapshot } = this.F;
     this.unsubP = [
-      onSnapshot(doc(this.db, 'projects', pid), (s) => this.h.onProject(s.exists() ? { id: pid, ...s.data() } : null), err),
-      onSnapshot(collection(this.db, 'projects', pid, 'tasks'), (s) => this.h.onTasks(s.docs.map((d) => ({ id: d.id, ...d.data() }))), err),
-      onSnapshot(collection(this.db, 'projects', pid, 'infos'), (s) => this.h.onInfos(s.docs.map((d) => ({ id: d.id, ...d.data() })).sort((a, b) => b.createdAt - a.createdAt)), err),
-      onSnapshot(collection(this.db, 'projects', pid, 'contacts'), (s) => this.h.onContacts(s.docs.map((d) => ({ id: d.id, ...d.data() })).sort((a, b) => (a.name || '').localeCompare(b.name || '', 'de'))), err),
-      onSnapshot(collection(this.db, 'projects', pid, 'areas'), (s) => this.h.onAreas(s.docs.map((d) => ({ id: d.id, ...d.data() }))), err),
-      onSnapshot(collection(this.db, 'projects', pid, 'costs'), (s) => this.h.onCosts?.(s.docs.map((d) => ({ id: d.id, ...d.data() }))), err),
-      onSnapshot(collection(this.db, 'projects', pid, 'comments'), (s) => this.h.onComments?.(s.docs.map((d) => ({ id: d.id, ...d.data() }))), err),
-      onSnapshot(collection(this.db, 'projects', pid, 'files'), (s) => this.h.onFiles?.(s.docs.map((d) => ({ id: d.id, ...d.data() }))), err),
-      onSnapshot(doc(this.db, 'projects', pid, 'private', 'ai'), (s) => this.h.onAi(s.exists() && s.data().apiKey ? s.data() : null), () => this.h.onAi(null)),
+      onSnapshot(doc(this.db, 'projects', pid), (s) => {
+        const p = s.exists() ? { id: pid, ...s.data() } : null;
+        if (p && !(p.members || []).includes(this.me?.uid)) { this.h.onProject(null); return; }
+        if (p) this.watchData(pid, this.scopeFrom(p));
+        this.h.onProject(p);
+      }, (e) => { if (e?.code === 'permission-denied') this.h.onProject(null); else this.h.onError(e); }),
     ];
-    this.unsubs.push(() => this.unsubP.forEach((u) => u()));
+    this.unsubs.push(() => { this.unsubP.forEach((u) => u()); this.unsubD?.forEach((u) => u()); });
+  }
+  watchData(pid, scope) {
+    const key = JSON.stringify(scope);
+    if (key === this.scopeKey) return;
+    this.unsubD?.forEach((u) => u()); this.unsubD = [];
+    this.scopeKey = key; this.scope = scope;
+    const { doc, collection, onSnapshot, query, where } = this.F;
+    const err = (e) => this.h.onError(e);
+    const rows = (s) => s.docs.map((d) => ({ id: d.id, ...d.data() }));
+    const on = (ref, fn, e = err) => this.unsubD.push(onSnapshot(ref, fn, e));
+    const sortC = (l) => l.sort((a, b) => (a.name || '').localeCompare(b.name || '', 'de'));
+    on(collection(this.db, 'projects', pid, 'contacts'), (s) => this.h.onContacts(sortC(rows(s))));
+    if (scope === 'all') {
+      on(collection(this.db, 'projects', pid, 'tasks'), (s) => this.h.onTasks(rows(s)));
+      on(collection(this.db, 'projects', pid, 'infos'), (s) => this.h.onInfos(rows(s).sort((a, b) => b.createdAt - a.createdAt)));
+      on(collection(this.db, 'projects', pid, 'areas'), (s) => this.h.onAreas(rows(s)));
+      on(collection(this.db, 'projects', pid, 'costs'), (s) => this.h.onCosts?.(rows(s)));
+      on(collection(this.db, 'projects', pid, 'comments'), (s) => this.h.onComments?.(rows(s)));
+      on(collection(this.db, 'projects', pid, 'files'), (s) => this.h.onFiles?.(rows(s)));
+      on(doc(this.db, 'projects', pid, 'private', 'ai'), (s) => this.h.onAi(s.exists() && s.data().apiKey ? s.data() : null), () => this.h.onAi(null));
+      return;
+    }
+    // Eingeschränkt: je freigegebenem Bereich eine Abfrage, Ergebnisse zusammenführen
+    this.h.onInfos([]); this.h.onAi(null);
+    const merged = (name, cb) => {
+      const parts = new Map();
+      for (const areaId of scope) {
+        on(query(collection(this.db, 'projects', pid, name), where('areaId', '==', areaId)), (s) => { parts.set(areaId, rows(s)); cb([...parts.values()].flat()); });
+      }
+      if (!scope.length) cb([]);
+    };
+    merged('tasks', (l) => this.h.onTasks(l));
+    merged('costs', (l) => this.h.onCosts?.(l));
+    merged('comments', (l) => this.h.onComments?.(l));
+    merged('files', (l) => this.h.onFiles?.(l));
+    const areaDocs = new Map();
+    for (const areaId of scope) on(doc(this.db, 'projects', pid, 'areas', areaId), (s) => { if (s.exists()) areaDocs.set(areaId, { id: areaId, ...s.data() }); else areaDocs.delete(areaId); this.h.onAreas([...areaDocs.values()]); });
+  }
+
+  // --- Freigaben (nur Mitglieder mit Zugriff auf alles)
+  setMemberAccess(uid, scope) { return this.F.updateDoc(this.F.doc(this.db, 'projects', this.projectId), { [`access.${uid}`]: scope }); }
+  async removeMember(uid) {
+    const { doc, updateDoc, arrayRemove, deleteField } = this.F;
+    await updateDoc(doc(this.db, 'projects', this.projectId), { members: arrayRemove(uid), [`memberNames.${uid}`]: deleteField(), [`access.${uid}`]: deleteField() });
+  }
+  setUserPref(prefs) { return this.me ? this.F.setDoc(this.F.doc(this.db, 'users', this.me.uid), prefs, { merge: true }) : Promise.resolve(); }
+  // Alte Einträge ohne Bereich nachtragen, damit eingeschränkte Mitglieder sie sehen können
+  async backfillAreas({ tasks, costs, files, comments }, areaOfTask, defaultArea) {
+    const { doc, writeBatch } = this.F;
+    let batch = writeBatch(this.db), n = 0, total = 0;
+    const put = async (ref, data) => { batch.update(ref, data); n++; total++; if (n >= 400) { await batch.commit(); batch = writeBatch(this.db); n = 0; } };
+    const taskArea = new Map(tasks.map((t) => [t.id, t.areaId || areaOfTask(t)]));
+    for (const t of tasks) if (!t.areaId) await put(doc(this.col('tasks'), t.id), { areaId: taskArea.get(t.id) });
+    for (const c of costs) if (!c.areaId) await put(doc(this.col('costs'), c.id), { areaId: defaultArea });
+    for (const c of comments) if (!c.areaId && taskArea.get(c.taskId)) await put(doc(this.col('comments'), c.id), { areaId: taskArea.get(c.taskId) });
+    for (const f of files) {
+      const a = f.areaId || taskArea.get(f.taskId) || (f.costId && costs.find((c) => c.id === f.costId)?.areaId) || defaultArea;
+      if (!f.areaId) await put(doc(this.col('files'), f.id), { areaId: a });
+      if (!f.partsArea) {
+        for (let i = 0; i < (f.parts || 1); i++) await this.F.updateDoc(doc(this.col('fileParts'), `${f.id}_${i}`), { areaId: a }).catch(() => {});
+        await put(doc(this.col('files'), f.id), { partsArea: true });
+      }
+    }
+    if (n) await batch.commit();
+    return total;
   }
 
   // --- Konto
@@ -228,11 +297,11 @@ class CloudStore {
     }
     await setDoc(doc(this.db, 'users', this.me.uid), { projectId: pref.id, name: this.me.name }, { merge: true });
   }
-  async createInvite() {
+  async createInvite(scope = 'all') {
     const { doc, setDoc, Timestamp } = this.F;
     let code = '';
     for (let i = 0; i < 6; i++) code += CODE_CHARS[crypto.getRandomValues(new Uint32Array(1))[0] % CODE_CHARS.length];
-    await setDoc(doc(this.db, 'invites', code), { projectId: this.projectId, createdBy: this.me.uid, expiresAt: Timestamp.fromMillis(Date.now() + 7 * 864e5) });
+    await setDoc(doc(this.db, 'invites', code), { projectId: this.projectId, createdBy: this.me.uid, scope, expiresAt: Timestamp.fromMillis(Date.now() + 7 * 864e5) });
     return code;
   }
   async joinProject(rawCode) {
@@ -240,9 +309,9 @@ class CloudStore {
     const { doc, getDoc, updateDoc, setDoc, arrayUnion } = this.F;
     const inv = await getDoc(doc(this.db, 'invites', code));
     if (!inv.exists()) throw new Error('Diesen Code gibt es nicht. Prüfe die Schreibweise.');
-    const { projectId, expiresAt } = inv.data();
+    const { projectId, expiresAt, scope = 'all' } = inv.data();
     if (expiresAt.toMillis() < Date.now()) throw new Error('Der Code ist abgelaufen. Lass dir einen neuen schicken.');
-    await updateDoc(doc(this.db, 'projects', projectId), { members: arrayUnion(this.me.uid), [`memberNames.${this.me.uid}`]: this.me.name, joinCode: code });
+    await updateDoc(doc(this.db, 'projects', projectId), { members: arrayUnion(this.me.uid), [`memberNames.${this.me.uid}`]: this.me.name, [`access.${this.me.uid}`]: scope, joinCode: code });
     await setDoc(doc(this.db, 'users', this.me.uid), { projectId, name: this.me.name }, { merge: true });
   }
   renameProject(name) { return this.F.updateDoc(this.F.doc(this.db, 'projects', this.projectId), { name }); }
@@ -292,9 +361,9 @@ class CloudStore {
     const buf = new Uint8Array(await blob.arrayBuffer());
     const parts = Math.max(1, Math.ceil(buf.length / PART_SIZE));
     for (let i = 0; i < parts; i++) {
-      await setDoc(doc(this.col('fileParts'), `${ref.id}_${i}`), { fileId: ref.id, i, data: Bytes.fromUint8Array(buf.subarray(i * PART_SIZE, (i + 1) * PART_SIZE)) });
+      await setDoc(doc(this.col('fileParts'), `${ref.id}_${i}`), { fileId: ref.id, i, areaId: meta.areaId || null, data: Bytes.fromUint8Array(buf.subarray(i * PART_SIZE, (i + 1) * PART_SIZE)) });
     }
-    await setDoc(ref, { createdAt: Date.now(), createdBy: this.me.uid, ...clean(meta), parts, size: buf.length });
+    await setDoc(ref, { createdAt: Date.now(), createdBy: this.me.uid, ...clean(meta), parts, size: buf.length, partsArea: true });
     return ref.id;
   }
   updateFile(id, patch) { return this.F.updateDoc(this.F.doc(this.col('files'), id), clean(patch)); }

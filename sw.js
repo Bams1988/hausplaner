@@ -1,6 +1,6 @@
 // Service Worker: Offline-Start und Push-Nachrichten.
-const VERSION = 'mindora-v9';
-const SHELL = ['./', 'index.html', 'styles.css', 'app.js', 'store.js', 'parser.js', 'ai.js', 'config.js', 'manifest.webmanifest', 'icons/icon-180.png', 'icons/icon-192.png', 'icons/icon-512.png'];
+const VERSION = 'mindspace-v10';
+const SHELL = ['./', 'index.html', 'styles.css', 'app.js', 'store.js', 'parser.js', 'ai.js', 'i18n.js', 'config.js', 'icons/logo.svg', 'manifest.webmanifest', 'icons/icon-180.png', 'icons/icon-192.png', 'icons/icon-512.png'];
 
 importScripts('config.js');
 const cfg = self.HAUS_CONFIG || {};
@@ -12,7 +12,7 @@ if (cfg.firebase && cfg.firebase.apiKey) try {
   messaging.onBackgroundMessage((payload) => {
     if (payload.notification) return;
     const d = payload.data || {};
-    return self.registration.showNotification(d.title || 'Mindora', { body: d.body || '', icon: 'icons/icon-192.png', badge: 'icons/icon-192.png', tag: d.tag, data: { link: d.link } });
+    return self.registration.showNotification(d.title || 'MindSpace', { body: d.body || '', icon: 'icons/icon-192.png', badge: 'icons/icon-192.png', tag: d.tag, data: { link: d.link } });
   });
 } catch (err) { console.warn('Firebase im Service Worker nicht geladen:', err); }
 

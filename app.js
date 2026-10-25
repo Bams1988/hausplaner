@@ -1,10 +1,11 @@
 import { createStore, computeRemindAt } from './store.js';
+import { tr, LANG, LOC, setLang, startTranslator } from './i18n.js';
 import { parseEmails, isoDate, similarity, guessPhase, extractDate } from './parser.js';
 import {
-  extractFromText, draftEmail, assessTasks, testConnection, urgencyOf, aiKeyOf,
+  extractFromText, draftEmail, assessTasks, testConnection, urgencyOf, aiKeyOf, searchWithAI,
   STATUS, MODELS, DEFAULT_MODEL, DEFAULT_AREAS, HOUSE_PHASES,
 } from './ai.js';
-const APP_VERSION = '9';
+const APP_VERSION = '10';
 
 // ================================================================== Zustand
 const REMINDERS = [
@@ -30,13 +31,13 @@ const todayISO = () => isoDate(new Date());
 const parseISO = (s) => { const [y, m, d] = s.split('-').map(Number); return new Date(y, m - 1, d); };
 const addDays = (s, n) => { const d = parseISO(s); d.setDate(d.getDate() + n); return isoDate(d); };
 const dayDiff = (s, from = todayISO()) => Math.round((parseISO(s) - parseISO(from)) / 864e5);
-const fmtDate = (s, o = { weekday: 'short', day: 'numeric', month: 'short' }) => parseISO(s).toLocaleDateString('de-DE', o).replace(/\.$/, '');
+const fmtDate = (s, o = { weekday: 'short', day: 'numeric', month: 'short' }) => parseISO(s).toLocaleDateString(LOC(), o).replace(/\.$/, '');
 const isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 const standalone = window.matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
 const isDesktop = () => window.matchMedia('(min-width: 900px) and (hover: hover)').matches;
 let installPrompt = null;
 window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); installPrompt = e; render(); });
-window.addEventListener('appinstalled', () => { installPrompt = null; toast('Mindora ist jetzt als Programm installiert ✨'); render(); });
+window.addEventListener('appinstalled', () => { installPrompt = null; toast('MindSpace ist jetzt als Programm installiert ✨'); render(); });
 const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 const members = () => S.project?.members || [];
 const nameOf = (uid) => (S.project?.memberNames || {})[uid] || 'Unbekannt';
@@ -48,7 +49,10 @@ const norm = (s) => String(s || '').toLowerCase().replace(/\b(herr|frau|dr\.?|di
 const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
 
 // --- Lebensbereiche
-const areas = () => (S.areas.length ? [...S.areas].sort((a, b) => (a.order ?? 99) - (b.order ?? 99) || a.name.localeCompare(b.name, 'de')) : DEFAULT_AREAS);
+const DEF_AREAS = DEFAULT_AREAS.map((a) => ({ ...a, name: tr(a.name), phases: (a.phases || []).map(tr) }));
+const fullAccess = () => store.mode !== 'cloud' || !Array.isArray(S.project?.access?.[S.me?.uid]);
+const scopeLabel = (sc) => (!Array.isArray(sc) ? 'Alle Projekte' : sc.map((id) => S.areas.find((a) => a.id === id)?.name || DEF_AREAS.find((a) => a.id === id)?.name || id).join(', ') || 'Keine Projekte');
+const areas = () => (!fullAccess() ? [...S.areas].sort((a, b) => (a.order ?? 99) - (b.order ?? 99)) : S.areas.length ? [...S.areas].sort((a, b) => (a.order ?? 99) - (b.order ?? 99) || a.name.localeCompare(b.name, LANG)) : DEF_AREAS);
 const areaById = (id) => areas().find((a) => a.id === id) || null;
 function areaOf(t) {
   if (t.areaId) { const a = areaById(t.areaId); if (a) return a; }
@@ -56,8 +60,8 @@ function areaOf(t) {
 }
 const phaseOf = (t) => (t.phase && t.phase !== 'Allgemein' ? t.phase : null);
 async function ensureAreasStored() {
-  if (S.areas.length) return;
-  for (const a of DEFAULT_AREAS) { const { id, ...rest } = a; await store.setArea(id, rest); }
+  if (S.areas.length || !fullAccess()) return;
+  for (const a of DEFAULT_AREAS) { const { id, ...rest } = a; await store.setArea(id, { ...rest, name: tr(rest.name), phases: (rest.phases || []).map(tr) }); }
 }
 
 function findContact({ email, name }) {
@@ -101,6 +105,9 @@ const I = {
   spark: '<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" class="spark"><path d="M12 2.5c.5 4.6 2.9 7 7.5 7.5-4.6.5-7 2.9-7.5 7.5-.5-4.6-2.9-7-7.5-7.5 4.6-.5 7-2.9 7.5-7.5Z"/><path d="M19 15c.2 2 1.2 3 3 3.2-1.8.2-2.8 1.2-3 3.3-.2-2.1-1.2-3.1-3-3.3 1.8-.2 2.8-1.2 3-3.2Z" opacity=".6"/></svg>',
   arrowUp: sv('<path d="M12 19V5M5.5 11.5 12 5l6.5 6.5"/>', 22, 2.6),
   chevron: sv('<path d="m9 6 6 6-6 6"/>', 18, 2),
+  mic: sv('<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21"/>', 20, 2),
+  search: sv('<circle cx="11" cy="11" r="6.5"/><path d="m16 16 4.5 4.5"/>', 20, 2.2),
+  lock: sv('<rect x="5" y="11" width="14" height="9.5" rx="2.2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/>', 18, 2.2),
   camera: sv('<path d="M4 8.5A1.5 1.5 0 0 1 5.5 7h2.2l1.5-2h5.6l1.5 2h2.2A1.5 1.5 0 0 1 20 8.5v9a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 4 17.5Z"/><circle cx="12" cy="12.8" r="3.4"/>', 20, 2),
   copy: sv('<rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/>', 16, 2),
 };
@@ -155,20 +162,20 @@ function render() {
     if (S.projectState === 'loading') { app.innerHTML = boot(); return; }
     if (S.projectState === 'none') { app.innerHTML = viewSetup(); return; }
   }
-  const views = { home: viewHome, tasks: viewTasks, plan: viewPlan, inbox: viewInbox, contacts: viewContacts, more: viewMore, costs: viewCosts, docs: viewDocs };
+  const views = { home: viewHome, tasks: viewTasks, plan: viewPlan, inbox: viewInbox, contacts: viewContacts, more: viewMore, costs: viewCosts, docs: viewDocs, search: viewSearch };
   if (!views[S.view]) S.view = 'home';
   const fab = ['home', 'tasks', 'plan'].includes(S.view) ? `<button class="fab" data-action="new-task" aria-label="Aufgabe anlegen">${I.plus}</button>`
     : S.view === 'contacts' ? `<button class="fab" data-action="new-contact" aria-label="Kontakt anlegen">${I.plus}</button>`
     : S.view === 'costs' ? `<button class="fab" data-action="cost-new" aria-label="Kosten erfassen">${I.plus}</button>` : '';
   app.innerHTML = views[S.view]() + tabbar() + fab;
 }
-const boot = () => '<div class="boot"><span class="boot-sun"></span>Mindora wird geladen …</div>';
+const boot = () => '<div class="boot"><span class="boot-sun"></span>MindSpace wird geladen …</div>';
 app.addEventListener('focusout', () => setTimeout(() => { if (S.pendingRender && !app.contains(document.activeElement)) render(); }, 50));
 
 function tabbar() {
   const newN = S.tasks.filter((t) => t.isNew && !t.done).length;
   const tab = (id, label, icon, dot) => `<button data-action="tab" data-tab="${id}" ${S.view === id || (id === 'more' && ['contacts', 'costs', 'docs'].includes(S.view)) ? 'aria-current="page"' : ''}>${icon}${dot ? `<b class="tab-dot">${dot}</b>` : ''}<span>${label}</span></button>`;
-  return `<nav class="tabbar"><div class="side-brand" aria-hidden="true"><img src="icons/icon-192.png" alt="">Mindora</div>${tab('home', 'Übersicht', I.today)}${tab('tasks', 'Aufgaben', I.list)}${tab('plan', 'Plan', I.plan)}${tab('inbox', 'Eingang', I.inbox, newN)}${tab('more', 'Mehr', I.more)}<button class="side-new" data-action="new-task">${I.plus}<span>Neue Aufgabe</span><kbd>N</kbd></button></nav>`;
+  return `<nav class="tabbar"><div class="side-brand" aria-hidden="true"><img src="icons/logo.svg" alt="">MindSpace</div><button class="side-search" data-action="open-search" ${S.view === 'search' ? 'aria-current="page"' : ''}>${I.search}<span>Suchen</span><kbd>Ctrl K</kbd></button>${tab('home', 'Übersicht', I.today)}${tab('tasks', 'Aufgaben', I.list)}${tab('plan', 'Plan', I.plan)}${tab('inbox', 'Eingang', I.inbox, newN)}${tab('more', 'Mehr', I.more)}<button class="side-new" data-action="new-task">${I.plus}<span>Neue Aufgabe</span><kbd>N</kbd></button></nav>`;
 }
 
 // ================================================================== Kleine Grafiken
@@ -241,11 +248,11 @@ function viewHome() {
       <button class="proj-card add" data-action="area-new"><span class="proj-plus">+</span><strong>Neues Projekt</strong><span>z. B. Urlaub, Auto</span></button></div>` : '';
 
   if (!standalone && !isIOS && window.matchMedia('(hover: hover)').matches && !localStorage.getItem('hp-hide-desktop')) {
-    banner += `<div class="note-card install-card"><p><strong>Mindora als Programm nutzen:</strong> eigenes Fenster, eigenes Symbol in der Taskleiste, startet wie jede App. ${installPrompt ? '' : esc(installHow())}</p>
+    banner += `<div class="note-card install-card"><p><strong>MindSpace als Programm nutzen:</strong> eigenes Fenster, eigenes Symbol in der Taskleiste, startet wie jede App. ${installPrompt ? '' : esc(installHow())}</p>
       ${installPrompt ? '<button class="btn small" data-action="install">Jetzt installieren</button>' : ''}<button class="x" data-action="hide-banner" data-key="hp-hide-desktop" aria-label="Hinweis schließen">×</button></div>`;
   }
   return `<main class="view home-view">
-    <header class="hello"><p class="hello-date">${esc(new Date().toLocaleDateString('de-DE', { weekday: 'long', day: 'numeric', month: 'long' }))}</p><h1>${esc(greeting())}</h1></header>
+    <header class="hello"><button class="head-btn" data-action="open-search" aria-label="Suchen">${I.search}</button><p class="hello-date">${esc(new Date().toLocaleDateString(LOC(), { weekday: 'long', day: 'numeric', month: 'long' }))}</p><h1>${esc(greeting())}</h1></header>
     ${quickAdd()}
     ${banner}${gestureTip}
     ${newOnes.length ? `<button class="inbox-hint" data-action="goto-new">${I.inbox}<span><strong>${newOnes.length} ${newOnes.length === 1 ? 'neue Aufgabe' : 'neue Aufgaben'}</strong> aus E-Mails – kurz prüfen</span>${I.chevron}</button>` : ''}
@@ -274,10 +281,34 @@ function quickAdd() {
     <span class="quick-plus">${I.plus}</span>
     <input name="q" data-input="quick" placeholder="Neue Aufgabe, z. B. „Bank anrufen morgen 10 Uhr“" value="${esc(S.quick || '')}" enterkeyhint="done" aria-label="Neue Aufgabe">
     <button class="quick-go" type="submit" ${S.quick?.trim() ? '' : 'hidden'} aria-label="Hinzufügen">${I.arrowUp}</button>
+    ${micButton(`data-action="voice" ${S.quick?.trim() ? 'hidden' : ''}`)}
     <div class="quick-preview" data-quick-preview>${quickPreview(S.quick || '')}</div>
   </form>`;
 }
+// Englische Schnelleingabe in die Wörter übersetzen, die die Datumserkennung versteht
+const EN_DAYS = { monday: 'montag', tuesday: 'dienstag', wednesday: 'mittwoch', thursday: 'donnerstag', friday: 'freitag', saturday: 'samstag', sunday: 'sonntag' };
+function enToDe(text) {
+  let t = ` ${text} `;
+  const R = (re, to) => { t = t.replace(re, to); };
+  const D = '(monday|tuesday|wednesday|thursday|friday|saturday|sunday)';
+  R(/\s(?:at\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b/gi, (m, h, mi, ap) => { let H = +h % 12; if (/pm/i.test(ap)) H += 12; return ` ${H}:${mi || '00'} uhr`; });
+  R(/\sat\s+(\d{1,2}:\d{2})\b/gi, ' $1 uhr');
+  R(/\sday after tomorrow\b/gi, ' übermorgen'); R(/\stomorrow\b/gi, ' morgen'); R(/\stoday\b/gi, ' heute');
+  R(/\s(?:this|on the|at the)\s+weekend\b/gi, ' am wochenende'); R(/\snext week\b/gi, ' nächste woche'); R(/\sthis week\b/gi, ' diese woche');
+  R(/\sin\s+(\d+|a|an|one|two|three)\s+(day|days|week|weeks|month|months)\b/gi, (m, n, u) => ` in ${({ a: 1, an: 1, one: 1, two: 2, three: 3 })[n.toLowerCase()] || n} ${/day/i.test(u) ? 'tagen' : /week/i.test(u) ? 'wochen' : 'monaten'}`);
+  R(new RegExp(`\\severy\\s+${D}\\b`, 'gi'), (m, d) => ` jeden ${EN_DAYS[d.toLowerCase()]}`);
+  R(/\s(?:every day|daily)\b/gi, ' täglich'); R(/\s(?:every weekday|weekdays)\b/gi, ' werktags');
+  R(/\s(?:every other week|every 2 weeks|every two weeks|biweekly|fortnightly)\b/gi, ' alle 2 wochen');
+  R(/\s(?:every week|weekly)\b/gi, ' wöchentlich'); R(/\s(?:every quarter|quarterly|every 3 months)\b/gi, ' vierteljährlich');
+  R(/\s(?:every month|monthly)\b/gi, ' monatlich'); R(/\s(?:every year|yearly|annually)\b/gi, ' jährlich');
+  R(new RegExp(`\\snext\\s+${D}\\b`, 'gi'), (m, d) => ` nächsten ${EN_DAYS[d.toLowerCase()]}`);
+  R(new RegExp(`\\s(?:on|by)\\s+${D}\\b`, 'gi'), (m, d) => ` am ${EN_DAYS[d.toLowerCase()]}`);
+  R(new RegExp(`\\s${D}\\b`, 'gi'), (m, d) => ` ${EN_DAYS[d.toLowerCase()]}`);
+  R(/\s(?:by|on|due)(?=\s+(?:morgen|heute|übermorgen|am|nächsten)\b)/gi, '');
+  return t.trim();
+}
 function parseQuick(text) {
+  if (LANG === 'en') text = enToDe(text);
   const rp = takeRepeat(` ${text} `);
   let t = rp.text;
   let areaId = null;
@@ -304,7 +335,7 @@ function parseQuick(text) {
   let phase = null;
   if (!areaId) {
     const g = guessPhase(title);
-    if (g !== 'Allgemein' && areaById('hausbau')) { areaId = 'hausbau'; phase = HOUSE_PHASES.includes(g) ? g : null; }
+    if (g !== 'Allgemein' && areaById('hausbau')) { areaId = 'hausbau'; const hp = areaById('hausbau').phases || []; phase = hp.includes(g) ? g : hp.includes(tr(g)) ? tr(g) : null; }
   }
   const due = d?.date || (rp.repeat ? firstRepeatDue(rp.repeat) : null);
   return { title: title.charAt(0).toUpperCase() + title.slice(1), due, time: d?.time || null, areaId: areaId || (areaById('alltag') ? 'alltag' : areas()[0].id), phase, repeat: rp.repeat };
@@ -320,6 +351,13 @@ async function submitQuick(text) {
   if (!q.title) return;
   try {
     if (!S.areas.length) await ensureAreasStored();
+    const ex = findSimilar(q.title, 0.8);
+    if (ex) {
+      await bundleInto(ex, { text: `✍️ ${text.trim()}`, due: q.due, time: q.time });
+      S.quick = ''; render();
+      toast(`Gibt es schon – zu „${ex.title}“ hinzugefügt`, { label: 'Doch neu', fn: () => store.addTask({ title: q.title, due: q.due, time: q.time, areaId: q.areaId, phase: q.phase, repeat: q.repeat || null, reminder: !q.due ? 'none' : 'day0', notes: '', source: 'quick' }) });
+      return;
+    }
     await store.addTask({ title: q.title, due: q.due, time: q.time, areaId: q.areaId, phase: q.phase, repeat: q.repeat || null, repeatDay: q.repeat && q.due ? parseISO(q.due).getDate() : null, reminder: !q.due ? 'none' : q.time ? 'hour1' : dayDiff(q.due) <= 1 ? 'day0' : 'day1', notes: '', source: 'quick' });
     S.quick = '';
     if (q.due) S.dayPick = q.due;
@@ -352,7 +390,7 @@ function weekChart() {
     return `<button class="wk-col ${p.d === today ? 'is-today' : ''} ${p.d === S.dayPick ? 'is-sel' : ''}" data-action="day" data-d="${p.d}" data-drop-day="${p.d}" aria-label="${esc(fmtDate(p.d, { weekday: 'long', day: 'numeric', month: 'long' }))}: ${p.open.length} offen, ${p.done.length} erledigt">
       <span class="wk-bar">${segs.map((c) => `<i style="background:${c};height:${100 / max}%"></i>`).join('')}</span>
       <span class="wk-n">${n || ''}</span>
-      <span class="wk-d">${esc(dt.toLocaleDateString('de-DE', { weekday: 'short' }).replace('.', ''))}</span>
+      <span class="wk-d">${esc(dt.toLocaleDateString(LOC(), { weekday: 'short' }).replace('.', ''))}</span>
       <span class="wk-num">${dt.getDate()}</span>
     </button>`;
   }).join('');
@@ -384,7 +422,7 @@ function viewTasks() {
       <div class="list">${items.map((t) => row(t)).join('')}</div>`).join('');
   }
   return `<main class="view">
-    <header class="page-head"><h1>Aufgaben</h1></header>
+    <header class="page-head with-btn"><h1>Aufgaben</h1><button class="head-btn" data-action="open-search" aria-label="Suchen">${I.search}</button></header>
     <div class="seg" role="group" aria-label="Ansicht">
       <button data-action="filter" data-filter="open" aria-pressed="${S.filter === 'open'}">Offen</button>
       <button data-action="filter" data-filter="done" aria-pressed="${S.filter === 'done'}">Erledigt</button>
@@ -446,7 +484,7 @@ function row(t, opt = {}) {
   return `<div class="row ${t.done ? 'done' : ''}" data-tid="${esc(t.id)}" style="--area:${esc(a.color)}">
     <button class="check" data-action="toggle" data-id="${esc(t.id)}" aria-label="${t.done ? 'Wieder öffnen' : 'Als erledigt markieren'}: ${esc(t.title)}">${I.check}</button>
     <button class="row-main" data-action="edit" data-id="${esc(t.id)}">
-      <div class="row-title">${t.isNew && !t.done ? '<b class="new-dot" title="Neu aus E-Mail"></b>' : ''}${esc(t.title)}</div>
+      <div class="row-title" translate="no">${t.isNew && !t.done ? '<b class="new-dot" title="Neu aus E-Mail"></b>' : ''}${esc(t.title)}</div>
       <div class="row-meta">${meta.join('')}</div>${why}
     </button>${who}</div>`;
 }
@@ -463,7 +501,7 @@ function viewPlan() {
     ${[['woche', '7 Tage'], ['monat', 'Monat'], ['projekte', 'Projekte']].map(([k, l]) => `<button data-action="plan-mode" data-m="${k}" aria-pressed="${mode === k}">${l}</button>`).join('')}</div>`;
   const body = mode === 'monat' ? planMonth() : mode === 'projekte' ? planProjects() : planWeek();
   return `<main class="view">
-    <header class="page-head"><h1>Planer</h1></header>
+    <header class="page-head with-btn"><h1>Planer</h1><button class="head-btn" data-action="open-search" aria-label="Suchen">${I.search}</button></header>
     ${seg}${body}</main>`;
 }
 
@@ -474,13 +512,13 @@ function planWeek() {
   const days = [...Array(7)].map((_, i) => { const d = new Date(base); d.setDate(d.getDate() + i); return isoDate(d); });
   const open = S.tasks.filter((t) => !t.done);
   const late = S.planWeek ? [] : open.filter((t) => t.due && t.due < today).sort(byDue);
-  const monthLabel = parseISO(days[3]).toLocaleDateString('de-DE', { month: 'long', year: 'numeric' });
+  const monthLabel = parseISO(days[3]).toLocaleDateString(LOC(), { month: 'long', year: 'numeric' });
   const strip = days.map((d) => {
     const dt = parseISO(d);
     const items = S.tasks.filter((t) => t.due === d);
     const dots = items.filter((t) => !t.done).slice(0, 3).map((t) => `<i style="background:${esc(areaOf(t).color)}"></i>`).join('');
     return `<button class="ws-day ${d === today ? 'is-today' : ''}" data-action="goto-day" data-d="${d}" data-drop-day="${d}" aria-label="${esc(fmtDate(d, { weekday: 'long', day: 'numeric', month: 'long' }))}, ${items.length} Aufgaben">
-      <span>${esc(dt.toLocaleDateString('de-DE', { weekday: 'short' }).replace('.', ''))}</span><b>${dt.getDate()}</b><em>${dots}</em></button>`;
+      <span>${esc(dt.toLocaleDateString(LOC(), { weekday: 'short' }).replace('.', ''))}</span><b>${dt.getDate()}</b><em>${dots}</em></button>`;
   }).join('');
   const sections = days.map((d) => {
     const items = S.tasks.filter((t) => t.due === d).sort((a, b) => (a.done - b.done) || byDue(a, b));
@@ -529,7 +567,7 @@ function planMonth() {
   const sel = S.tasks.filter((t) => t.due === S.monthPick).sort((a, b) => (a.done - b.done) || byDue(a, b));
   const monthOpen = S.tasks.filter((t) => !t.done && t.due && t.due.startsWith(`${y}-${String(m + 1).padStart(2, '0')}`)).length;
   return `<div class="mcal">
-      <div class="ws-head"><strong>${esc(first.toLocaleDateString('de-DE', { month: 'long', year: 'numeric' }))}</strong>
+      <div class="ws-head"><strong>${esc(first.toLocaleDateString(LOC(), { month: 'long', year: 'numeric' }))}</strong>
         <div class="week-nav">${S.planMonth ? '<button class="link inline" data-action="pmonth" data-d="0">Heute</button>' : ''}<button class="icon-sm" data-action="pmonth" data-d="-1" aria-label="Voriger Monat">‹</button><button class="icon-sm" data-action="pmonth" data-d="1" aria-label="Nächster Monat">›</button></div></div>
       <div class="mc-head">${['Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa', 'So'].map((d) => `<span>${d}</span>`).join('')}</div>
       <div class="mc-grid">${cells.join('')}</div>
@@ -635,7 +673,7 @@ function viewRoadmap(a) {
     ${roadmapLinks(a)}
     <h2 class="section-title">${a.phases?.length ? 'Schritt für Schritt' : 'Nach Monaten'}</h2>
     <ol class="roadmap">${items}</ol>
-    <p class="hint">Tippe auf einen Abschnitt, um seine Aufgaben zu sehen. ${a.phases?.length ? 'Abschnitte änderst du unter Mehr → Lebensbereiche.' : 'Ohne eigene Abschnitte ordnet Mindora nach Monaten. Abschnitte legst du unter Mehr → Lebensbereiche an.'}</p>
+    <p class="hint">Tippe auf einen Abschnitt, um seine Aufgaben zu sehen. ${a.phases?.length ? 'Abschnitte änderst du unter Mehr → Lebensbereiche.' : 'Ohne eigene Abschnitte ordnet MindSpace nach Monaten. Abschnitte legst du unter Mehr → Lebensbereiche an.'}</p>
   </main>`;
 }
 
@@ -665,7 +703,7 @@ function inboxAddressCard() {
   const p = S.project || {};
   const addr = p.inboxAddress;
   if (store.mode !== 'cloud') return `<div class="note-card"><p><strong>E-Mails weiterleiten</strong> geht, sobald die Cloud eingerichtet ist (Anleitung, Stufe 2 und 5). Bis dahin: Text unter „Einfügen“ hineinkopieren.</p></div>`;
-  if (!addr) return `<div class="note-card"><p><strong>Tipp:</strong> Mit einem eigenen Mindora-Postfach leitest du E-Mails einfach weiter – die KI legt die Aufgaben dann von selbst an. Einrichtung: Anleitung, Stufe 5.</p></div>`;
+  if (!addr) return `<div class="note-card"><p><strong>Tipp:</strong> Mit einem eigenen MindSpace-Postfach leitest du E-Mails einfach weiter – die KI legt die Aufgaben dann von selbst an. Einrichtung: Anleitung, Stufe 5.</p></div>`;
   const fast = p.inboxSource === 'gmail-script';
   const last = p.inboxCheckedAt ? Math.round((Date.now() - p.inboxCheckedAt) / 60000) : null;
   const stale = last != null && last > (fast ? 20 : 90);
@@ -675,7 +713,7 @@ function inboxAddressCard() {
     <button class="address" data-action="copy-address">${esc(addr)} ${I.copy}</button>
     <small>${stale ? 'Längere Zeit nicht abgerufen – siehe Anleitung, falls das so bleibt.' : last == null ? (fast ? 'Wird jede Minute abgerufen.' : 'Wird alle 15 Minuten abgerufen.') : last < 2 ? 'Gerade eben abgerufen' + (fast ? ' – jede Minute aktuell.' : '.') : `Zuletzt vor ${last} Min. abgerufen.`}</small>
   </div>
-  ${ign ? `<div class="note-card"><p><strong>Nicht gelesen:</strong> „${esc(ign.subject)}“ von ${esc(ign.from)}. Mindora liest nur Mails von euren eigenen Adressen und von erlaubten Absendern.</p>
+  ${ign ? `<div class="note-card"><p><strong>Nicht gelesen:</strong> „${esc(ign.subject)}“ von ${esc(ign.from)}. MindSpace liest nur Mails von euren eigenen Adressen und von erlaubten Absendern.</p>
     <div class="btn-row" style="margin-top:10px"><button class="btn small" data-action="allow-sender" data-from="${esc(ign.from)}">${esc(ign.from)} erlauben</button><button class="btn small ghost" data-action="allow-sender" data-from="@${esc(ign.from.split('@')[1] || '')}">Alle von @${esc(ign.from.split('@')[1] || '')}</button></div></div>` : ''}`;
 }
 function inboxNew(list) {
@@ -701,7 +739,7 @@ function inboxArchive() {
     const open = S.openInfo === x.id;
     return `<article class="info ${open ? 'open' : ''}">
       <button class="info-toggle" data-action="info-open" data-id="${esc(x.id)}" aria-expanded="${open}">
-        <div class="info-head"><span class="info-title">${x.kind === 'mail-auto' ? '📬 ' : ''}${esc(x.title || 'Ohne Betreff')}</span><span class="info-date">${esc(x.date ? fmtDate(x.date, { day: 'numeric', month: 'short', year: '2-digit' }) : new Date(x.createdAt).toLocaleDateString('de-DE', { day: 'numeric', month: 'short' }))}</span></div>
+        <div class="info-head"><span class="info-title">${x.kind === 'mail-auto' ? '📬 ' : ''}${esc(x.title || 'Ohne Betreff')}</span><span class="info-date">${esc(x.date ? fmtDate(x.date, { day: 'numeric', month: 'short', year: '2-digit' }) : new Date(x.createdAt).toLocaleDateString(LOC(), { day: 'numeric', month: 'short' }))}</span></div>
         ${x.from ? `<div class="info-from">${esc(x.from)}</div>` : ''}
         <div class="info-text">${esc(x.text)}</div>
       </button>
@@ -741,10 +779,10 @@ function inboxPaste() {
   }
   const has = S.pasteText.trim();
   const mainBtn = S.ai
-    ? `<button class="btn block" style="margin-top:14px" data-action="parse-ai" ${has && !S.aiBusy ? '' : 'disabled'} id="parse-btn">${S.aiBusy ? '<span class="spin"></span> Mindora liest mit …' : `${I.spark} Mit KI auswerten`}</button>
+    ? `<button class="btn block" style="margin-top:14px" data-action="parse-ai" ${has && !S.aiBusy ? '' : 'disabled'} id="parse-btn">${S.aiBusy ? '<span class="spin"></span> MindSpace liest mit …' : `${I.spark} Mit KI auswerten`}</button>
        <button class="link center" data-action="parse" ${S.aiBusy ? 'disabled' : ''}>Ohne KI auswerten</button>`
     : `<button class="btn block" style="margin-top:14px" data-action="parse" ${has ? '' : 'disabled'} id="parse-btn">Aufgaben finden</button>
-       <p class="hint">Mit dem KI-Assistenten (Mehr → KI-Assistent) erkennt Mindora auch Ansprechpartner, schätzt Vorlaufzeiten und versteht frei formulierte Texte.</p>`;
+       <p class="hint">Mit dem KI-Assistenten (Mehr → KI-Assistent) erkennt MindSpace auch Ansprechpartner, schätzt Vorlaufzeiten und versteht frei formulierte Texte.</p>`;
   return `<p class="hint" style="margin-top:0">Kopiere eine E-Mail, einen Verlauf oder einen Text aus einer anderen App hier hinein.</p>
     <textarea class="paste" id="paste" data-input="paste" placeholder="Hier einfügen …">${esc(S.pasteText)}</textarea>
     <div class="btn-row" style="margin-top:10px">
@@ -795,6 +833,7 @@ function foundItem(t, i) {
         ${t.doneInThread ? '<div class="found-warn">Laut Verlauf vermutlich schon erledigt</div>' : ''}` : ''}
       ${src ? `<div class="found-src">Aus der Nachricht ${esc(src)}${t.messageIndex > 0 ? ' (älter im Verlauf)' : ''}</div>` : ''}
       ${t.existing ? `<div class="found-warn">Ähnliche Aufgabe gibt es schon: „${esc(t.existing)}“</div>` : ''}
+      ${t.bundleTitle ? `<label class="bundle-opt"><input type="checkbox" data-action="pick-bundle" data-i="${i}" ${t.bundle ? 'checked' : ''}> ↺ Mit „${esc(t.bundleTitle)}“ bündeln statt neu anlegen</label>` : ''}
     </div></div>`;
 }
 function foundContact(c, i) {
@@ -846,19 +885,32 @@ function pushState() {
   if (Notification.permission === 'granted' && localStorage.getItem('hausplaner-push-token')) return { on: true, text: 'Aktiv auf diesem Gerät' };
   return { on: false, text: 'Noch nicht aktiviert' };
 }
+// ---------- Design (hell / dunkel / automatisch)
+function themePref() { try { return localStorage.getItem('ms-theme') || 'auto'; } catch { return 'auto'; } }
+function applyTheme(pref = themePref()) {
+  const root = document.documentElement;
+  if (pref === 'auto') delete root.dataset.theme; else root.dataset.theme = pref;
+  const dark = pref === 'dark' || (pref === 'auto' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+  document.querySelectorAll('meta[name="theme-color"]').forEach((m) => { m.setAttribute('content', dark ? '#0F1513' : '#F3F7F4'); m.removeAttribute('media'); });
+}
 function installHow() {
   const ua = navigator.userAgent;
   if (/Edg\//.test(ua)) return 'In Edge: oben rechts auf „…“ → „Apps“ → „Diese Website als App installieren“.';
   if (/Chrome\//.test(ua)) return 'In Chrome: rechts in der Adresszeile auf das Symbol „Installieren“ klicken (Bildschirm mit Pfeil) oder Menü ⋮ → „Streamen, speichern und teilen“ → „Seite als App installieren“.';
   if (/Safari\//.test(ua) && /Macintosh/.test(ua)) return 'In Safari auf dem Mac: Menü „Ablage“ → „Zum Dock hinzufügen“.';
-  if (/Firefox\//.test(ua)) return 'Firefox kann keine Web-Apps installieren – öffne Mindora dafür in Edge oder Chrome.';
-  return 'Öffne Mindora in Edge oder Chrome und wähle dort „App installieren“.';
+  if (/Firefox\//.test(ua)) return 'Firefox kann keine Web-Apps installieren – öffne MindSpace dafür in Edge oder Chrome.';
+  return 'Öffne MindSpace in Edge oder Chrome und wähle dort „App installieren“.';
 }
 function viewMore() {
   const cloud = store.mode === 'cloud';
   const ps = pushState();
   const open = new Map(); for (const t of S.tasks) if (!t.done) open.set(areaOf(t).id, (open.get(areaOf(t).id) || 0) + 1);
-  const mem = members().map((u) => `<div class="setting"><span class="who">${esc(initial(u))}</span><span class="grow">${esc(nameOf(u))}${u === S.me?.uid ? ' <span class="muted">(du)</span>' : ''}</span></div>`).join('');
+  const full = fullAccess();
+  const mem = members().map((u) => {
+    const sc = S.project?.access?.[u];
+    const inner = `<span class="who">${esc(initial(u))}</span><span class="grow">${esc(nameOf(u))}${u === S.me?.uid ? ' <span class="muted">(du)</span>' : ''}<small>${esc(scopeLabel(sc))}</small></span>`;
+    return full && u !== S.me?.uid ? `<button class="setting" data-action="member" data-id="${esc(u)}">${inner}${I.chevron}</button>` : `<div class="setting">${inner}</div>`;
+  }).join('');
   const modelName = S.ai ? (MODELS.find((m) => m[0] === S.ai.model) || [0, S.ai.model])[1].split(' – ')[0] : '';
   return `<main class="view">
     <header class="page-head"><h1>Mehr</h1></header>
@@ -872,15 +924,16 @@ function viewMore() {
 
     <h2 class="section-title">Lebensbereiche</h2>
     <div class="settings">
-      ${areas().map((a) => `<button class="setting" data-action="area-edit" data-id="${esc(a.id)}"><span class="area-dot" style="--area:${esc(a.color)}">${esc(a.emoji)}</span><span class="grow">${esc(a.name)}<small>${open.get(a.id) || 0} offen${a.phases?.length ? ` · ${a.phases.length} Abschnitte` : ''}</small></span>${I.chevron}</button>`).join('')}
-      <button class="setting" data-action="area-new"><span class="area-dot add">+</span><span class="grow">Bereich hinzufügen</span></button>
+      ${areas().map((a) => `<button class="setting" data-action="area-edit" data-id="${esc(a.id)}" ${full ? '' : 'disabled'}><span class="area-dot" style="--area:${esc(a.color)}">${esc(a.emoji)}</span><span class="grow">${esc(a.name)}<small>${open.get(a.id) || 0} offen${a.phases?.length ? ` · ${a.phases.length} Abschnitte` : ''}</small></span>${I.chevron}</button>`).join('')}
+      ${full ? `<button class="setting" data-action="area-new"><span class="area-dot add">+</span><span class="grow">Bereich hinzufügen</span></button>` : ''}
     </div>
+    ${full ? '' : `<p class="hint">Du bist zu ${esc(scopeLabel(S.project?.access?.[S.me?.uid]))} eingeladen. Weitere Projekte kann dir jemand mit vollem Zugriff freigeben.</p>`}
 
     <h2 class="section-title">Gemeinsam planen</h2>
     <div class="settings">
       ${cloud ? mem : ''}
-      <button class="setting" data-action="invite"><span class="grow">Partnerin oder Partner einladen<small>Code erzeugen und per Nachricht schicken</small></span>${I.chevron}</button>
-      ${cloud ? `<button class="setting" data-action="join"><span class="grow">Mit Code beitreten</span>${I.chevron}</button>` : ''}
+      ${full ? `<button class="setting" data-action="invite"><span class="grow">Jemanden einladen<small>Zu allen Projekten oder nur zu einzelnen</small></span>${I.chevron}</button>` : ''}
+      ${cloud && full ? `<button class="setting" data-action="join"><span class="grow">Mit Code beitreten</span>${I.chevron}</button>` : ''}
     </div>
 
     <h2 class="section-title">Erinnerungen</h2>
@@ -889,7 +942,7 @@ function viewMore() {
     </div>
     <p class="hint">Zur eingestellten Zeit jeder Aufgabe, morgens ab 7 Uhr eine kurze Übersicht und ein Hinweis, wenn etwas jetzt starten sollte. Jedes Gerät einmal selbst aktivieren.</p>
 
-    <h2 class="section-title">KI-Assistent</h2>
+    ${full ? `<h2 class="section-title">KI-Assistent</h2>
     <div class="settings">
       <button class="setting" data-action="ai-settings"><span class="status-dot ${S.ai ? 'on' : ''}"></span><span class="grow">Claude von Anthropic<small>${S.ai ? `Aktiv · ${esc(modelName)}` : 'Nicht eingerichtet'}</small></span><span class="end">${S.ai ? 'Ändern' : 'Einrichten'}</span></button>
       ${S.ai ? `<button class="setting" data-action="assess-all" ${S.aiBusy ? 'disabled' : ''}><span class="grow">${S.aiBusy ? 'Fristen werden geprüft …' : 'Alle Fristen jetzt prüfen'}<small>Was ist bis wann realistisch zu schaffen?</small></span></button>` : ''}
@@ -900,10 +953,24 @@ function viewMore() {
       <button class="setting" data-action="inbox-settings"><span class="status-dot ${S.project?.inboxAddress ? 'on' : ''}"></span><span class="grow">${S.project?.inboxAddress ? esc(S.project.inboxAddress) : 'Nicht eingerichtet'}<small>${S.project?.inboxAddress ? 'Erlaubte Absender verwalten' : 'Anleitung, Stufe 5'}</small></span>${I.chevron}</button>
     </div>
 
+    ` : ''}
     <h2 class="section-title">Vorlagen</h2>
     <div class="settings">
       <button class="setting" data-action="template"><span class="grow">Checkliste Hausbau<small>Vom Bauantrag bis zur Abnahme</small></span>${I.chevron}</button>
     </div>
+
+    <h2 class="section-title">Darstellung</h2>
+    <div class="settings">
+      <label class="setting"><span class="area-dot" style="--area:#4A8FE7">🌐</span><span class="grow">Sprache<small>Deutsch oder Englisch</small></span>
+        <select class="set-select" data-action="set-lang" aria-label="Sprache"><option value="de" ${LANG === 'de' ? 'selected' : ''}>Deutsch</option><option value="en" ${LANG === 'en' ? 'selected' : ''}>English</option></select></label>
+      <label class="setting"><span class="area-dot" style="--area:#8E7CE0">🌓</span><span class="grow">Design<small>Hell, dunkel oder wie das System</small></span>
+        <select class="set-select" data-action="set-theme" aria-label="Design">${[['auto', 'Automatisch'], ['light', 'Hell'], ['dark', 'Dunkel']].map(([v, l]) => `<option value="${v}" ${themePref() === v ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
+    </div>
+
+    ${bioAvailable || lockCfg() ? `<h2 class="section-title">Sicherheit</h2>
+    <div class="settings">
+      <button class="setting" data-action="${lockCfg() ? 'lock-off' : 'lock-on'}"><span class="status-dot ${lockCfg() ? 'on' : ''}"></span><span class="grow">Mit ${esc(bioName())} entsperren<small>${lockCfg() ? 'An – MindSpace sperrt sich nach 2 Minuten im Hintergrund' : 'MindSpace beim Öffnen biometrisch entsperren'}</small></span><span class="end">${lockCfg() ? 'Ausschalten' : 'Einschalten'}</span></button>
+    </div>` : ''}
 
     <h2 class="section-title">App</h2>
     <div class="settings">
@@ -925,7 +992,7 @@ function viewMore() {
       <div class="setting"><span class="grow">${esc(S.me?.name)}<small>${esc(S.me?.email)}</small></span></div>
       <button class="setting danger" data-action="logout">Abmelden</button>
     </div>` : ''}
-    <p class="hint center" style="margin-top:28px">Mindora · Planung darf leicht sein.</p>
+    <p class="hint center" style="margin-top:28px">MindSpace · Planung darf leicht sein.</p>
   </main>`;
 }
 
@@ -933,7 +1000,7 @@ function viewMore() {
 function viewAuth() {
   const reg = S.authTab === 'register';
   return `<main class="auth">
-    <div class="auth-hero">${ring(0.72, 96, 11, 'var(--brand)', '✓')}<h1>Mindora</h1><p>Dein persönlicher Assistent. Aufgaben, Fristen und E-Mails – leicht geplant.</p></div>
+    <div class="auth-hero">${ring(0.72, 96, 11, 'var(--brand)', '✓')}<h1>MindSpace</h1><p>Dein persönlicher Assistent. Aufgaben, Fristen und E-Mails – leicht geplant.</p></div>
     <div class="seg" role="group" aria-label="Anmelden oder registrieren">
       <button data-action="auth-tab" data-tab="login" aria-pressed="${!reg}">Anmelden</button>
       <button data-action="auth-tab" data-tab="register" aria-pressed="${reg}">Konto erstellen</button>
@@ -952,7 +1019,7 @@ function viewSetup() {
   return `<main class="auth">
     <header class="page-head"><h1>Hallo ${esc(S.me?.name || '')}</h1><p>Leg euren gemeinsamen Bereich an. Wenn deine Partnerin oder dein Partner schon einen hat, tritt mit dem Code bei.</p></header>
     <form data-form="create" style="margin-top:20px">
-      <label class="field"><span>Name</span><input name="name" value="Unser Zuhause" required></label>
+      <label class="field"><span>Name</span><input name="name" value="${esc(tr('Unser Zuhause'))}" required></label>
       <button class="btn block" type="submit">Loslegen</button>
     </form>
     <h2 class="section-title" style="margin-top:36px">Ich habe einen Code</h2>
@@ -1075,16 +1142,16 @@ function taskSheet(task, preset = {}) {
     const hint = sheet.querySelector('[data-remind-hint]');
     if (f.reminder === 'none') hint.textContent = '';
     else if (!f.due && f.reminder !== 'custom') hint.textContent = '';
-    else if (at) hint.textContent = `Erinnerung: ${new Date(at).toLocaleString('de-DE', { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })} Uhr${at < Date.now() ? ' – liegt in der Vergangenheit' : ''}`;
+    else if (at) hint.textContent = `Erinnerung: ${new Date(at).toLocaleString(LOC(), { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })} Uhr${at < Date.now() ? ' – liegt in der Vergangenheit' : ''}`;
     else hint.textContent = '';
     const rh = sheet.querySelector('[data-repeat-hint]');
     if (f.repeat) {
       const base = { ...f, due: f.due || firstRepeatDue(f.repeat) };
-      rh.textContent = `${f.due ? '' : `Beginnt ${fmtDate(base.due)}. `}Nach dem Abhaken legt Mindora den nächsten Termin automatisch an – nächstes Mal ${fmtDateY(stepRepeat(base.due, f.repeat, base.repeatDay))}.`;
+      rh.textContent = `${f.due ? '' : `Beginnt ${fmtDate(base.due)}. `}Nach dem Abhaken legt MindSpace den nächsten Termin automatisch an – nächstes Mal ${fmtDateY(stepRepeat(base.due, f.repeat, base.repeatDay))}.`;
     } else rh.textContent = '';
     const lh = sheet.querySelector('[data-lead-hint]');
-    if (f.due && f.leadDays != null) lh.textContent = `Starten spätestens am ${fmtDate(addDays(f.due, -f.leadDays))}. Ab dann erinnert Mindora dich.`;
-    else lh.textContent = f.due ? 'Vorlauf = wie viele Tage vorher du anfangen musst, z. B. weil die Bank Zeit braucht. Mindora erinnert dich dann rechtzeitig.' : '';
+    if (f.due && f.leadDays != null) lh.textContent = `Starten spätestens am ${fmtDate(addDays(f.due, -f.leadDays))}. Ab dann erinnert MindSpace dich.`;
+    else lh.textContent = f.due ? 'Vorlauf = wie viele Tage vorher du anfangen musst, z. B. weil die Bank Zeit braucht. MindSpace erinnert dich dann rechtzeitig.' : '';
   };
   form.addEventListener('input', upd); form.addEventListener('change', upd); upd();
   const markChips = () => sheet.querySelectorAll('[data-setdue]').forEach((b) => b.classList.toggle('on', b.dataset.setdue === (form.due.value || '')));
@@ -1099,6 +1166,14 @@ function taskSheet(task, preset = {}) {
     try {
       if (data.areaId && !S.areas.find((a) => a.id === data.areaId)) await ensureAreasStored();
       let id = task?.id;
+      const twin = !task ? findSimilar(data.title, 0.8) : null;
+      if (twin && confirm(`Es gibt schon eine ähnliche Aufgabe: „${twin.title}“. Zusammenführen statt doppelt anlegen?`)) {
+        await bundleInto(twin, { text: `✍️ ${data.title}${data.notes ? ' – ' + data.notes : ''}`, due: data.due, time: data.time });
+        closeSheet();
+        if (pending.length) await uploadFiles(pending.map((p) => p.file), { taskId: twin.id, areaId: areaOf(twin).id });
+        else toast(`Zu „${twin.title}“ hinzugefügt`);
+        return;
+      }
       if (task) await store.updateTask(task.id, { ...data, isNew: false }, S.tasks.find((x) => x.id === task.id) || task);
       else id = await store.addTask({ ...data, source: 'manual' });
       closeSheet();
@@ -1113,7 +1188,7 @@ function taskSheet(task, preset = {}) {
     composeSheet({ task: cur, contact: cur.contactId ? contactById(cur.contactId) : null });
   });
   sheet.querySelector('[data-act="assess"]')?.addEventListener('click', async (e) => {
-    e.target.disabled = true; e.target.textContent = 'Mindora schätzt ein …';
+    e.target.disabled = true; e.target.textContent = 'MindSpace schätzt ein …';
     try {
       await assessList([S.tasks.find((x) => x.id === task.id) || task]);
       const fresh = S.tasks.find((x) => x.id === task.id);
@@ -1204,7 +1279,7 @@ function contactSheet(c) {
 function composeSheet({ task = null, contact = null } = {}) {
   const withMail = S.contacts.filter((x) => x.email);
   const sender = myName();
-  const defBody = `Guten Tag,\n\n\n\nMit freundlichen Grüßen\n${sender}`;
+  const defBody = LANG === 'en' ? `Hello,\n\n\n\nKind regards\n${sender}` : `Guten Tag,\n\n\n\nMit freundlichen Grüßen\n${sender}`;
   const sheet = openSheet(`
     <div class="sheet-head"><h2>E-Mail</h2><button class="btn ghost" data-dismiss>Abbrechen</button></div>
     <form>
@@ -1229,7 +1304,7 @@ function composeSheet({ task = null, contact = null } = {}) {
   sheet.querySelector('[data-act="ai"]')?.addEventListener('click', async (e) => {
     const btn = e.currentTarget;
     if (!task && !form.instruction.value.trim()) { toast('Schreib kurz, worum es gehen soll.'); form.instruction.focus(); return; }
-    btn.disabled = true; btn.innerHTML = '<span class="spin"></span> Mindora schreibt …';
+    btn.disabled = true; btn.innerHTML = '<span class="spin"></span> MindSpace schreibt …';
     try {
       const area = task ? areaOf(task) : null;
       const d = await draftEmail(aiCfg(), { task, contact: recipient(), sender, project: area ? area.name : '', instruction: form.instruction.value.trim() });
@@ -1245,7 +1320,7 @@ function composeSheet({ task = null, contact = null } = {}) {
     const url = `mailto:${to}?subject=${encodeURIComponent(form.subject.value)}&body=${encodeURIComponent(form.body.value)}`;
     if (task?.id) {
       const cur = S.tasks.find((x) => x.id === task.id);
-      if (cur) store.updateTask(cur.id, { notes: `${cur.notes ? cur.notes + '\n\n' : ''}${new Date().toLocaleDateString('de-DE')}: E-Mail an ${recipient()?.name || to} – „${form.subject.value}“` }, cur).catch(() => {});
+      if (cur) store.updateTask(cur.id, { notes: `${cur.notes ? cur.notes + '\n\n' : ''}${new Date().toLocaleDateString(LOC())}: E-Mail an ${recipient()?.name || to} – „${form.subject.value}“` }, cur).catch(() => {});
     }
     closeSheet();
     window.location.href = url;
@@ -1257,7 +1332,7 @@ function aiSheet() {
   const cur = S.ai || {};
   const sheet = openSheet(`
     <div class="sheet-head"><h2>KI-Assistent</h2><button class="btn ghost" data-dismiss>Abbrechen</button></div>
-    <p class="hint" style="margin-top:0">Mindora nutzt Claude von Anthropic. Dafür brauchst du einen eigenen API-Schlüssel aus der Anthropic Console (Anleitung, Stufe 4). Abgerechnet wird nach Verbrauch – eine E-Mail auszuwerten kostet meist 1–3 Cent.</p>
+    <p class="hint" style="margin-top:0">MindSpace nutzt Claude von Anthropic. Dafür brauchst du einen eigenen API-Schlüssel aus der Anthropic Console (Anleitung, Stufe 4). Abgerechnet wird nach Verbrauch – eine E-Mail auszuwerten kostet meist 1–3 Cent.</p>
     <form>
       <label class="field"><span>API-Schlüssel</span><input name="apiKey" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="sk-ant-…" value="${esc(cur.apiKey || '')}" required></label>
       <label class="field"><span>Modell</span><select name="model">${MODELS.map(([v, l]) => `<option value="${v}" ${(cur.model || DEFAULT_MODEL) === v ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select></label>
@@ -1348,7 +1423,7 @@ function inboxSheet() {
       : `<div class="note-card"><p>Noch kein Postfach verbunden. Die Einrichtung (ca. 15 Minuten) steht in der Anleitung, Stufe 5.</p></div>`}
     <form>
       <label class="field"><span>Erlaubte Absender (einer pro Zeile)</span><textarea name="allowed" rows="5" placeholder="z. B. @allkauf.de&#10;kita@beispiel.de">${esc(allowed)}</textarea></label>
-      <p class="hint">Mails von euren eigenen Konto-Adressen${S.me?.email ? ` (z. B. ${esc(S.me.email)})` : ''} sind immer erlaubt – also alles, was ihr selbst weiterleitet. Ergänze hier Absender, die direkt an das Postfach schreiben oder automatisch weitergeleitet werden. Mit „@firma.de“ erlaubst du eine ganze Firma. Alles andere ignoriert Mindora – so entstehen keine Aufgaben aus Werbung.</p>
+      <p class="hint">Mails von euren eigenen Konto-Adressen${S.me?.email ? ` (z. B. ${esc(S.me.email)})` : ''} sind immer erlaubt – also alles, was ihr selbst weiterleitet. Ergänze hier Absender, die direkt an das Postfach schreiben oder automatisch weitergeleitet werden. Mit „@firma.de“ erlaubst du eine ganze Firma. Alles andere ignoriert MindSpace – so entstehen keine Aufgaben aus Werbung.</p>
       <button class="btn block" type="submit" ${store.mode !== 'cloud' ? 'disabled' : ''}>Speichern</button>
     </form>`);
   sheet.querySelector('[data-act="copy"]')?.addEventListener('click', () => copyText(addr, 'Adresse kopiert'));
@@ -1424,7 +1499,8 @@ function templateSheet() {
     try {
       await ensureAreasStored();
       if (!areaById('hausbau')) { const { id, ...rest } = DEFAULT_AREAS[0]; await store.setArea(id, rest); }
-      await store.addTasks(picked.map(([phase, title]) => ({ title, phase, areaId: 'hausbau', reminder: 'none', source: 'vorlage', notes: '' })));
+      const hp = areaById('hausbau')?.phases || [];
+      await store.addTasks(picked.map(([phase, title]) => ({ title: tr(title), phase: hp.includes(tr(phase)) ? tr(phase) : phase, areaId: 'hausbau', reminder: 'none', source: 'vorlage', notes: '' })));
       closeSheet(); toast(`${picked.length} Aufgaben hinzugefügt`);
     } catch (err) { toast(fail(err)); }
   };
@@ -1433,25 +1509,78 @@ function templateSheet() {
 async function inviteSheet() {
   if (store.mode !== 'cloud') {
     openSheet(`<div class="sheet-head"><h2>Gemeinsam planen</h2><button class="btn ghost" data-dismiss>Schließen</button></div>
-      <p>Damit ihr zu zweit plant, braucht Mindora einen Ort im Internet, an dem eure Daten zusammenkommen – dein eigenes, kostenloses Firebase-Projekt.</p>
+      <p>Damit ihr zu zweit plant, braucht MindSpace einen Ort im Internet, an dem eure Daten zusammenkommen – dein eigenes, kostenloses Firebase-Projekt.</p>
       <p class="hint">Die Anleitung erklärt die Einrichtung Schritt für Schritt (ca. 30 Minuten am Computer). Bisherige Aufgaben werden übernommen.</p>`);
     return;
   }
-  try {
-    const code = await store.createInvite();
-    const pretty = code.slice(0, 3) + '-' + code.slice(3);
-    const text = `Lass uns zusammen mit Mindora planen!\n1. Öffne ${location.origin + location.pathname} in Safari\n2. Teilen → „Zum Home-Bildschirm“\n3. App öffnen, Konto erstellen, Code eingeben: ${pretty}\n(Der Code gilt 7 Tage.)`;
-    const sheet = openSheet(`<div class="sheet-head"><h2>Einladen</h2><button class="btn ghost" data-dismiss>Fertig</button></div>
-      <p class="hint">Schick diesen Code zusammen mit dem Link. Er gilt 7 Tage.</p>
-      <div class="code">${esc(pretty)}</div>
-      <button class="btn block" data-share>${I.share} Einladung senden</button>`);
-    sheet.querySelector('[data-share]').onclick = async () => {
-      try {
-        if (navigator.share) await navigator.share({ title: 'Mindora-Einladung', text });
-        else copyText(text, 'Einladung kopiert');
-      } catch {}
-    };
-  } catch (e) { toast(fail(e)); }
+  const sheet = openSheet(`<div class="sheet-head"><h2>Einladen</h2><button class="btn ghost" data-dismiss>Abbrechen</button></div>
+    <p class="hint" style="margin-top:-4px">Wozu soll die Person Zugriff bekommen?</p>
+    <form>
+      <label class="choice"><input type="radio" name="scope" value="all" checked><span><strong>Alle Projekte</strong><small>Sieht und bearbeitet alles – wie du. Für Partnerin oder Partner.</small></span></label>
+      <label class="choice"><input type="radio" name="scope" value="some"><span><strong>Nur bestimmte Projekte</strong><small>Z. B. Großeltern nur „Familie“ oder der Bauberater nur „Hausbau“. E-Mail-Ablage, KI-Schlüssel und Einstellungen bleiben verborgen.</small></span></label>
+      <div class="scope-list" data-some hidden>${areas().map((a) => `<label class="opt"><input type="checkbox" name="area" value="${esc(a.id)}"> ${esc(a.emoji)} ${esc(a.name)}</label>`).join('')}</div>
+      <button class="btn block" type="submit" style="margin-top:18px">Code erzeugen</button>
+    </form>`);
+  const form = sheet.querySelector('form');
+  form.addEventListener('change', () => { sheet.querySelector('[data-some]').hidden = form.scope.value !== 'some'; });
+  form.onsubmit = async (e) => {
+    e.preventDefault();
+    const scope = form.scope.value === 'all' ? 'all' : [...form.querySelectorAll('[name="area"]:checked')].map((x) => x.value);
+    if (Array.isArray(scope) && !scope.length) { toast('Wähle mindestens ein Projekt.'); return; }
+    const btn = form.querySelector('button[type="submit"]'); btn.disabled = true;
+    try {
+      await ensureAreasStored();
+      if (Array.isArray(scope)) await runBackfill();
+      const code = await store.createInvite(scope);
+      showInviteCode(code, scope);
+    } catch (err) { toast(fail(err)); btn.disabled = false; }
+  };
+}
+function showInviteCode(code, scope) {
+  const pretty = code.slice(0, 3) + '-' + code.slice(3);
+  const what = Array.isArray(scope) ? (LANG === 'en' ? `for: ${scopeLabel(scope)}` : `für: ${scopeLabel(scope)}`) : '';
+  const text = LANG === 'en'
+    ? `Let's plan together with MindSpace${what ? ' ' + what : ''}!\n1. Open ${location.origin + location.pathname} in Safari (iPhone) or Edge/Chrome (computer)\n2. iPhone: Share → “Add to Home Screen”\n3. Open the app, create an account, enter code: ${pretty}\n(The code is valid for 7 days.)`
+    : `Lass uns zusammen mit MindSpace planen${what ? ' – ' + what : ''}!\n1. Öffne ${location.origin + location.pathname} in Safari (iPhone) oder Edge/Chrome (Computer)\n2. iPhone: Teilen → „Zum Home-Bildschirm“\n3. App öffnen, Konto erstellen, Code eingeben: ${pretty}\n(Der Code gilt 7 Tage.)`;
+  const sheet = openSheet(`<div class="sheet-head"><h2>Einladen</h2><button class="btn ghost" data-dismiss>Fertig</button></div>
+    <p class="hint">Schick diesen Code zusammen mit dem Link. Er gilt 7 Tage.</p>
+    <div class="code">${esc(pretty)}</div>
+    <p class="hint" style="text-align:center">Zugriff: <strong>${esc(scopeLabel(scope))}</strong></p>
+    <button class="btn block" data-share>${I.share} Einladung senden</button>`);
+  sheet.querySelector('[data-share]').onclick = async () => {
+    try { if (navigator.share) await navigator.share({ title: 'MindSpace', text }); else copyText(text, 'Einladung kopiert'); } catch {}
+  };
+}
+function memberSheet(uid) {
+  const sc = S.project?.access?.[uid];
+  const limited = Array.isArray(sc);
+  const sheet = openSheet(`<div class="sheet-head"><h2>${esc(nameOf(uid))}</h2><button class="btn ghost" data-dismiss>Abbrechen</button></div>
+    <form>
+      <label class="choice"><input type="radio" name="scope" value="all" ${limited ? '' : 'checked'}><span><strong>Alle Projekte</strong><small>Voller Zugriff wie du.</small></span></label>
+      <label class="choice"><input type="radio" name="scope" value="some" ${limited ? 'checked' : ''}><span><strong>Nur bestimmte Projekte</strong></span></label>
+      <div class="scope-list" data-some ${limited ? '' : 'hidden'}>${areas().map((a) => `<label class="opt"><input type="checkbox" name="area" value="${esc(a.id)}" ${limited && sc.includes(a.id) ? 'checked' : ''}> ${esc(a.emoji)} ${esc(a.name)}</label>`).join('')}</div>
+      <button class="btn block" type="submit" style="margin-top:18px">Speichern</button>
+      <button type="button" class="btn ghost block danger-text" data-remove style="margin-top:8px">Aus dem gemeinsamen Bereich entfernen</button>
+    </form>`);
+  const form = sheet.querySelector('form');
+  form.addEventListener('change', () => { sheet.querySelector('[data-some]').hidden = form.scope.value !== 'some'; });
+  form.onsubmit = async (e) => {
+    e.preventDefault();
+    const scope = form.scope.value === 'all' ? 'all' : [...form.querySelectorAll('[name="area"]:checked')].map((x) => x.value);
+    if (Array.isArray(scope) && !scope.length) { toast('Wähle mindestens ein Projekt.'); return; }
+    try { await ensureAreasStored(); if (Array.isArray(scope)) await runBackfill(); await store.setMemberAccess(uid, scope); closeSheet(); toast('Gespeichert'); } catch (err) { toast(fail(err)); }
+  };
+  sheet.querySelector('[data-remove]').onclick = async () => {
+    if (!confirm(`${nameOf(uid)} entfernen? Die Person sieht danach nichts mehr.`)) return;
+    try { await store.removeMember(uid); closeSheet(); toast('Entfernt'); } catch (err) { toast(fail(err)); }
+  };
+}
+// Ältere Einträge ohne Bereich nachtragen (nötig, damit eingeschränkte Mitglieder sie sehen)
+let backfillRun = null;
+function runBackfill() {
+  if (store.mode !== 'cloud' || !fullAccess() || !store.backfillAreas) return Promise.resolve(0);
+  backfillRun ||= store.backfillAreas({ tasks: S.tasks, costs: S.costs, files: S.files, comments: S.comments }, (t) => areaOf(t).id, areaById('hausbau') ? 'hausbau' : areas()[0].id).catch((e) => { backfillRun = null; console.warn(e); return 0; });
+  return backfillRun;
 }
 
 // ================================================================== Einlesen
@@ -1482,8 +1611,8 @@ async function runParseAI(text) {
       return { ...c, match: match?.id || null, addsInfo, selected: !match || addsInfo };
     });
     const tasks = r.tasks.map((t) => {
-      const ex = open.find((e) => similarity(e.title, t.title) >= 0.75);
-      return { ...t, ai: true, doneInThread: t.done, existing: ex ? ex.title : null, selected: !t.done && !ex, notes: t.details, from: r.from, messageDate: r.date, subject: r.subject };
+      const ex = (t.matchId && open.find((e) => e.id === t.matchId)) || open.find((e) => similarity(e.title, t.title) >= 0.75);
+      return { ...t, ai: true, doneInThread: t.done, bundle: ex ? ex.id : null, bundleTitle: ex ? ex.title : null, selected: !t.done, notes: t.details, from: r.from, messageDate: r.date, subject: r.subject };
     });
     const payments = (r.payments || []).map((x) => {
       const ex = S.costs.find((c) => c.amount != null && x.amount != null && Math.abs(c.amount - x.amount) < 0.01 && similarity(c.title, x.title) >= 0.5);
@@ -1497,7 +1626,7 @@ async function runParseAI(text) {
 }
 async function commitImport() {
   const p = S.parsed; if (!p) return;
-  const sel = p.tasks.filter((t) => t.selected && t.title.trim());
+  let sel = p.tasks.filter((t) => t.selected && t.title.trim());
   const btn = app.querySelector('#commit-btn'); if (btn) btn.disabled = true;
   for (const x of p.payments || []) if (x.selected && x.amountText != null) x.amount = parseEur(x.amountText);
   const idByKey = new Map();
@@ -1520,9 +1649,16 @@ async function commitImport() {
     if (!t.contactEmail && !t.contactName) return null;
     return idByKey.get((t.contactEmail || '').toLowerCase()) || idByKey.get(norm(t.contactName)) || findContact({ email: t.contactEmail, name: t.contactName })?.id || null;
   };
+  let bundled = 0;
   try {
     if (sel.length) await ensureAreasStored();
-    await store.addTasks(sel.map((t) => {
+    for (const t of sel.filter((x) => x.bundle)) {
+      const ex = S.tasks.find((x) => x.id === t.bundle); if (!ex) { t.bundle = null; continue; }
+      await bundleInto(ex, { text: `📬 ${t.subject || 'E-Mail'}: ${t.addition || t.notes || t.title}`, due: t.due, time: t.time });
+      bundled++;
+    }
+    sel = sel.filter((x) => !x.bundle);
+    if (sel.length) await store.addTasks(sel.map((t) => {
       const src = [t.from && `von ${t.from}`, t.messageDate && `vom ${fmtDate(t.messageDate, { day: 'numeric', month: 'numeric', year: 'numeric' })}`].filter(Boolean).join(' ');
       const notes = [t.notes, t.quote ? `„${t.quote}“` : '', t.leadReason ? `Vorlauf: ${t.leadReason}` : ''].filter(Boolean).join('\n\n');
       return {
@@ -1539,11 +1675,11 @@ async function commitImport() {
         contactId: x.payee ? findContact({ name: x.payee })?.id || null : null, note: [x.payee && `Empfänger: ${x.payee}`, subj && `Aus der E-Mail „${subj}“`].filter(Boolean).join('\n'), source: 'mail-ki' })));
     }
     if (S.saveInfo) await saveInfoFromText(p);
-    S.parsed = null; S.pasteText = ''; S.view = sel.length ? 'home' : pays.length ? 'costs' : 'contacts'; S.filter = 'open';
+    S.parsed = null; S.pasteText = ''; S.view = sel.length || bundled ? 'home' : pays.length ? 'costs' : (p.contacts || []).some((c) => c.selected) ? 'contacts' : 'home'; S.filter = 'open';
     if (S.view === 'costs') { S.prevView = 'inbox'; S.costArea = 'all'; }
     render();
     const nc = (p.contacts || []).filter((c) => c.selected).length;
-    toast(commitLabel(sel.length, nc, pays.length).replace(' übernehmen', ' übernommen ✨'));
+    toast(commitLabel(sel.length, nc, pays.length).replace(' übernehmen', ' übernommen ✨').replace('Nichts ausgewählt', '') + (bundled ? ` ${bundled} gebündelt ↺` : ''));
   } catch (e) { toast(fail(e)); if (btn) btn.disabled = false; }
 }
 function saveInfoFromText(p) {
@@ -1764,13 +1900,14 @@ const fileCount = (kind, id) => (kind === 'task' ? counts().f : counts().cf).get
 // ================================================================== Kosten & Zahlungsplan
 const COST_KINDS = [['rate', 'Abschlag / Rate'], ['rechnung', 'Rechnung'], ['sonderwunsch', 'Sonderwunsch'], ['eigenleistung', 'Eigenleistung'], ['neben', 'Nebenkosten'], ['finanzierung', 'Finanzierung & Gebühren'], ['sonst', 'Sonstiges']];
 const kindName = (k) => (COST_KINDS.find((x) => x[0] === k) || COST_KINDS[COST_KINDS.length - 1])[1];
-const eur = (n) => (n == null || !isFinite(n) ? '–' : Number(n).toLocaleString('de-DE', { style: 'currency', currency: 'EUR', minimumFractionDigits: Number(n) % 1 ? 2 : 0, maximumFractionDigits: 2 }));
-const eurInput = (n) => (n == null || !isFinite(n) ? '' : Number(n).toLocaleString('de-DE', { minimumFractionDigits: Number(n) % 1 ? 2 : 0, maximumFractionDigits: 2 }));
+const eur = (n) => (n == null || !isFinite(n) ? '–' : Number(n).toLocaleString(LOC(), { style: 'currency', currency: 'EUR', minimumFractionDigits: Number(n) % 1 ? 2 : 0, maximumFractionDigits: 2 }));
+const eurInput = (n) => (n == null || !isFinite(n) ? '' : Number(n).toLocaleString(LOC(), { minimumFractionDigits: Number(n) % 1 ? 2 : 0, maximumFractionDigits: 2 }));
 function parseEur(s) {
   if (s == null) return null;
   let v = String(s).trim().replace(/[€\s]|eur(o)?/gi, '');
   if (!v) return null;
-  if (/,\d{1,2}$/.test(v)) v = v.replace(/\./g, '').replace(',', '.');
+  if (LANG === 'en' && !/,\d{1,2}$/.test(v)) v = v.replace(/,/g, '');
+  else if (/,\d{1,2}$/.test(v)) v = v.replace(/\./g, '').replace(',', '.');
   else if (/^\d{1,3}([.,]\d{3})+$/.test(v)) v = v.replace(/[.,]/g, '');
   else v = v.replace(',', '.');
   const n = parseFloat(v);
@@ -1854,7 +1991,7 @@ function viewCosts() {
   const tl = st.upcoming.slice(0, 5);
   const timeline = tl.length ? `<section class="card"><div class="card-head"><h2>Nächste Zahlungen</h2></div>
     <ol class="pay-tl">${tl.map((c) => { const d = parseISO(c.due); return `<li><button data-action="cost-edit" data-id="${esc(c.id)}" class="${c.due < today ? 'is-late' : ''}">
-      <span class="pt-date"><b>${d.getDate()}</b>${esc(d.toLocaleDateString('de-DE', { month: 'short' }).replace('.', ''))}</span>
+      <span class="pt-date"><b>${d.getDate()}</b>${esc(d.toLocaleDateString(LOC(), { month: 'short' }).replace('.', ''))}</span>
       <span class="pt-t"><strong>${esc(c.title)}</strong><small>${c.due < today ? 'überfällig' : esc(dueLabel({ due: c.due }).text)} · ${esc(kindName(c.kind))}</small></span>
       <span class="pt-a">${esc(c.amount == null ? 'Betrag?' : eur(c.amount))}</span></button></li>`; }).join('')}</ol></section>` : '';
   const sortRate = (a, b) => (a.order ?? 999) - (b.order ?? 999) || (a.due || '9999').localeCompare(b.due || '9999') || (a.createdAt || 0) - (b.createdAt || 0);
@@ -1906,7 +2043,7 @@ function costSheet(c, preset = {}) {
       <label class="field" style="margin-top:14px"><span>Empfänger / Ansprechpartner</span><select name="contactId">${contactOptions(v.contactId)}</select></label>
       <label class="field"><span>Notiz</span><textarea name="note" rows="2" placeholder="z. B. Rechnungsnummer, Verwendungszweck">${esc(v.note || '')}</textarea></label>
       <div class="field"><span>Belege – Rechnung, Foto, PDF</span><div data-att-wrap>${attachBox({ costId: c?.id }, pending)}</div></div>
-      <p class="hint">Für offene Zahlungen mit Datum erinnert Mindora 3 Tage vorher und am Fälligkeitstag per Push.</p>
+      <p class="hint">Für offene Zahlungen mit Datum erinnert MindSpace 3 Tage vorher und am Fälligkeitstag per Push.</p>
       <button class="btn block" type="submit">Speichern</button>
       ${!isNew ? `<div class="btn-row" style="justify-content:space-between;margin-top:10px">
         <button type="button" class="btn ghost" data-act="paid">${c.paid ? 'Wieder offen' : 'Als bezahlt markieren'}</button>
@@ -1945,7 +2082,7 @@ function budgetSheet() {
   const list = S.costArea && S.costArea !== 'all' ? [areaById(S.costArea)] : areas();
   const sheet = openSheet(`
     <div class="sheet-head"><h2>Budget</h2><button class="btn ghost" data-dismiss>Abbrechen</button></div>
-    <p class="hint" style="margin-top:-4px">Wie viel wollt oder könnt ihr insgesamt ausgeben? Beim Hausbau z. B. Finanzierungssumme plus Eigenkapital. Mindora zeigt dann, wie viel Puffer bleibt.</p>
+    <p class="hint" style="margin-top:-4px">Wie viel wollt oder könnt ihr insgesamt ausgeben? Beim Hausbau z. B. Finanzierungssumme plus Eigenkapital. MindSpace zeigt dann, wie viel Puffer bleibt.</p>
     <form>
       ${list.map((a) => `<label class="field"><span>${esc(a.emoji)} ${esc(a.name)}</span><input inputmode="decimal" autocomplete="off" name="${esc(a.id)}" value="${esc(eurInput(a.budget))}" placeholder="kein Budget"></label>`).join('')}
       <button class="btn block" type="submit">Speichern</button>
@@ -1978,7 +2115,7 @@ function rateSheet() {
         <label class="field"><span>Bereich</span>${areaSelect('name="areaId"', defArea)}</label>
       </div>
       <div class="rates">${RATE_PLAN.map(([n, p], i) => `<div class="rate"><input type="checkbox" name="on${i}" checked aria-label="Rate übernehmen">
-        <input class="rate-n" name="n${i}" value="${esc(n)}" aria-label="Bezeichnung"><span class="rate-p"><input name="p${i}" inputmode="decimal" value="${esc(String(p).replace('.', ','))}" aria-label="Prozent">%</span>
+        <input class="rate-n" name="n${i}" value="${esc(tr(n))}" aria-label="Bezeichnung"><span class="rate-p"><input name="p${i}" inputmode="decimal" value="${esc(String(p).replace('.', ','))}" aria-label="Prozent">%</span>
         <span class="rate-a" data-a="${i}"></span></div>`).join('')}</div>
       <p class="rate-sum" data-sum></p>
       <label class="opt"><input type="checkbox" name="side" checked> Typische Nebenkosten als Liste dazu (Notar, Grunderwerbsteuer, Anschlüsse, Küche …) – Beträge trägst du später ein</label>
@@ -2010,9 +2147,9 @@ function rateSheet() {
       if (!form[`on${i}`].checked) return;
       const p = parseEur(form[`p${i}`].value) || 0;
       n++;
-      list.push({ title: `${n}. Rate: ${form[`n${i}`].value.trim()}`, amount: total ? Math.round(total * p) / 100 : null, kind: 'rate', areaId, due: null, order: n, note: `${String(p).replace('.', ',')} % des Gesamtpreises` });
+      list.push({ title: LANG === 'en' ? `Instalment ${n}: ${form[`n${i}`].value.trim()}` : `${n}. Rate: ${form[`n${i}`].value.trim()}`, amount: total ? Math.round(total * p) / 100 : null, kind: 'rate', areaId, due: null, order: n, note: LANG === 'en' ? `${p} % of the total price` : `${String(p).replace('.', ',')} % des Gesamtpreises` });
     });
-    if (form.side.checked) SIDE_COSTS.forEach((t, i) => { if (!S.costs.some((c) => c.title === t && costArea(c) === areaId)) list.push({ title: t, amount: null, kind: 'neben', areaId, due: null, order: 100 + i }); });
+    if (form.side.checked) SIDE_COSTS.map(tr).forEach((t, i) => { if (!S.costs.some((c) => c.title === t && costArea(c) === areaId)) list.push({ title: t, amount: null, kind: 'neben', areaId, due: null, order: 100 + i }); });
     if (!list.length) return;
     try {
       if (!S.areas.length) await ensureAreasStored();
@@ -2073,7 +2210,7 @@ function drawScaled(img, maxSide) {
 }
 // Fotos verkleinern (spart Speicher und Datenvolumen), Vorschaubild erzeugen
 async function prepareFile(file) {
-  const stamp = new Date().toLocaleString('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }).replace(',', '');
+  const stamp = new Date().toLocaleString(LOC(), { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }).replace(',', '');
   let name = file.name && !/^image\.(jpe?g|png|heic)$/i.test(file.name) ? file.name : `Foto ${stamp}.jpg`;
   const meta = { name, type: file.type || 'application/octet-stream', thumb: null };
   if (/^image\//.test(file.type) && !/svg|gif/.test(file.type)) {
@@ -2165,7 +2302,7 @@ function viewDocs() {
       ${used.map((a) => `<button class="chip" data-action="docs-area" data-id="${esc(a.id)}" aria-pressed="${ar === a.id}" style="--area:${esc(a.color)}">${esc(a.emoji)} ${esc(a.name)}</button>`).join('')}</div>` : '';
   const upl = `<label class="btn block secondary upl">${I.camera} Foto oder Datei hinzufügen<input type="file" multiple accept="${ACCEPT}" data-action="docs-upload"></label>`;
   const months = new Map();
-  for (const f of list) { const k = new Date(f.createdAt || Date.now()).toLocaleDateString('de-DE', { month: 'long', year: 'numeric' }); if (!months.has(k)) months.set(k, []); months.get(k).push(f); }
+  for (const f of list) { const k = new Date(f.createdAt || Date.now()).toLocaleDateString(LOC(), { month: 'long', year: 'numeric' }); if (!months.has(k)) months.set(k, []); months.get(k).push(f); }
   const caption = (f) => { const t = f.taskId && S.tasks.find((x) => x.id === f.taskId); const c = f.costId && S.costs.find((x) => x.id === f.costId); return t ? t.title : c ? c.title : f.name; };
   const body = list.length ? [...months].map(([m, fs]) => `<h2 class="section-title">${esc(m)}</h2>
       <div class="gal">${fs.map((f) => `<button class="gal-item" data-action="file-open" data-id="${esc(f.id)}">${fileThumb(f)}<span class="gal-cap">${esc(caption(f))}</span></button>`).join('')}</div>`).join('')
@@ -2179,11 +2316,11 @@ function viewDocs() {
 function fmtStamp(ms) {
   if (!ms) return '';
   const d = new Date(ms); const iso = isoDate(d); const diff = dayDiff(iso);
-  const hm = d.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' });
+  const hm = d.toLocaleTimeString(LOC(), { hour: '2-digit', minute: '2-digit' });
   return diff === 0 ? `heute ${hm}` : diff === -1 ? `gestern ${hm}` : `${fmtDate(iso, { day: 'numeric', month: 'short', year: d.getFullYear() !== new Date().getFullYear() ? 'numeric' : undefined })}, ${hm}`;
 }
 const isMine = (uid) => uid === 'local' || (uid && uid === S.me?.uid);
-const whoName = (uid, fallback) => (uid === 'mindora' ? 'Mindora' : isMine(uid) ? 'Du' : (S.project?.memberNames || {})[uid] || fallback || 'Jemand');
+const whoName = (uid, fallback) => (uid === 'mindora' ? 'MindSpace' : isMine(uid) ? 'Du' : (S.project?.memberNames || {})[uid] || fallback || 'Jemand');
 function threadList(t) {
   const ev = [];
   if (t.createdAt) ev.push({ at: t.createdAt, sys: true, by: t.createdBy, text: t.source === 'repeat' ? 'Als nächster Termin angelegt' : /mail/.test(t.source || '') ? `Aus einer E-Mail angelegt${t.mailSubject ? ` („${t.mailSubject}“)` : ''}` : 'Angelegt' });
@@ -2193,7 +2330,7 @@ function threadList(t) {
   const showWho = (by) => by && (members().length > 1 || by === 'mindora');
   return `<ol class="thread">${ev.map((e) => e.sys
     ? `<li class="ev sys ${e.done ? 'ok' : ''}"><span>${e.done ? '✓ ' : ''}${esc(e.text)}${showWho(e.by) ? ` · ${esc(whoName(e.by))}` : ''}</span><time>${esc(fmtStamp(e.at))}</time></li>`
-    : `<li class="ev cmt ${isMine(e.by) ? 'mine' : ''}"><div class="bubble">${members().length > 1 || !isMine(e.by) ? `<b>${esc(whoName(e.by, e.byName))}</b>` : ''}<p>${esc(e.text)}</p></div>
+    : `<li class="ev cmt ${isMine(e.by) ? 'mine' : ''}"><div class="bubble">${members().length > 1 || !isMine(e.by) ? `<b>${esc(whoName(e.by, e.byName))}</b>` : ''}<p translate="no">${esc(e.text)}</p></div>
         <time>${esc(fmtStamp(e.at))}${isMine(e.by) ? ` · <button type="button" class="link inline" data-delc="${esc(e.id)}">löschen</button>` : ''}</time></li>`).join('')}</ol>`;
 }
 function wireThread(sheet, taskId) {
@@ -2205,7 +2342,7 @@ function wireThread(sheet, taskId) {
   const send = async () => {
     const text = ta.value.trim(); if (!text) return;
     btn.disabled = true;
-    try { await store.addComment({ taskId, text }); ta.value = ''; grow(); } catch (e) { toast(fail(e)); btn.disabled = false; }
+    try { const tk = S.tasks.find((x) => x.id === taskId); await store.addComment({ taskId, areaId: tk ? areaOf(tk).id : null, text }); ta.value = ''; grow(); } catch (e) { toast(fail(e)); btn.disabled = false; }
   };
   btn.addEventListener('click', send);
   ta.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); send(); } });
@@ -2219,6 +2356,283 @@ function wireThread(sheet, taskId) {
 }
 function refreshSheet() { sheetRoot.querySelector('.sheet')?.refreshers?.forEach((f) => { try { f(); } catch (e) { console.warn(e); } }); }
 
+// ================================================================== Bündeln: ähnliche Aufgaben nicht doppelt anlegen
+function findSimilar(title, min = 0.75) {
+  let best = null, score = 0;
+  for (const t of S.tasks) {
+    if (t.done) continue;
+    const s = similarity(t.title, title);
+    if (s >= min && s > score) { best = t; score = s; }
+  }
+  return best;
+}
+async function bundleInto(ex, { text, due = null, time = null }) {
+  await store.addComment({ taskId: ex.id, areaId: areaOf(ex).id, text: String(text).slice(0, 900) });
+  if (due && (!ex.due || due < ex.due)) await store.updateTask(ex.id, { due, time: time || ex.time || null }, S.tasks.find((x) => x.id === ex.id) || ex);
+}
+
+// ================================================================== Spracheingabe
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition || null;
+function listen({ onText, onEnd }) {
+  if (!SR) return null;
+  const rec = new SR();
+  rec.lang = LANG === 'en' ? 'en-GB' : 'de-DE';
+  rec.continuous = true; rec.interimResults = true;
+  let finalText = '';
+  rec.onresult = (e) => {
+    let interim = '';
+    for (let i = e.resultIndex; i < e.results.length; i++) {
+      const r = e.results[i];
+      if (r.isFinal) finalText += r[0].transcript + ' '; else interim += r[0].transcript;
+    }
+    onText((finalText + interim).trim());
+  };
+  rec.onerror = (e) => { if (e.error === 'not-allowed' || e.error === 'service-not-allowed') toast('Mikrofon nicht erlaubt – bitte in den Einstellungen freigeben.'); };
+  rec.onend = () => onEnd?.();
+  try { rec.start(); } catch { return null; }
+  return rec;
+}
+function micButton(attrs = '') {
+  return `<button type="button" class="mic-btn" ${attrs} aria-label="Spracheingabe">${I.mic}</button>`;
+}
+function voiceSheet(preset = '') {
+  let rec = null;
+  let result = null;
+  const sheet = openSheet(`
+    <div class="sheet-head"><h2>Sprachnotiz</h2><button class="btn ghost" data-dismiss>Abbrechen</button></div>
+    <div class="voice">
+      <button type="button" class="voice-mic" data-rec aria-label="Aufnahme starten">${I.mic}</button>
+      <p class="voice-state" data-state>${SR ? 'Tippen und sprechen, z. B. „Morgen um 10 die Bank wegen der Zinsbindung anrufen“' : 'Tippe unten ins Feld und nutze das Mikrofon der Tastatur.'}</p>
+    </div>
+    <label class="field"><span>Was du gesagt hast</span><textarea data-voice rows="3" placeholder="Hier erscheint der Text – du kannst ihn auch bearbeiten.">${esc(preset)}</textarea></label>
+    <button class="btn block" data-go>${S.ai ? `${I.spark} Mit KI auswerten` : 'Aufgabe erkennen'}</button>
+    <div data-result></div>`);
+  const ta = sheet.querySelector('[data-voice]');
+  const recBtn = sheet.querySelector('[data-rec]');
+  const state = sheet.querySelector('[data-state]');
+  const stop = () => { try { rec?.stop(); } catch {} rec = null; recBtn.classList.remove('on'); };
+  const start = () => {
+    rec = listen({ onText: (t) => { ta.value = t; }, onEnd: () => { recBtn.classList.remove('on'); state.textContent = ta.value.trim() ? 'Fertig? Dann auswerten.' : 'Nichts verstanden – noch einmal versuchen.'; rec = null; } });
+    if (!rec) { ta.focus(); state.textContent = 'Tippe ins Feld und nutze das Mikrofon der Tastatur.'; return; }
+    recBtn.classList.add('on'); state.textContent = 'Ich höre zu … Tippe noch einmal, wenn du fertig bist.';
+  };
+  recBtn.addEventListener('click', () => (rec ? stop() : start()));
+  sheet.querySelector('[data-dismiss]')?.addEventListener('click', stop);
+  if (!preset && SR) setTimeout(start, 300);
+  const out = sheet.querySelector('[data-result]');
+  const draw = () => {
+    if (!result) { out.innerHTML = ''; return; }
+    if (!result.length) { out.innerHTML = `<p class="hint">Keine Aufgabe erkannt. Formuliere es etwas konkreter, z. B. „Bis Freitag Steuerunterlagen sortieren“.</p>`; return; }
+    out.innerHTML = `<div class="group-head"><h2>${result.length === 1 ? 'Erkannt' : `${result.length} Aufgaben erkannt`}</h2></div>
+      ${result.map((t, i) => `<label class="found ${t.selected ? '' : 'off'}"><input type="checkbox" data-pick="${i}" ${t.selected ? 'checked' : ''}>
+        <div class="found-body"><div class="v-title" translate="no">${esc(t.title)}</div>
+          <div class="found-src v-meta"><span>${esc(t.due ? fmtDateY(t.due) + (t.time ? `, ${t.time}` : '') : 'Ohne Datum')}</span><span>${esc(areaById(t.areaId)?.emoji || '')} ${esc(areaById(t.areaId)?.name || '')}</span>${t.repeat ? `<span>↻ ${esc(REPEAT_SHORT[t.repeat])}</span>` : ''}</div>
+          ${t.bundleWith ? `<div class="bundle-note">↺ Wird mit „${esc(t.bundleWith.title)}“ gebündelt</div>` : ''}
+          ${t.details ? `<div class="found-src">${esc(t.details)}</div>` : ''}</div></label>`).join('')}
+      <button class="btn block" data-save>Übernehmen</button>`;
+    out.querySelectorAll('[data-pick]').forEach((c) => c.addEventListener('change', () => { result[+c.dataset.pick].selected = c.checked; c.closest('.found').classList.toggle('off', !c.checked); }));
+    out.querySelector('[data-save]').addEventListener('click', save);
+  };
+  sheet.querySelector('[data-go]').addEventListener('click', async (e) => {
+    stop();
+    const text = ta.value.trim(); if (!text) { toast('Sag oder schreib zuerst etwas.'); return; }
+    const btn = e.currentTarget; btn.disabled = true; const label = btn.innerHTML; btn.innerHTML = '<span class="spin"></span> Wird ausgewertet …';
+    try {
+      if (S.ai) {
+        const r = await extractFromText(aiCfg(), text, { source: 'voice', lang: LANG, me: { name: myName(), email: S.me?.email }, contacts: S.contacts, openTasks: S.tasks.filter((t) => !t.done), areas: areas() });
+        result = r.tasks.filter((t) => !t.done).map((t) => {
+          const ex = (t.matchId && S.tasks.find((x) => x.id === t.matchId)) || findSimilar(t.title);
+          return { ...t, selected: true, bundleWith: ex || null };
+        });
+      } else {
+        const q = parseQuick(text);
+        result = q.title ? [{ ...q, details: '', selected: true, bundleWith: findSimilar(q.title) }] : [];
+      }
+      draw();
+    } catch (err) { toast(fail(err)); }
+    btn.disabled = false; btn.innerHTML = label;
+  });
+  async function save() {
+    const pick = result.filter((t) => t.selected);
+    if (!pick.length) { closeSheet(); return; }
+    try {
+      if (!S.areas.length) await ensureAreasStored();
+      let created = 0, bundled = 0;
+      for (const t of pick) {
+        if (t.bundleWith) { await bundleInto(t.bundleWith, { text: `🎤 ${t.addition || t.details || t.title}`, due: t.due, time: t.time }); bundled++; continue; }
+        const due = t.due || (t.repeat ? firstRepeatDue(t.repeat) : null);
+        await store.addTask({ title: t.title, due, time: t.time || null, areaId: t.areaId, phase: t.phase || null, leadDays: t.leadDays ?? null, repeat: t.repeat || null, repeatDay: t.repeat && due ? parseISO(due).getDate() : null,
+          reminder: !due ? 'none' : t.time ? 'hour1' : dayDiff(due) <= 1 ? 'day0' : 'day1', notes: t.details || '', source: 'voice' });
+        created++;
+      }
+      closeSheet();
+      toast([created && (created === 1 ? '1 Aufgabe angelegt' : `${created} Aufgaben angelegt`), bundled && (bundled === 1 ? '1 gebündelt' : `${bundled} gebündelt`)].filter(Boolean).join(' · ') + ' ✓');
+    } catch (err) { toast(fail(err)); }
+  }
+  if (preset) sheet.querySelector('[data-go]').click();
+}
+
+// ================================================================== Suche
+const fold = (s) => String(s || '').toLowerCase().replace(/ä/g, 'ae').replace(/ö/g, 'oe').replace(/ü/g, 'ue').replace(/ß/g, 'ss').normalize('NFD').replace(/[̀-ͯ]/g, '');
+function searchItems() {
+  const out = [];
+  const cmt = new Map();
+  for (const c of S.comments) cmt.set(c.taskId, `${cmt.get(c.taskId) || ''} ${c.text}`);
+  for (const t of S.tasks) {
+    const a = areaOf(t);
+    out.push({ k: 't', id: t.id, title: t.title, sub: [a.emoji + ' ' + a.name, phaseOf(t), t.due ? fmtDateY(t.due) : '', t.done ? '✓' : ''].filter(Boolean).join(' · '), text: `${t.title} ${t.notes || ''} ${phaseOf(t) || ''} ${a.name} ${cmt.get(t.id) || ''}`, done: t.done, area: a });
+  }
+  for (const f of S.files) {
+    const t = f.taskId && S.tasks.find((x) => x.id === f.taskId); const c = f.costId && S.costs.find((x) => x.id === f.costId);
+    const a = areaById(fileArea(f));
+    out.push({ k: 'f', id: f.id, title: f.name, sub: [a ? a.emoji + ' ' + a.name : '', t ? `${tr('Aufgabe')}: ${t.title}` : c ? `${tr('Kosten')}: ${c.title}` : '', f.desc || ''].filter(Boolean).join(' › '), text: `${f.name} ${f.desc || ''} ${t?.title || ''} ${c?.title || ''} ${a?.name || ''} ${f.mailSubject || ''}`, file: f, area: a });
+  }
+  for (const c of S.costs) {
+    const a = areaById(costArea(c));
+    out.push({ k: 'k', id: c.id, title: c.title, sub: [eur(c.amount), kindName(c.kind), c.paid ? tr('Bezahlt') : c.due ? fmtDateY(c.due) : ''].filter(Boolean).join(' · '), text: `${c.title} ${c.note || ''} ${kindName(c.kind)} ${c.amount ?? ''} ${a?.name || ''}`, area: a });
+  }
+  for (const c of S.contacts) out.push({ k: 'c', id: c.id, title: c.name, sub: [c.role, c.company, c.email || c.phone].filter(Boolean).join(' · '), text: `${c.name} ${c.company || ''} ${c.role || ''} ${c.email || ''} ${c.phone || ''} ${c.notes || ''}` });
+  for (const m of S.infos) out.push({ k: 'm', id: m.id, title: m.title || 'E-Mail', sub: [m.from, m.date ? fmtDateY(m.date) : ''].filter(Boolean).join(' · '), text: `${m.title || ''} ${m.from || ''} ${(m.text || '').slice(0, 4000)}` });
+  return out;
+}
+function localSearch(q) {
+  const words = fold(q).split(/[^a-z0-9@.€]+/).filter((w) => w.length > 1);
+  if (!words.length) return [];
+  const res = [];
+  for (const it of searchItems()) {
+    const hay = fold(it.text), tit = fold(it.title);
+    if (!words.every((w) => hay.includes(w))) continue;
+    let score = words.reduce((s, w) => s + (tit.includes(w) ? 3 : 1), 0) + (it.k === 'f' ? 1 : 0) - (it.done ? 1 : 0);
+    if (tit.startsWith(words[0])) score += 2;
+    res.push({ ...it, score });
+  }
+  return res.sort((a, b) => b.score - a.score).slice(0, 60);
+}
+const SEARCH_KIND = { t: ['Aufgaben', '✓'], f: ['Fotos & Dokumente', '📎'], k: ['Kosten', '💶'], c: ['Kontakte', '👤'], m: ['E-Mails', '✉️'] };
+function searchRow(it, why) {
+  const thumb = it.k === 'f' ? `<span class="s-thumb">${fileThumb(it.file)}</span>` : `<span class="s-ico">${SEARCH_KIND[it.k][1]}</span>`;
+  return `<button class="s-row" data-action="search-open" data-k="${it.k}" data-id="${esc(it.id)}">${thumb}
+    <span class="s-t"><strong translate="no">${esc(it.title)}</strong><small translate="no">${esc(it.sub || '')}</small>${why ? `<em>${esc(why)}</em>` : ''}</span>${I.chevron}</button>`;
+}
+function viewSearch() {
+  const q = S.searchQ || '';
+  const res = q.trim() ? localSearch(q) : [];
+  const groups = Object.keys(SEARCH_KIND).map((k) => [k, res.filter((r) => r.k === k)]).filter(([, l]) => l.length);
+  const ai = S.searchAI;
+  let aiHtml = '';
+  if (S.searchBusy) aiHtml = `<div class="ai-answer"><span class="spin"></span> MindSpace sucht …</div>`;
+  else if (ai && ai.q === q) {
+    const all = searchItems(); const byKey = new Map(all.map((x) => [`${x.k}:${x.id}`, x]));
+    const hits = ai.hits.map((h) => ({ it: byKey.get(h.id), why: h.why })).filter((h) => h.it);
+    aiHtml = `<div class="ai-answer">${I.spark}<div><p>${esc(ai.answer)}</p>${hits.length ? `<div class="s-list">${hits.map((h) => searchRow(h.it, h.why)).join('')}</div>` : ''}</div></div>`;
+  }
+  return `<main class="view">
+    <header class="page-head"><h1>Suchen</h1></header>
+    <form class="search-bar" data-form="search" autocomplete="off">
+      <span class="s-mag">${I.search}</span>
+      <input type="search" name="q" data-input="search" value="${esc(q)}" placeholder="${S.ai ? 'Was suchst du? z. B. „Wo ist der Bauvertrag?“' : 'Aufgaben, Dateien, Kosten, Kontakte …'}" enterkeyhint="search" aria-label="Suchen">
+      ${micButton('data-action="search-mic"')}
+    </form>
+    ${S.ai && q.trim() && !(ai && ai.q === q) && !S.searchBusy ? `<button class="btn block secondary ask-ai" data-action="search-ai">${I.spark} MindSpace fragen: „${esc(q.trim().slice(0, 40))}“</button>` : ''}
+    ${aiHtml}
+    ${groups.map(([k, l]) => `<div class="group-head"><h2>${SEARCH_KIND[k][0]}</h2><span>${l.length}</span></div><div class="s-list">${l.slice(0, 12).map((it) => searchRow(it)).join('')}</div>`).join('')}
+    ${q.trim() && !res.length && !ai && !S.searchBusy ? `<div class="empty"><strong>Nichts gefunden</strong>${S.ai ? 'Frag MindSpace – die KI versteht auch Umschreibungen.' : 'Versuch einen anderen Suchbegriff.'}</div>` : ''}
+    ${!q.trim() ? `<p class="hint">Durchsucht Aufgaben, Kommentare, Fotos & Dokumente (auch Inhalte von Mail-Anhängen), Kosten, Kontakte und E-Mails.${S.ai ? ' Mit Enter oder dem Mikrofon fragst du die KI – z. B. „Wo liegt die Rechnung vom Vermesser?“' : ''}</p>` : ''}
+  </main>`;
+}
+function searchIndex() {
+  const lines = [];
+  for (const it of searchItems()) {
+    const extra = it.k === 't' ? (S.tasks.find((t) => t.id === it.id)?.notes || '').replace(/\s+/g, ' ').slice(0, 90) : it.k === 'm' ? (S.infos.find((m) => m.id === it.id)?.text || '').replace(/\s+/g, ' ').slice(0, 120) : '';
+    lines.push(`${it.k === 'k' ? 'k' : it.k}:${it.id} | ${SEARCH_KIND[it.k][0]} | ${it.title} | ${it.sub}${extra ? ' | ' + extra : ''}`);
+    if (lines.length >= 700) break;
+  }
+  return lines.join('\n').slice(0, 90000);
+}
+async function runSearchAI(q) {
+  if (!S.ai || !q.trim()) return;
+  S.searchBusy = true; S.searchAI = null; render();
+  try {
+    const r = await searchWithAI(aiCfg(), q.trim(), searchIndex(), { lang: LANG });
+    S.searchAI = { q, answer: r.answer, hits: r.hits };
+  } catch (e) { toast(fail(e)); }
+  S.searchBusy = false; render();
+}
+function openSearchHit(k, id) {
+  if (k === 't') { const t = S.tasks.find((x) => x.id === id); if (t) taskSheet(t); }
+  else if (k === 'f') openViewer(S.files.find((x) => x.id === id));
+  else if (k === 'k') { const c = S.costs.find((x) => x.id === id); if (c) costSheet(c); }
+  else if (k === 'c') { const c = contactById(id); if (c) contactSheet(c); }
+  else if (k === 'm') { S.prevView = 'search'; S.view = 'inbox'; S.inboxTab = 'archive'; S.openInfo = id; render(); setTimeout(() => app.querySelector(`[data-action="info-open"][data-id="${CSS.escape(id)}"]`)?.scrollIntoView({ block: 'center' }), 80); }
+}
+function startSearchVoice() {
+  const inp = app.querySelector('[data-input="search"]');
+  const btn = app.querySelector('[data-action="search-mic"]');
+  if (!SR) { inp?.focus(); toast('Nutze das Mikrofon der Tastatur.'); return; }
+  if (S.searchRec) { try { S.searchRec.stop(); } catch {} return; }
+  btn?.classList.add('on');
+  S.searchRec = listen({
+    onText: (t) => { S.searchQ = t; if (inp) inp.value = t; },
+    onEnd: () => { S.searchRec = null; btn?.classList.remove('on'); render(); if (S.searchQ?.trim() && S.ai) runSearchAI(S.searchQ); },
+  });
+}
+
+// ================================================================== Entsperren mit Face ID / Touch ID / Windows Hello
+// Nach der ersten Anmeldung mit Passwort sperrt MindSpace sich auf diesem Gerät; entsperrt wird biometrisch.
+const LOCK_KEY = 'ms-lock';
+const LOCK_AFTER = 2 * 60 * 1000;
+const b64u = (buf) => btoa(String.fromCharCode(...new Uint8Array(buf))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+const unb64u = (s) => Uint8Array.from(atob(s.replace(/-/g, '+').replace(/_/g, '/') + '==='.slice((s.length + 3) % 4)), (c) => c.charCodeAt(0));
+const lockCfg = () => { try { return JSON.parse(localStorage.getItem(LOCK_KEY) || 'null'); } catch { return null; } };
+let bioAvailable = false;
+(async () => { try { bioAvailable = !!(window.PublicKeyCredential && await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable()); } catch {} if (bioAvailable && S.view === 'more') render(); })();
+const bioName = () => (isIOS ? 'Face ID / Touch ID' : /Windows/.test(navigator.userAgent) ? 'Windows Hello' : /Mac/.test(navigator.userAgent) ? 'Touch ID' : 'Fingerabdruck / Gesichtserkennung');
+async function enableLock() {
+  try {
+    const cred = await navigator.credentials.create({ publicKey: {
+      challenge: crypto.getRandomValues(new Uint8Array(32)),
+      rp: { name: 'MindSpace' },
+      user: { id: crypto.getRandomValues(new Uint8Array(16)), name: S.me?.email || 'mindspace', displayName: S.me?.name || 'MindSpace' },
+      pubKeyCredParams: [{ type: 'public-key', alg: -7 }, { type: 'public-key', alg: -257 }],
+      authenticatorSelection: { authenticatorAttachment: 'platform', userVerification: 'required', residentKey: 'discouraged' },
+      timeout: 60000, attestation: 'none',
+    } });
+    if (!cred) return;
+    localStorage.setItem(LOCK_KEY, JSON.stringify({ id: b64u(cred.rawId), uid: S.me?.uid || 'local', at: Date.now() }));
+    toast(`Entsperren mit ${bioName()} ist an 🔒`);
+    render();
+  } catch (e) { if (e.name !== 'NotAllowedError' && e.name !== 'AbortError') toast(fail(e)); }
+}
+function disableLock() { localStorage.removeItem(LOCK_KEY); toast('Sperre ausgeschaltet'); render(); }
+let lockedSince = null;
+function showLock() {
+  if (!lockCfg() || document.getElementById('lock')) return;
+  const el = document.createElement('div');
+  el.id = 'lock'; el.setAttribute('role', 'dialog'); el.setAttribute('aria-modal', 'true');
+  el.innerHTML = `<div class="lock-box"><img src="icons/logo.svg" alt="" class="lock-logo"><h1>MindSpace</h1><p>Gesperrt</p>
+    <button class="btn block" data-unlock>${I.lock} Mit ${esc(bioName())} entsperren</button>
+    ${store.mode === 'cloud' ? '<button class="link center" data-pw>Stattdessen mit Passwort anmelden</button>' : '<button class="link center" data-off>Sperre auf diesem Gerät aufheben</button>'}</div>`;
+  document.body.appendChild(el);
+  document.body.classList.add('is-locked');
+  el.querySelector('[data-unlock]').onclick = unlock;
+  el.querySelector('[data-pw]')?.addEventListener('click', async () => { hideLock(); await store.signOut(); });
+  el.querySelector('[data-off]')?.addEventListener('click', () => { if (confirm('Sperre aufheben?')) { localStorage.removeItem(LOCK_KEY); hideLock(); } });
+}
+function hideLock() { document.getElementById('lock')?.remove(); document.body.classList.remove('is-locked'); lockedSince = null; }
+async function unlock() {
+  const cfg = lockCfg(); if (!cfg) { hideLock(); return; }
+  try {
+    const ok = await navigator.credentials.get({ publicKey: { challenge: crypto.getRandomValues(new Uint8Array(32)), allowCredentials: [{ type: 'public-key', id: unb64u(cfg.id), transports: ['internal'] }], userVerification: 'required', timeout: 60000 } });
+    if (ok) hideLock();
+  } catch (e) { if (e.name !== 'NotAllowedError' && e.name !== 'AbortError') toast(fail(e)); }
+}
+document.addEventListener('visibilitychange', () => {
+  if (!lockCfg()) return;
+  if (document.hidden) lockedSince = Date.now();
+  else if (lockedSince && Date.now() - lockedSince > LOCK_AFTER) showLock();
+});
+if (lockCfg()) showLock();
+
 // ================================================================== App aktualisieren
 async function hardReload() {
   try { const regs = await navigator.serviceWorker?.getRegistrations?.() || []; await Promise.all(regs.map((r) => r.update().catch(() => {}))); } catch {}
@@ -2228,9 +2642,9 @@ async function hardReload() {
 
 // ================================================================== Daten sichern
 async function exportData() {
-  const data = { app: 'mindora', version: 2, exportedAt: new Date().toISOString(), project: S.project?.name, areas: S.areas, tasks: S.tasks, infos: S.infos, contacts: S.contacts, costs: S.costs, comments: S.comments };
+  const data = { app: 'mindspace', version: 3, exportedAt: new Date().toISOString(), project: S.project?.name, areas: S.areas, tasks: S.tasks, infos: S.infos, contacts: S.contacts, costs: S.costs, comments: S.comments };
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-  const name = `mindora-sicherung-${todayISO()}.json`;
+  const name = `mindspace-sicherung-${todayISO()}.json`;
   const file = new File([blob], name, { type: 'application/json' });
   if (navigator.canShare?.({ files: [file] })) { try { await navigator.share({ files: [file], title: name }); return; } catch (e) { if (e.name === 'AbortError') return; } }
   const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name; a.click();
@@ -2239,7 +2653,7 @@ async function exportData() {
 async function importData(file) {
   try {
     const data = JSON.parse(await file.text());
-    if (!Array.isArray(data.tasks)) throw new Error('Das ist keine Mindora-Sicherung.');
+    if (!Array.isArray(data.tasks)) throw new Error('Das ist keine MindSpace-Sicherung.');
     for (const { id, ...a } of data.areas || []) if (id && !S.areas.find((x) => x.id === id)) await store.setArea(id, a);
     const tasks = data.tasks.map(({ id, ...t }) => t).filter((t) => !S.tasks.some((x) => x.title === t.title && x.due === t.due));
     if (tasks.length) await store.addTasks(tasks);
@@ -2337,6 +2751,7 @@ app.addEventListener('click', async (e) => {
       S.aiBusy = false; render(); break;
     }
     case 'invite': inviteSheet(); break;
+    case 'member': memberSheet(el.dataset.id); break;
     case 'join': {
       const c = prompt('Einladungscode eingeben');
       if (c) store.joinProject(c).then(() => toast('Willkommen!')).catch((err) => toast(fail(err)));
@@ -2344,14 +2759,14 @@ app.addEventListener('click', async (e) => {
     }
     case 'push': {
       if (store.mode !== 'cloud') { inviteSheet(); break; }
-      if (isIOS && !standalone) { toast('Öffne Mindora zuerst über das Symbol auf dem Home-Bildschirm.'); break; }
+      if (isIOS && !standalone) { toast('Öffne MindSpace zuerst über das Symbol auf dem Home-Bildschirm.'); break; }
       if (typeof Notification === 'undefined') { toast('Dieses Gerät unterstützt keine Push-Nachrichten (iPhone: ab iOS 16.4, vom Home-Bildschirm geöffnet).'); break; }
       // iOS zeigt die Abfrage nur, wenn sie direkt beim Antippen startet – also vor jedem „await“.
       const permP = Notification.permission === 'granted' ? Promise.resolve('granted') : Notification.requestPermission();
       toast('Push-Nachrichten werden aktiviert …');
       try {
         const r = await store.enablePush(permP);
-        const msg = { unsupported: 'Dieses Gerät unterstützt keine Push-Nachrichten im Browser (iPhone: ab iOS 16.4, vom Home-Bildschirm geöffnet).', denied: isIOS ? 'Nicht erlaubt. Ändern unter iPhone-Einstellungen → Mitteilungen → Mindora.' : 'Nicht erlaubt. Klicke links neben der Adresse auf das Schloss-Symbol und erlaube Benachrichtigungen.', dismissed: 'Die Abfrage wurde geschlossen. Tippe noch einmal auf Aktivieren und wähle „Erlauben“.', novapid: 'In config.js fehlt der vapidKey (Schritt 2.6).', notoken: 'Push-Anmeldung fehlgeschlagen. Versuch es gleich noch einmal.' };
+        const msg = { unsupported: 'Dieses Gerät unterstützt keine Push-Nachrichten im Browser (iPhone: ab iOS 16.4, vom Home-Bildschirm geöffnet).', denied: isIOS ? 'Nicht erlaubt. Ändern unter iPhone-Einstellungen → Mitteilungen → MindSpace.' : 'Nicht erlaubt. Klicke links neben der Adresse auf das Schloss-Symbol und erlaube Benachrichtigungen.', dismissed: 'Die Abfrage wurde geschlossen. Tippe noch einmal auf Aktivieren und wähle „Erlauben“.', novapid: 'In config.js fehlt der vapidKey (Schritt 2.6).', notoken: 'Push-Anmeldung fehlgeschlagen. Versuch es gleich noch einmal.' };
         toast(r.ok ? 'Push-Nachrichten sind aktiv 🔔' : msg[r.reason]);
       } catch (err) { toast(fail(err)); }
       render(); break;
@@ -2360,6 +2775,13 @@ app.addEventListener('click', async (e) => {
     case 'export': exportData(); break;
     case 'logout': if (confirm('Abmelden?')) store.signOut(); break;
     case 'hard-reload': hardReload(); break;
+    case 'lock-on': enableLock(); break;
+    case 'lock-off': if (confirm('Biometrische Sperre ausschalten?')) disableLock(); break;
+    case 'voice': voiceSheet(); break;
+    case 'open-search': if (S.view !== 'search') S.prevView = S.view; S.view = 'search'; render(); window.scrollTo(0, 0); setTimeout(() => app.querySelector('[data-input="search"]')?.focus(), 60); break;
+    case 'search-ai': runSearchAI(S.searchQ || ''); break;
+    case 'search-mic': startSearchVoice(); break;
+    case 'search-open': openSearchHit(el.dataset.k, el.dataset.id); break;
     case 'install': if (installPrompt) { installPrompt.prompt(); const r = await installPrompt.userChoice.catch(() => null); if (r?.outcome === 'accepted') installPrompt = null; render(); } break;
     case 'auth-tab': S.authTab = el.dataset.tab; S.authError = ''; render(); break;
     case 'reset-pw': {
@@ -2382,18 +2804,21 @@ function debounceSearch(key, stateKey) {
 const searchInfo = debounceSearch('info-q', 'infoQuery');
 const searchContact = debounceSearch('contact-q', 'contactQuery');
 const searchTask = debounceSearch('task-q', 'taskQuery');
+const searchAll = debounceSearch('search', 'searchQ');
 app.addEventListener('input', (e) => {
   const el = e.target; const k = el.dataset.input;
   if (k === 'quick') {
     S.quick = el.value;
     const pv = app.querySelector('[data-quick-preview]'); if (pv) pv.innerHTML = quickPreview(el.value);
     const go = app.querySelector('.quick-go'); if (go) go.hidden = !el.value.trim();
+    const mic = app.querySelector('.quick [data-action="voice"]'); if (mic) mic.hidden = !!el.value.trim();
     return;
   }
   if (k === 'paste') { S.pasteText = el.value; const b = app.querySelector('#parse-btn'); if (b) b.disabled = !el.value.trim(); }
   else if (k === 'info-q') searchInfo(el);
   else if (k === 'contact-q') searchContact(el);
   else if (k === 'task-q') searchTask(el);
+  else if (k === 'search') { S.searchAI = null; searchAll(el); }
   else if (k?.startsWith('pay-')) {
     const x = S.parsed.payments[+el.dataset.i];
     if (k === 'pay-title') x.title = el.value;
@@ -2412,6 +2837,9 @@ app.addEventListener('change', (e) => {
   const el = e.target; const a = el.dataset.action;
   if (el.dataset.input === 'found-area') { const t = S.parsed.tasks[+el.dataset.i]; t.areaId = el.value; t.phase = null; }
   if (a === 'pick') { S.parsed.tasks[+el.dataset.i].selected = el.checked; el.closest('.found').classList.toggle('off', !el.checked); updateCommitBtn(); }
+  else if (a === 'set-theme') { try { localStorage.setItem('ms-theme', el.value); } catch {} applyTheme(el.value); }
+  else if (a === 'set-lang') { setLang(el.value); store.setUserPref?.({ lang: el.value }).catch?.(() => {}); setTimeout(() => location.reload(), 150); }
+  else if (a === 'pick-bundle') { const t = S.parsed.tasks[+el.dataset.i]; t.bundle = el.checked ? (S.tasks.find((x) => x.title === t.bundleTitle && !x.done)?.id || null) : null; }
   else if (a === 'pick-pay') { S.parsed.payments[+el.dataset.i].selected = el.checked; el.closest('.found').classList.toggle('off', !el.checked); updateCommitBtn(); }
   else if (a === 'docs-upload' && el.files.length) { const files = [...el.files]; el.value = ''; uploadFiles(files, { areaId: S.docsArea !== 'all' ? S.docsArea : null }); }
   else if (a === 'pick-contact') { S.parsed.contacts[+el.dataset.i].selected = el.checked; el.closest('.found').classList.toggle('off', !el.checked); updateCommitBtn(); }
@@ -2429,6 +2857,7 @@ app.addEventListener('submit', async (e) => {
   const form = e.target; const kind = form.dataset.form; if (!kind) return;
   e.preventDefault();
   if (kind === 'quick') { const v = form.q.value; form.q.blur(); S.pendingRender = false; await submitQuick(v); return; }
+  if (kind === 'search') { clearTimeout(S.qT); S.searchQ = form.q.value; form.q.blur(); S.pendingRender = false; if (S.ai) runSearchAI(S.searchQ); else render(); return; }
   const f = Object.fromEntries(new FormData(form));
   const btn = form.querySelector('button[type="submit"]'); btn.disabled = true;
   S.authError = '';
@@ -2450,10 +2879,11 @@ app.addEventListener('submit', async (e) => {
 
 // ================================================================== Computer: Tastenkürzel, Dateien hineinziehen
 document.addEventListener('keydown', (e) => {
+  if ((e.metaKey || e.ctrlKey) && (e.key === 'k' || e.key === 'K')) { e.preventDefault(); closeSheet(); app.querySelector('[data-action="open-search"]')?.click(); return; }
   if (e.metaKey || e.ctrlKey || e.altKey || e.isComposing) return;
   const t = e.target;
   if (t && (/^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName) || t.isContentEditable)) return;
-  if (sheetRoot.innerHTML || document.querySelector('.viewer')) return;
+  if (sheetRoot.innerHTML || document.querySelector('.viewer') || document.getElementById('lock')) return;
   if (store.mode === 'cloud' && (!S.me || S.projectState !== 'ready')) return;
   const tabs = ['home', 'tasks', 'plan', 'inbox', 'more'];
   if (e.key === 'n' || e.key === 'N') { e.preventDefault(); if (S.view === 'costs') costSheet(null); else taskSheet(null); }
@@ -2461,7 +2891,9 @@ document.addEventListener('keydown', (e) => {
     e.preventDefault();
     if (S.view !== 'home') { S.view = 'home'; render(); window.scrollTo(0, 0); }
     app.querySelector('[data-input="quick"]')?.focus();
-  } else if (/^[1-5]$/.test(e.key)) { S.view = tabs[+e.key - 1]; render(); window.scrollTo(0, 0); }
+  } else if (e.key === 's' || e.key === 'S') { e.preventDefault(); app.querySelector('[data-action="open-search"]')?.click(); }
+  else if (e.key === 'm' || e.key === 'M') { e.preventDefault(); voiceSheet(); }
+  else if (/^[1-5]$/.test(e.key)) { S.view = tabs[+e.key - 1]; render(); window.scrollTo(0, 0); }
 });
 const hasFiles = (e) => [...(e.dataTransfer?.types || [])].includes('Files');
 document.addEventListener('dragover', (e) => {
@@ -2482,14 +2914,20 @@ document.addEventListener('drop', (e) => {
 });
 
 // ================================================================== Start
+applyTheme();
+window.matchMedia('(prefers-color-scheme: dark)').addEventListener?.('change', () => applyTheme());
+startTranslator();
 store.init({
   onAuth(me) {
     const changed = S.me?.uid !== me?.uid;
     S.me = me; S.authReady = true;
-    if (me && store.mode === 'cloud' && changed) { S.projectState = 'loading'; store.resumePush(); }
+    if (me && store.mode === 'cloud' && changed) { S.projectState = 'loading'; store.resumePush(); store.setUserPref({ lang: LANG }).catch(() => {}); }
     render();
   },
-  onProject(p) { S.project = p; S.projectState = p ? 'ready' : 'none'; render(); },
+  onProject(p) {
+    S.project = p; S.projectState = p ? 'ready' : 'none'; render();
+    if (p && Object.values(p.access || {}).some(Array.isArray)) setTimeout(() => { if (S.tasks.length || S.files.length) runBackfill(); }, 4000);
+  },
   onTasks(list) { S.tasks = list; render(); if (S.openNewOnReady) { S.openNewOnReady = false; setTimeout(() => taskSheet(null), 300); } },
   onInfos(list) { S.infos = list; render(); },
   onContacts(list) { S.contacts = list; render(); },
