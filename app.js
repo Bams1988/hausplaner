@@ -1,5 +1,5 @@
 import { createStore, computeRemindAt } from './store.js';
-import { parseEmails, isoDate, similarity, guessPhase } from './parser.js';
+import { parseEmails, isoDate, similarity, guessPhase, extractDate } from './parser.js';
 import {
   extractFromText, draftEmail, assessTasks, testConnection, urgencyOf, aiKeyOf,
   STATUS, MODELS, DEFAULT_MODEL, DEFAULT_AREAS, HOUSE_PHASES,
@@ -13,7 +13,7 @@ const REMINDERS = [
 const AREA_COLORS = ['#2F9E77', '#E9A23B', '#4A8FE7', '#2BB0A6', '#8E7CE0', '#E46F8E', '#D9774B', '#5B7F95'];
 const AREA_EMOJIS = ['🏡', '💛', '📄', '🌿', '☀️', '🧒', '💼', '🚗', '✈️', '🎓', '🐾', '🎉', '🏃', '🛠️', '💶', '📦'];
 const S = {
-  view: 'today', area: 'all', filter: 'open', inboxTab: 'new', planArea: null, planZoom: 'week', planScrolled: false,
+  view: 'home', area: 'all', filter: 'open', inboxTab: 'new', planArea: null, weekOffset: 0, dayPick: null, taskQuery: '',
   me: null, authReady: false, project: null, projectState: 'loading',
   tasks: [], infos: [], contacts: [], areas: [], ai: null, aiBusy: false,
   pasteText: '', parsed: null, saveInfo: true, openInfo: null, infoQuery: '', contactQuery: '', authTab: 'login', authError: '',
@@ -79,8 +79,10 @@ const weekStart = () => { const d = new Date(); d.setHours(0, 0, 0, 0); d.setDat
 // ================================================================== Symbole
 const sv = (p, w = 24, sw = 1.9) => `<svg width="${w}" height="${w}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="${sw}" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${p}</svg>`;
 const I = {
-  today: sv('<circle cx="12" cy="12" r="4"/><path d="M12 2.5v2M12 19.5v2M4.6 4.6 6 6M18 18l1.4 1.4M2.5 12h2M19.5 12h2M4.6 19.4 6 18M18 6l1.4-1.4"/>'),
-  plan: sv('<path d="M4 6h9M7 12h11M5 18h7"/><circle cx="16" cy="6" r="1.6"/><circle cx="20" cy="12" r="1.6"/><circle cx="15" cy="18" r="1.6"/>'),
+  today: sv('<rect x="3.5" y="3.5" width="7" height="7" rx="2"/><rect x="13.5" y="3.5" width="7" height="7" rx="2"/><rect x="3.5" y="13.5" width="7" height="7" rx="2"/><rect x="13.5" y="13.5" width="7" height="7" rx="2"/>'),
+  list: sv('<path d="M9 6h11M9 12h11M9 18h11"/><path d="m3.5 6 1.2 1.2L7 5M3.5 12l1.2 1.2L7 11M3.5 18l1.2 1.2L7 17"/>'),
+  flag: sv('<path d="M5 21V4"/><path d="M5 4h11l-2 4 2 4H5"/>', 18, 2),
+  plan: sv('<circle cx="6" cy="6" r="2.2"/><circle cx="18" cy="12" r="2.2"/><circle cx="6" cy="18" r="2.2"/><path d="M8.2 6H14a4 4 0 0 1 0 8H10a4 4 0 0 0 0 4h-1.8"/>'),
   inbox: sv('<path d="M3.5 13.5 6 5.5h12l2.5 8"/><path d="M3.5 13.5V18a1.5 1.5 0 0 0 1.5 1.5h14a1.5 1.5 0 0 0 1.5-1.5v-4.5h-5a3.5 3.5 0 0 1-7 0Z"/>'),
   people: sv('<circle cx="9" cy="8.5" r="3"/><path d="M3.5 19c.9-3 3-4.6 5.5-4.6s4.6 1.6 5.5 4.6"/><path d="M15.5 5.8a3 3 0 0 1 0 5.4M17.5 14.6c1.5.6 2.5 2 3 4.4"/>'),
   more: sv('<circle cx="5.5" cy="12" r="1.4"/><circle cx="12" cy="12" r="1.4"/><circle cx="18.5" cy="12" r="1.4"/>', 24, 2.2),
@@ -91,6 +93,7 @@ const I = {
   phone: sv('<path d="M5 4h3.5l1.7 4.3-2.2 1.4a11 11 0 0 0 6.3 6.3l1.4-2.2L20 15.5V19a1.5 1.5 0 0 1-1.6 1.5C10.7 20 4 13.3 3.5 5.6A1.5 1.5 0 0 1 5 4Z"/>', 18, 2),
   envelope: sv('<rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3.5 6.5 8.5 6.5 8.5-6.5"/>', 18, 2),
   spark: '<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" class="spark"><path d="M12 2.5c.5 4.6 2.9 7 7.5 7.5-4.6.5-7 2.9-7.5 7.5-.5-4.6-2.9-7-7.5-7.5 4.6-.5 7-2.9 7.5-7.5Z"/><path d="M19 15c.2 2 1.2 3 3 3.2-1.8.2-2.8 1.2-3 3.3-.2-2.1-1.2-3.1-3-3.3 1.8-.2 2.8-1.2 3-3.2Z" opacity=".6"/></svg>',
+  arrowUp: sv('<path d="M12 19V5M5.5 11.5 12 5l6.5 6.5"/>', 22, 2.6),
   chevron: sv('<path d="m9 6 6 6-6 6"/>', 18, 2),
   copy: sv('<rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/>', 16, 2),
 };
@@ -145,123 +148,238 @@ function render() {
     if (S.projectState === 'loading') { app.innerHTML = boot(); return; }
     if (S.projectState === 'none') { app.innerHTML = viewSetup(); return; }
   }
-  const views = { today: viewToday, plan: viewPlan, inbox: viewInbox, contacts: viewContacts, more: viewMore };
-  const fab = S.view === 'today' || S.view === 'plan' ? `<button class="fab" data-action="new-task" aria-label="Aufgabe anlegen">${I.plus}</button>`
+  const views = { home: viewHome, tasks: viewTasks, plan: viewPlan, inbox: viewInbox, contacts: viewContacts, more: viewMore };
+  if (!views[S.view]) S.view = 'home';
+  const fab = ['home', 'tasks', 'plan'].includes(S.view) ? `<button class="fab" data-action="new-task" aria-label="Aufgabe anlegen">${I.plus}</button>`
     : S.view === 'contacts' ? `<button class="fab" data-action="new-contact" aria-label="Kontakt anlegen">${I.plus}</button>` : '';
   app.innerHTML = views[S.view]() + tabbar() + fab;
-  if (S.view === 'plan') afterPlanRender();
 }
 const boot = () => '<div class="boot"><span class="boot-sun"></span>Mindora wird geladen …</div>';
 app.addEventListener('focusout', () => setTimeout(() => { if (S.pendingRender && !app.contains(document.activeElement)) render(); }, 50));
 
 function tabbar() {
   const newN = S.tasks.filter((t) => t.isNew && !t.done).length;
-  const tab = (id, label, icon, dot) => `<button data-action="tab" data-tab="${id}" ${S.view === id ? 'aria-current="page"' : ''}>${icon}${dot ? `<b class="tab-dot">${dot}</b>` : ''}<span>${label}</span></button>`;
-  return `<nav class="tabbar">${tab('today', 'Heute', I.today)}${tab('plan', 'Plan', I.plan)}${tab('inbox', 'Eingang', I.inbox, newN)}${tab('contacts', 'Kontakte', I.people)}${tab('more', 'Mehr', I.more)}</nav>`;
+  const tab = (id, label, icon, dot) => `<button data-action="tab" data-tab="${id}" ${S.view === id || (id === 'more' && S.view === 'contacts') ? 'aria-current="page"' : ''}>${icon}${dot ? `<b class="tab-dot">${dot}</b>` : ''}<span>${label}</span></button>`;
+  return `<nav class="tabbar">${tab('home', 'Übersicht', I.today)}${tab('tasks', 'Aufgaben', I.list)}${tab('plan', 'Plan', I.plan)}${tab('inbox', 'Eingang', I.inbox, newN)}${tab('more', 'Mehr', I.more)}</nav>`;
 }
 
-// ================================================================== Heute
+// ================================================================== Kleine Grafiken
+function ring(pct, size = 56, stroke = 7, color = 'var(--brand)', label = null) {
+  const r = (size - stroke) / 2, c = 2 * Math.PI * r, len = Math.max(0, Math.min(1, pct)) * c;
+  return `<svg class="mini-ring" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}" aria-hidden="true">
+    <circle cx="${size / 2}" cy="${size / 2}" r="${r}" fill="none" stroke="var(--ring-track)" stroke-width="${stroke}"/>
+    ${len > 0 ? `<circle cx="${size / 2}" cy="${size / 2}" r="${r}" fill="none" stroke="${color}" stroke-width="${stroke}" stroke-linecap="round" stroke-dasharray="${len} ${c}" transform="rotate(-90 ${size / 2} ${size / 2})"/>` : ''}
+    <text x="50%" y="52%" text-anchor="middle" dominant-baseline="middle" class="mini-ring-t" style="font-size:${size * 0.27}px">${label ?? Math.round(pct * 100) + '%'}</text>
+  </svg>`;
+}
+const sunArt = () => `<svg class="sun-art" viewBox="0 0 120 70" aria-hidden="true"><path d="M8 62h104" stroke="var(--line)" stroke-width="3" stroke-linecap="round"/><path d="M30 62a30 30 0 0 1 60 0" fill="var(--sun-soft)" stroke="var(--sun)" stroke-width="3"/>${[0, 1, 2, 3, 4].map((i) => { const a = Math.PI + (i + 0.5) * Math.PI / 5; return `<path d="M${60 + 38 * Math.cos(a)} ${62 + 38 * Math.sin(a)}L${60 + 48 * Math.cos(a)} ${62 + 48 * Math.sin(a)}" stroke="var(--sun)" stroke-width="3" stroke-linecap="round"/>`; }).join('')}</svg>`;
+
+// Kennzahlen je Lebensbereich
+function areaStats(a) {
+  const list = S.tasks.filter((t) => areaOf(t).id === a.id);
+  const open = list.filter((t) => !t.done);
+  const done = list.length - open.length;
+  const next = open.filter((t) => t.due).sort(byDue)[0] || null;
+  const urgent = open.filter((t) => urgRank(t) >= 2).length;
+  const end = open.map((t) => t.due).filter(Boolean).sort().pop() || null;
+  return { list, open, done, total: list.length, pct: list.length ? done / list.length : 0, next, urgent, end };
+}
+
+// ================================================================== Übersicht (Dashboard)
 function greeting() {
   const h = new Date().getHours();
   const g = h < 5 ? 'Gute Nacht' : h < 11 ? 'Guten Morgen' : h < 17 ? 'Hallo' : h < 22 ? 'Guten Abend' : 'Gute Nacht';
   return myName() ? `${g}, ${myName().split(' ')[0]}` : g;
 }
-function heroRing(ratio, big, small) {
-  const R = 46, C = 2 * Math.PI * R, len = Math.max(0.001, Math.min(1, ratio)) * C;
-  const ang = -Math.PI / 2 + Math.min(1, ratio) * Math.PI * 2;
-  const sx = 60 + R * Math.cos(ang), sy = 60 + R * Math.sin(ang);
-  return `<svg class="ring" viewBox="0 0 120 120" role="img" aria-label="${esc(big)} ${esc(small)}">
-    <defs><linearGradient id="rg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="var(--brand)"/><stop offset="1" stop-color="var(--sun)"/></linearGradient></defs>
-    <circle cx="60" cy="60" r="${R}" fill="none" stroke="var(--ring-track)" stroke-width="11"/>
-    <circle class="ring-arc" cx="60" cy="60" r="${R}" fill="none" stroke="url(#rg)" stroke-width="11" stroke-linecap="round" stroke-dasharray="${len} ${C}" transform="rotate(-90 60 60)" style="--len:${len}px;--c:${C}px"/>
-    ${ratio > 0.02 ? `<circle cx="${sx}" cy="${sy}" r="8.5" fill="var(--sun)" class="ring-sun"/>` : ''}
-    <text x="60" y="60" text-anchor="middle" class="ring-big">${esc(big)}</text>
-    <text x="60" y="78" text-anchor="middle" class="ring-small">${esc(small)}</text>
-  </svg>`;
-}
-
-function viewToday() {
+function viewHome() {
   const today = todayISO();
   const open = S.tasks.filter((t) => !t.done);
-  const inArea = (t) => S.area === 'all' || areaOf(t).id === S.area;
-  const ws = weekStart().getTime();
-  const weekEnd = isoDate(new Date(ws + 6 * 864e5));
-  const doneWeek = S.tasks.filter((t) => t.done && (t.doneAt || 0) >= ws).length;
-  const dueWeek = open.filter((t) => t.due && t.due <= weekEnd).length;
-  const ratio = doneWeek + dueWeek ? doneWeek / (doneWeek + dueWeek) : (S.tasks.length ? 1 : 0);
-  const todayN = open.filter((t) => t.due && t.due <= today).length;
-  const urgentN = open.filter((t) => urgRank(t) >= 2 && !(t.due && t.due <= today)).length;
-  let line, sub;
-  if (!S.tasks.length) { line = 'Schön, dass du da bist.'; sub = 'Leg deine erste Aufgabe an oder leite eine E-Mail weiter – Mindora macht den Rest.'; }
-  else if (!todayN && !urgentN) { line = 'Heute steht nichts an.'; sub = dueWeek ? `Diese Woche noch ${dueWeek} – alles entspannt im Plan.` : 'Alles im Plan. Genieß den Tag.'; }
-  else if (todayN) { line = `${todayN} ${todayN === 1 ? 'Sache' : 'Sachen'} für heute.`; sub = urgentN ? `Dazu ${urgentN}, die bald starten ${urgentN === 1 ? 'sollte' : 'sollten'}. Eins nach dem anderen.` : 'Eins nach dem anderen – das schaffst du.'; }
-  else { line = `${urgentN} ${urgentN === 1 ? 'Aufgabe sollte' : 'Aufgaben sollten'} jetzt starten.`; sub = 'Ein kleiner Schritt heute spart später Stress.'; }
+  const weekEnd = addDays(today, 6);
+  const sets = {
+    heute: { label: 'Heute', items: open.filter((t) => t.due === today), empty: 'Heute ist nichts fällig.' },
+    nachholen: { label: 'Überfällig', items: open.filter((t) => t.due && t.due < today), empty: 'Nichts überfällig. Sehr gut!' },
+    starten: { label: 'Jetzt starten', items: open.filter((t) => !(t.due && t.due <= today) && urgRank(t) >= 2), empty: 'Nichts muss gerade angestoßen werden.' },
+    woche: { label: '7 Tage', items: open.filter((t) => t.due && t.due > today && t.due <= weekEnd), empty: 'In den nächsten 7 Tagen ist nichts fällig.' },
+  };
+  if (!S.homeSet) S.homeSet = sets.nachholen.items.length || sets.heute.items.length ? (sets.heute.items.length ? 'heute' : 'nachholen') : sets.starten.items.length ? 'starten' : 'woche';
+  const cur = sets[S.homeSet];
+  const newOnes = open.filter((t) => t.isNew);
+  const tone = { heute: 'brand', nachholen: 'coral', starten: 'sun', woche: 'ink' };
 
-  const next = open.filter(inArea).sort(byUrgency)[0];
-  const newN = open.filter((t) => t.isNew).length;
   let banner = '';
   if (isIOS && !standalone && !localStorage.getItem('hp-hide-install')) {
     banner = `<div class="note-card"><p><strong>Als App installieren:</strong> In Safari auf ${I.share} tippen, dann „Zum Home-Bildschirm“. Danach klappen auch Push-Nachrichten.</p><button class="x" data-action="hide-banner" data-key="hp-hide-install" aria-label="Hinweis schließen">×</button></div>`;
   }
-  const focus = next ? focusCard(next) : '';
-  const chips = areaChips(S.area, 'area', true);
+  const gestureTip = S.tasks.length && !localStorage.getItem('hp-tip-gestures')
+    ? `<div class="note-card tip"><p><strong>Tipp:</strong> Aufgabe nach <strong>rechts wischen</strong> = erledigt, nach <strong>links wischen</strong> = verschieben. <strong>Gedrückt halten</strong> und auf einen Tag ziehen = neues Datum.</p><button class="x" data-action="hide-banner" data-key="hp-tip-gestures" aria-label="Tipp schließen">×</button></div>` : '';
+
+  const tiles = Object.entries(sets).map(([k, s]) => `
+    <button class="tile t-${tone[k]} ${S.homeSet === k ? 'on' : ''}" data-action="home-set" data-k="${k}" aria-pressed="${S.homeSet === k}">
+      <b>${s.items.length}</b><span>${s.label}</span>
+    </button>`).join('');
+  const list = cur.items.sort(byUrgency);
+  const listHtml = list.length
+    ? `<div class="list">${list.slice(0, 8).map((t) => row(t, { reason: true })).join('')}</div>${list.length > 8 ? `<button class="link" data-action="tab" data-tab="plan">Alle ${list.length} im Planer</button>` : ''}`
+    : `<div class="calm">${sunArt()}<p>${esc(cur.empty)}</p></div>`;
+
+  const projs = areas().map((a) => ({ a, s: areaStats(a) })).filter((x) => x.s.total);
+  const projHtml = projs.length ? `<div class="proj-row">${projs.map(({ a, s }) => `
+      <button class="proj-card" data-action="open-plan" data-id="${esc(a.id)}" style="--area:${esc(a.color)}">
+        <div class="proj-top">${ring(s.pct, 48, 6, a.color)}<span class="proj-emoji">${esc(a.emoji)}</span></div>
+        <strong>${esc(a.name)}</strong>
+        <span>${s.open.length ? `${s.open.length} offen` : 'Alles erledigt ✓'}</span>
+        ${s.next ? `<span class="proj-next">Nächste Frist: ${esc(fmtDate(s.next.due, { day: 'numeric', month: 'short' }))}</span>` : ''}
+      </button>`).join('')}
+      <button class="proj-card add" data-action="area-new"><span class="proj-plus">+</span><strong>Neues Projekt</strong><span>z. B. Urlaub, Auto</span></button></div>` : '';
+
+  return `<main class="view">
+    <header class="hello"><p class="hello-date">${esc(new Date().toLocaleDateString('de-DE', { weekday: 'long', day: 'numeric', month: 'long' }))}</p><h1>${esc(greeting())}</h1></header>
+    ${quickAdd()}
+    ${banner}${gestureTip}
+    ${newOnes.length ? `<button class="inbox-hint" data-action="goto-new">${I.inbox}<span><strong>${newOnes.length} ${newOnes.length === 1 ? 'neue Aufgabe' : 'neue Aufgaben'}</strong> aus E-Mails – kurz prüfen</span>${I.chevron}</button>` : ''}
+    <div class="tiles" role="tablist" aria-label="Filter">${tiles}</div>
+    <section class="card">
+      <div class="card-head"><h2>${esc(cur.label === '7 Tage' ? 'Die nächsten 7 Tage' : cur.label)}</h2>
+        ${S.homeSet === 'nachholen' && list.length ? `<button class="btn small secondary" data-action="all-today">Alle auf heute</button>` : ''}</div>
+      ${listHtml}
+    </section>
+    <section class="card">
+      <div class="card-head"><h2>Wochenblick</h2>
+        <div class="week-nav"><button class="icon-sm" data-action="week" data-d="-1" aria-label="7 Tage zurück">‹</button><button class="icon-sm" data-action="week" data-d="1" aria-label="7 Tage weiter">›</button></div></div>
+      ${weekChart()}
+    </section>
+    ${projHtml ? `<section class="card plain"><div class="card-head"><h2>Projekte</h2><button class="link" data-action="plan-mode" data-m="projekte">Alle</button></div>${projHtml}</section>` : ''}
+    ${!S.tasks.length ? `<div class="btn-row" style="margin-top:16px"><button class="btn secondary" data-action="template">Checkliste Hausbau laden</button></div>` : ''}
+  </main>`;
+}
+
+// ---------- Schnelleingabe (wie Todoist: „Bank anrufen morgen 10 Uhr #hausbau“)
+function quickAdd() {
+  return `<form class="quick" data-form="quick" autocomplete="off">
+    <span class="quick-plus">${I.plus}</span>
+    <input name="q" data-input="quick" placeholder="Neue Aufgabe, z. B. „Bank anrufen morgen 10 Uhr“" value="${esc(S.quick || '')}" enterkeyhint="done" aria-label="Neue Aufgabe">
+    <button class="quick-go" type="submit" ${S.quick?.trim() ? '' : 'hidden'} aria-label="Hinzufügen">${I.arrowUp}</button>
+    <div class="quick-preview" data-quick-preview>${quickPreview(S.quick || '')}</div>
+  </form>`;
+}
+function parseQuick(text) {
+  let t = ` ${text} `;
+  let areaId = null;
+  const tag = t.match(/\s#([^\s#]+)/);
+  if (tag) {
+    const k = norm(tag[1]);
+    const a = areas().find((x) => norm(x.name).startsWith(k) || norm(x.id).startsWith(k));
+    if (a) areaId = a.id;
+    t = t.replace(tag[0], ' ');
+  }
+  const d = extractDate(t, new Date());
+  if (d) {
+    t = t.replace(/\s(?:bis\s+(?:zum\s+)?|am\s+|ab\s+|um\s+)?(?:\d{1,2}\.\d{1,2}\.(?:\d{2,4})?)/gi, ' ')
+      .replace(/\s(?:am\s+|bis\s+)?(?:nächsten\s+|kommenden\s+)?(?:montag|dienstag|mittwoch|donnerstag|freitag|samstag|sonntag)\b/gi, ' ')
+      .replace(/\s(?:bis\s+)?(?:heute|morgen|übermorgen)\b/gi, ' ')
+      .replace(/\s(?:in|innerhalb von)\s+(?:\d+|einer|einem|zwei|drei|vier)\s+(?:tag|tagen|woche|wochen|monat|monaten)\b/gi, ' ')
+      .replace(/\s(?:bis\s+)?(?:nächste|nächsten|kommende|kommenden|diese|dieser)\s+woche\b/gi, ' ')
+      .replace(/\s(?:um\s+)?\d{1,2}(?::\d{2})?\s*uhr\b/gi, ' ')
+      .replace(/\s(?:um\s+)?\d{1,2}:\d{2}\b/g, ' ');
+  }
+  const title = t.replace(/\s+/g, ' ').trim();
+  let phase = null;
+  if (!areaId) {
+    const g = guessPhase(title);
+    if (g !== 'Allgemein' && areaById('hausbau')) { areaId = 'hausbau'; phase = HOUSE_PHASES.includes(g) ? g : null; }
+  }
+  return { title: title.charAt(0).toUpperCase() + title.slice(1), due: d?.date || null, time: d?.time || null, areaId: areaId || (areaById('alltag') ? 'alltag' : areas()[0].id), phase };
+}
+function quickPreview(text) {
+  if (!text.trim()) return '';
+  const q = parseQuick(text);
+  const a = areaById(q.areaId);
+  return `<span class="qp">📅 ${q.due ? esc(fmtDate(q.due)) : 'ohne Datum'}</span>${q.time ? `<span class="qp">⏰ ${esc(q.time)}</span>` : ''}<span class="qp" style="--area:${esc(a.color)}">${esc(a.emoji)} ${esc(a.name)}</span><span class="qp hint-q">#bereich ändert den Bereich</span>`;
+}
+async function submitQuick(text) {
+  const q = parseQuick(text);
+  if (!q.title) return;
+  try {
+    if (!S.areas.length) await ensureAreasStored();
+    await store.addTask({ title: q.title, due: q.due, time: q.time, areaId: q.areaId, phase: q.phase, reminder: !q.due ? 'none' : q.time ? 'hour1' : dayDiff(q.due) <= 1 ? 'day0' : 'day1', notes: '', source: 'quick' });
+    S.quick = '';
+    if (q.due) S.dayPick = q.due;
+    render();
+    toast(`Angelegt${q.due ? ` für ${fmtDate(q.due)}` : ''} ✓`);
+    app.querySelector('[data-input="quick"]')?.focus();
+  } catch (e) { toast(fail(e)); }
+}
+
+function nextDueText(open) {
+  const n = open.filter((t) => t.due).sort(byDue)[0];
+  return n ? `${n.title} am ${fmtDate(n.due)}` : 'keine';
+}
+
+// Wochenblick: 7 Tage, je Tag ein Balken. Tippen = Tag zeigen, Aufgaben hierher ziehen = verschieben.
+function weekChart() {
+  const ws = new Date(); ws.setHours(0, 0, 0, 0); ws.setDate(ws.getDate() + 7 * (S.weekOffset || 0));
+  const days = [...Array(7)].map((_, i) => { const d = new Date(ws); d.setDate(d.getDate() + i); return isoDate(d); });
+  const today = todayISO();
+  if (!S.dayPick || !days.includes(S.dayPick)) S.dayPick = days.includes(today) ? today : days[0];
+  const per = days.map((d) => {
+    const due = S.tasks.filter((t) => t.due === d);
+    return { d, open: due.filter((t) => !t.done), done: due.filter((t) => t.done) };
+  });
+  const max = Math.max(3, ...per.map((p) => p.open.length + p.done.length));
+  const cols = per.map((p) => {
+    const dt = parseISO(p.d);
+    const n = p.open.length + p.done.length;
+    const segs = [...p.done.map(() => 'var(--brand)'), ...p.open.map((t) => areaOf(t).color)];
+    return `<button class="wk-col ${p.d === today ? 'is-today' : ''} ${p.d === S.dayPick ? 'is-sel' : ''}" data-action="day" data-d="${p.d}" data-drop-day="${p.d}" aria-label="${esc(fmtDate(p.d, { weekday: 'long', day: 'numeric', month: 'long' }))}: ${p.open.length} offen, ${p.done.length} erledigt">
+      <span class="wk-bar">${segs.map((c) => `<i style="background:${c};height:${100 / max}%"></i>`).join('')}</span>
+      <span class="wk-n">${n || ''}</span>
+      <span class="wk-d">${esc(dt.toLocaleDateString('de-DE', { weekday: 'short' }).replace('.', ''))}</span>
+      <span class="wk-num">${dt.getDate()}</span>
+    </button>`;
+  }).join('');
+  const sel = per.find((p) => p.d === S.dayPick);
+  const selList = [...sel.open.sort(byDue), ...sel.done];
+  return `<div class="wk">${cols}</div>
+    <h3 class="wk-day">${esc(fmtDate(S.dayPick, { weekday: 'long', day: 'numeric', month: 'long' }))}${S.weekOffset ? ` · <button class="link inline" data-action="week" data-d="0">Zurück zu heute</button>` : ''}</h3>
+    ${selList.length ? `<div class="list">${selList.map((t) => row(t)).join('')}</div>` : ''}
+    <button class="add-line" data-action="new-on-day" data-d="${S.dayPick}">${I.plus} Aufgabe für diesen Tag</button>`;
+}
+
+// ================================================================== Aufgaben (Liste)
+function viewTasks() {
+  const inArea = (t) => S.area === 'all' || areaOf(t).id === S.area;
+  const q = (S.taskQuery || '').trim().toLowerCase();
   let list = S.tasks.filter((t) => (S.filter === 'open' ? !t.done : t.done)).filter(inArea);
+  if (q) list = list.filter((t) => `${t.title} ${t.notes || ''}`.toLowerCase().includes(q));
   let body;
-  if (!S.tasks.length) body = '';
+  if (!S.tasks.length) body = `<div class="empty">${sunArt()}<strong>Noch keine Aufgaben</strong>Leg eine mit dem Plus an oder lies eine E-Mail ein.</div>`;
   else if (!list.length) body = S.filter === 'open'
-    ? `<div class="empty">${sunArt()}<strong>Alles erledigt.</strong>Zeit für dich – oder für etwas Neues mit dem Plus.</div>`
+    ? `<div class="empty">${sunArt()}<strong>${q ? 'Nichts gefunden' : 'Alles erledigt.'}</strong>${q ? 'Versuch einen anderen Suchbegriff.' : 'Zeit für dich – oder für etwas Neues mit dem Plus.'}</div>`
     : `<div class="empty"><strong>Noch nichts erledigt</strong>Abgehakte Aufgaben sammeln sich hier.</div>`;
   else if (S.filter === 'done') {
     list.sort((a, b) => (b.doneAt || 0) - (a.doneAt || 0));
-    body = `<div class="group-head"><h2>Geschafft</h2><span>${list.length}</span></div><div class="list">${list.slice(0, 150).map((t) => row(t)).join('')}</div>`;
+    body = `<div class="list">${list.slice(0, 200).map((t) => row(t)).join('')}</div>`;
   } else {
     body = groupTasks(list).map(([name, items, cls]) => `
       <div class="group-head ${cls || ''}"><h2>${esc(name)}</h2><span>${items.length}</span></div>
       <div class="list">${items.map((t) => row(t)).join('')}</div>`).join('');
   }
   return `<main class="view">
-    <header class="hello"><h1>${esc(greeting())}</h1><p>${esc(new Date().toLocaleDateString('de-DE', { weekday: 'long', day: 'numeric', month: 'long' }))}</p></header>
-    ${banner}
-    <section class="hero" aria-label="Deine Woche">
-      ${heroRing(ratio, String(doneWeek), 'erledigt')}
-      <div class="hero-text"><p class="hero-line">${esc(line)}</p><p class="hero-sub">${esc(sub)}</p>
-        ${!S.tasks.length ? `<div class="btn-row" style="margin-top:12px"><button class="btn small" data-action="new-task">Aufgabe anlegen</button><button class="btn small secondary" data-action="tab" data-tab="inbox">E-Mail einlesen</button></div>` : ''}
-      </div>
-    </section>
-    ${newN ? `<button class="inbox-hint" data-action="goto-new">${I.inbox}<span><strong>${newN} ${newN === 1 ? 'neue Aufgabe' : 'neue Aufgaben'}</strong> aus deinen E-Mails</span>${I.chevron}</button>` : ''}
-    ${focus}
-    ${S.tasks.length ? `<div class="list-tools">
-      <div class="seg" role="group" aria-label="Ansicht">
-        <button data-action="filter" data-filter="open" aria-pressed="${S.filter === 'open'}">Offen</button>
-        <button data-action="filter" data-filter="done" aria-pressed="${S.filter === 'done'}">Geschafft</button>
-      </div>${chips}</div>` : ''}
-    ${body}</main>`;
-}
-const sunArt = () => `<svg class="sun-art" viewBox="0 0 120 70" aria-hidden="true"><path d="M8 62h104" stroke="var(--line)" stroke-width="3" stroke-linecap="round"/><path d="M30 62a30 30 0 0 1 60 0" fill="var(--sun-soft)" stroke="var(--sun)" stroke-width="3"/>${[0, 1, 2, 3, 4].map((i) => { const a = Math.PI + (i + 0.5) * Math.PI / 5; return `<path d="M${60 + 38 * Math.cos(a)} ${62 + 38 * Math.sin(a)}L${60 + 48 * Math.cos(a)} ${62 + 48 * Math.sin(a)}" stroke="var(--sun)" stroke-width="3" stroke-linecap="round"/>`; }).join('')}</svg>`;
-
-function focusCard(t) {
-  const u = urgencyOf(t);
-  const a = areaOf(t);
-  const c = t.contactId ? contactById(t.contactId) : null;
-  const due = dueLabel(t);
-  const why = u && u.status !== 'im_plan' ? (u.next || u.reason) : (u?.reason || '');
-  return `<section class="focus" style="--area:${esc(a.color)}" aria-label="Als Nächstes">
-    <div class="focus-top"><span class="focus-kicker">Als Nächstes</span>${badge(u)}</div>
-    <button class="focus-title" data-action="edit" data-id="${esc(t.id)}">${esc(t.title)}</button>
-    ${why ? `<p class="focus-why">${esc(why)}</p>` : ''}
-    <div class="focus-meta"><span>${esc(a.emoji)} ${esc(a.name)}</span>${due ? `<span class="${due.late ? 'late' : ''}">${esc(due.text)}</span>` : ''}</div>
-    <div class="btn-row">
-      <button class="btn small" data-action="toggle" data-id="${esc(t.id)}">Erledigt</button>
-      ${c?.email ? `<button class="btn small secondary" data-action="compose-task" data-id="${esc(t.id)}">${I.envelope} E-Mail</button>` : ''}
+    <header class="page-head"><h1>Aufgaben</h1></header>
+    <div class="seg" role="group" aria-label="Ansicht">
+      <button data-action="filter" data-filter="open" aria-pressed="${S.filter === 'open'}">Offen</button>
+      <button data-action="filter" data-filter="done" aria-pressed="${S.filter === 'done'}">Erledigt</button>
     </div>
-  </section>`;
+    ${S.tasks.length > 8 ? `<input class="input" type="search" data-input="task-q" value="${esc(S.taskQuery || '')}" placeholder="Aufgaben durchsuchen" style="margin-bottom:10px" aria-label="Aufgaben durchsuchen">` : ''}
+    ${areaChips(S.area, 'area', true)}
+    ${body}</main>`;
 }
 
 function areaChips(active, action, withAll) {
   const counts = new Map();
   for (const t of S.tasks) if (!t.done) { const id = areaOf(t).id; counts.set(id, (counts.get(id) || 0) + 1); }
   const shown = areas().filter((a) => counts.get(a.id) || active === a.id);
-  if (!shown.length) return '';
+  if (shown.length < 2 && active === 'all') return '';
   return `<div class="chips" role="group" aria-label="Lebensbereich">
     ${withAll ? `<button class="chip" data-action="${action}" data-id="all" aria-pressed="${active === 'all'}">Alle</button>` : ''}
     ${shown.map((a) => `<button class="chip" data-action="${action}" data-id="${esc(a.id)}" aria-pressed="${active === a.id}" style="--area:${esc(a.color)}">${esc(a.emoji)} ${esc(a.name)}${counts.get(a.id) ? ` <small>${counts.get(a.id)}</small>` : ''}</button>`).join('')}
@@ -284,147 +402,215 @@ function groupTasks(list) {
     else add(fmtDate(t.due, { month: 'long', year: 'numeric' }), t);
   }
   const noDate = list.filter((t) => !t.due).sort(byDue);
-  if (noDate.length) groups.set('Irgendwann', { items: noDate });
+  if (noDate.length) groups.set('Ohne Datum', { items: noDate });
   return [...groups].map(([k, v]) => [k, v.items, v.cls]);
 }
 
-function row(t) {
+function row(t, opt = {}) {
   const due = dueLabel(t);
   const a = areaOf(t);
+  const u = t.done ? null : urgencyOf(t);
   const meta = [];
-  if (!t.done) { const b = badge(urgencyOf(t)); if (b) meta.push(b); }
-  if (due) meta.push(`<span class="${due.late ? 'late' : ''}">${esc(due.text)}</span>`);
-  if (S.area === 'all' || S.view !== 'today') meta.push(`<span>${esc(a.emoji)} ${esc(phaseOf(t) || a.name)}</span>`);
-  else if (phaseOf(t)) meta.push(`<span>${esc(phaseOf(t))}</span>`);
+  if (u && u.status !== 'im_plan') meta.push(badge(u));
+  if (due && !opt.noDate) meta.push(`<span class="${due.late ? 'late' : ''}">${esc(due.text)}</span>`);
+  else if (opt.noDate && t.time) meta.push(`<span>${esc(t.time)} Uhr</span>`);
+  if (!opt.inPlan) meta.push(`<span class="area-tag" style="--area:${esc(a.color)}">${esc(a.emoji)} ${esc(phaseOf(t) || a.name)}</span>`);
   const c = t.contactId ? contactById(t.contactId) : null;
-  if (c) meta.push(`<span>${esc(c.name)}</span>`);
-  if (!t.done && t.remindAt && t.remindAt > Date.now()) meta.push(`<span class="bell" title="Erinnerung aktiv">${I.bell}</span>`);
+  if (c && !opt.reason) meta.push(`<span>${esc(c.name)}</span>`);
+  const why = opt.reason && u && u.status !== 'im_plan' && (u.next || u.reason) ? `<div class="row-why">${esc(u.next || u.reason)}</div>` : '';
   const who = members().length > 1 && t.assignee && t.assignee !== 'all' ? `<span class="who" title="${esc(nameOf(t.assignee))}">${esc(initial(t.assignee))}</span>` : '';
-  return `<div class="row ${t.done ? 'done' : ''}" style="--area:${esc(a.color)}">
+  return `<div class="row ${t.done ? 'done' : ''}" data-tid="${esc(t.id)}" style="--area:${esc(a.color)}">
     <button class="check" data-action="toggle" data-id="${esc(t.id)}" aria-label="${t.done ? 'Wieder öffnen' : 'Als erledigt markieren'}: ${esc(t.title)}">${I.check}</button>
     <button class="row-main" data-action="edit" data-id="${esc(t.id)}">
       <div class="row-title">${t.isNew && !t.done ? '<b class="new-dot" title="Neu aus E-Mail"></b>' : ''}${esc(t.title)}</div>
-      ${meta.length ? `<div class="row-meta">${meta.join('')}</div>` : ''}
+      <div class="row-meta">${meta.join('')}</div>${why}
     </button>${who}</div>`;
 }
 
-// ================================================================== Plan (Zeitstrahl)
-const DAY_PX = { week: 30, month: 8 };
-function barRange(t) {
-  const end = t.due;
-  let start = t.startBy || t.aiStartBy;
-  if (!start) {
-    const created = t.createdAt ? isoDate(new Date(t.createdAt)) : end;
-    start = created < end ? (dayDiff(end, created) > 21 ? addDays(end, -7) : created) : end;
-  }
-  if (start > end) start = end;
-  const milestone = start === end || t.dueKind === 'termin' || (!!t.time && !t.leadDays);
-  return { start, end, milestone };
-}
+// ================================================================== Planer
+// Aufbau nach dem Vorbild der bekanntesten Planer-Apps:
+//  • Woche  – Wochenleiste oben, darunter jeder Tag als Abschnitt (Todoist „Demnächst“)
+//  • Monat  – Monatskalender mit Punkten je Aufgabe (TickTick)
+//  • Projekte – Projekte mit Abschnitten und Fortschritt (Things 3)
 function viewPlan() {
-  const list = areas();
-  const withDue = S.tasks.filter((t) => t.due);
-  if (!S.planArea || (S.planArea !== 'all' && !areaById(S.planArea))) {
-    const counts = new Map(); for (const t of withDue) if (!t.done) counts.set(areaOf(t).id, (counts.get(areaOf(t).id) || 0) + 1);
-    S.planArea = [...counts].sort((a, b) => b[1] - a[1])[0]?.[0] || 'all';
-  }
-  const inScope = (t) => S.planArea === 'all' || areaOf(t).id === S.planArea;
-  const tasks = withDue.filter(inScope);
-  const undated = S.tasks.filter((t) => !t.due && !t.done && inScope(t)).length;
-  const all = S.tasks.filter(inScope);
-  const doneN = all.filter((t) => t.done).length;
-  const endDate = tasks.filter((t) => !t.done).map((t) => t.due).sort().pop();
-  const pct = all.length ? Math.round((doneN / all.length) * 100) : 0;
-  const area = S.planArea !== 'all' ? areaById(S.planArea) : null;
-
-  const chips = `<div class="chips" role="group" aria-label="Bereich">
-    <button class="chip" data-action="plan-area" data-id="all" aria-pressed="${S.planArea === 'all'}">Alle</button>
-    ${list.map((a) => `<button class="chip" data-action="plan-area" data-id="${esc(a.id)}" aria-pressed="${S.planArea === a.id}" style="--area:${esc(a.color)}">${esc(a.emoji)} ${esc(a.name)}</button>`).join('')}
-  </div>`;
-  const summary = `<section class="plan-sum" style="--area:${esc(area?.color || 'var(--brand)')}">
-    <div class="plan-sum-top"><strong>${area ? `${esc(area.emoji)} ${esc(area.name)}` : 'Alle Bereiche'}</strong><span>${pct} %</span></div>
-    <div class="meter"><i style="width:${pct}%"></i></div>
-    <p>${doneN} von ${all.length} erledigt${endDate ? ` · voraussichtlich fertig am ${esc(fmtDate(endDate, { day: 'numeric', month: 'long', year: 'numeric' }))}` : ''}</p>
-  </section>`;
-  const tools = `<div class="plan-tools"><div class="seg small" role="group" aria-label="Zoom">
-      <button data-action="plan-zoom" data-zoom="week" aria-pressed="${S.planZoom === 'week'}">Wochen</button>
-      <button data-action="plan-zoom" data-zoom="month" aria-pressed="${S.planZoom === 'month'}">Monate</button></div>
-      <button class="link" data-action="plan-today">Heute</button></div>`;
-  const gantt = tasks.length ? ganttHtml(tasks) : `<div class="empty">${sunArt()}<strong>Noch nichts geplant</strong>Sobald Aufgaben ein Datum haben, entsteht hier dein Plan – ganz von selbst.</div>`;
+  const mode = S.planMode || 'woche';
+  if (mode === 'projekte' && S.planArea && areaById(S.planArea)) return viewRoadmap(areaById(S.planArea));
+  const seg = `<div class="seg" role="tablist" aria-label="Ansicht">
+    ${[['woche', '7 Tage'], ['monat', 'Monat'], ['projekte', 'Projekte']].map(([k, l]) => `<button data-action="plan-mode" data-m="${k}" aria-pressed="${mode === k}">${l}</button>`).join('')}</div>`;
+  const body = mode === 'monat' ? planMonth() : mode === 'projekte' ? planProjects() : planWeek();
   return `<main class="view">
-    <header class="page-head"><h1>Plan</h1><p>Wächst automatisch mit deinen Aufgaben und Fristen.</p></header>
-    ${chips}${summary}${tasks.length ? tools : ''}${gantt}
-    ${undated ? `<p class="hint">${undated} ${undated === 1 ? 'Aufgabe hat' : 'Aufgaben haben'} noch kein Datum und ${undated === 1 ? 'steht' : 'stehen'} deshalb nicht im Plan.</p>` : ''}
-  </main>`;
+    <header class="page-head"><h1>Planer</h1></header>
+    ${seg}${body}</main>`;
 }
 
-function ganttHtml(tasks) {
-  const px = DAY_PX[S.planZoom];
+// ---------- Woche
+function planWeek() {
   const today = todayISO();
-  const ranges = new Map(tasks.map((t) => [t.id, barRange(t)]));
-  let min = [...ranges.values()].map((r) => r.start).sort()[0];
-  let max = [...ranges.values()].map((r) => r.end).sort().pop();
-  if (addDays(today, -7) < min) min = addDays(today, -7);
-  if (addDays(today, 21) > max) max = addDays(today, 21);
-  min = addDays(min, -3); max = addDays(max, 10);
-  if (dayDiff(max, min) > 730) max = addDays(min, 730);
-  const md = parseISO(min); md.setDate(md.getDate() - ((md.getDay() + 6) % 7)); min = isoDate(md);
-  const days = dayDiff(max, min) + 1;
-  const X = (d) => dayDiff(d, min) * px;
-  const width = days * px + 180;
-
-  let head = '';
-  for (let i = 0; i < days; i++) {
-    const d = addDays(min, i); const dt = parseISO(d);
-    if (dt.getDate() === 1 || i === 0) head += `<span class="g-month" style="left:${i * px}px">${esc(dt.toLocaleDateString('de-DE', { month: 'long', year: dt.getMonth() === 0 || i === 0 ? 'numeric' : undefined }))}</span>`;
-    if (S.planZoom === 'week' && dt.getDay() === 1) head += `<span class="g-day" style="left:${i * px}px">${dt.getDate()}.</span><i class="g-grid" style="left:${i * px}px"></i>`;
-    if (S.planZoom === 'month' && dt.getDate() === 1) head += `<i class="g-grid" style="left:${i * px}px"></i>`;
-  }
-
-  const groups = new Map();
-  const sorted = [...tasks].sort((a, b) => ranges.get(a.id).start.localeCompare(ranges.get(b.id).start) || byDue(a, b));
-  for (const t of sorted) {
-    const a = areaOf(t);
-    const key = S.planArea === 'all' ? `${a.emoji} ${a.name}` : (phaseOf(t) || 'Weitere Aufgaben');
-    if (!groups.has(key)) groups.set(key, { items: [], color: a.color, order: S.planArea === 'all' ? (a.order ?? 99) : ((a.phases || []).indexOf(phaseOf(t)) + 1 || 99) });
-    groups.get(key).items.push(t);
-  }
-  const rows = [...groups].sort((a, b) => a[1].order - b[1].order).map(([name, g]) => {
-    const gs = g.items.map((t) => ranges.get(t.id).start).sort()[0];
-    const ge = g.items.map((t) => ranges.get(t.id).end).sort().pop();
-    const done = g.items.filter((t) => t.done).length;
-    const pct = Math.round((done / g.items.length) * 100);
-    const header = `<div class="g-group" style="--area:${esc(g.color)}">
-      <span class="g-group-name" style="margin-left:${Math.max(0, X(gs))}px">${esc(name)} <small>${done}/${g.items.length}</small></span>
-      <i class="g-span" style="left:${X(gs)}px;width:${Math.max(px, X(ge) - X(gs) + px)}px"><i style="width:${pct}%"></i></i></div>`;
-    const items = g.items.map((t) => {
-      const r = ranges.get(t.id); const u = urgencyOf(t);
-      const left = X(r.start); const w = Math.max(px * 0.9, X(r.end) - X(r.start) + px);
-      const cls = ['g-bar', t.done ? 'done' : '', u && u.status !== 'im_plan' ? `u-${u.status}` : '', r.milestone ? 'ms' : ''].join(' ');
-      const bar = r.milestone
-        ? `<i class="${cls}" style="left:${X(r.end) + px / 2 - 8}px"></i>`
-        : `<i class="${cls}" style="left:${left}px;width:${w}px">${!t.done && r.start < today && today <= r.end ? `<i class="g-elapsed" style="width:${Math.min(100, ((dayDiff(today, r.start) + 1) / (dayDiff(r.end, r.start) + 1)) * 100)}%"></i>` : ''}</i>`;
-      return `<div class="g-row" role="button" tabindex="0" data-action="edit" data-id="${esc(t.id)}" style="--area:${esc(areaOf(t).color)}" aria-label="${esc(t.title)}, ${esc(fmtDate(r.end))}">
-        <span class="g-label" style="margin-left:${Math.max(0, r.milestone ? X(r.end) + px / 2 - 8 : left)}px">${t.done ? '✓ ' : ''}${esc(t.title)} <small>${esc(fmtDate(r.end, { day: 'numeric', month: 'short' }))}</small></span>${bar}</div>`;
-    }).join('');
-    return header + items;
+  const base = parseISO(today); base.setDate(base.getDate() + 7 * (S.planWeek || 0)); // rollierend: ab heute 7 Tage
+  const days = [...Array(7)].map((_, i) => { const d = new Date(base); d.setDate(d.getDate() + i); return isoDate(d); });
+  const open = S.tasks.filter((t) => !t.done);
+  const late = S.planWeek ? [] : open.filter((t) => t.due && t.due < today).sort(byDue);
+  const monthLabel = parseISO(days[3]).toLocaleDateString('de-DE', { month: 'long', year: 'numeric' });
+  const strip = days.map((d) => {
+    const dt = parseISO(d);
+    const items = S.tasks.filter((t) => t.due === d);
+    const dots = items.filter((t) => !t.done).slice(0, 3).map((t) => `<i style="background:${esc(areaOf(t).color)}"></i>`).join('');
+    return `<button class="ws-day ${d === today ? 'is-today' : ''}" data-action="goto-day" data-d="${d}" data-drop-day="${d}" aria-label="${esc(fmtDate(d, { weekday: 'long', day: 'numeric', month: 'long' }))}, ${items.length} Aufgaben">
+      <span>${esc(dt.toLocaleDateString('de-DE', { weekday: 'short' }).replace('.', ''))}</span><b>${dt.getDate()}</b><em>${dots}</em></button>`;
   }).join('');
-  return `<div class="gantt-wrap" tabindex="0" aria-label="Zeitstrahl, seitlich scrollbar">
-    <div class="gantt" style="width:${width}px" data-today-x="${X(today)}">
-      <div class="g-head">${head}</div>
-      <i class="g-today" style="left:${X(today) + px / 2}px"><b>Heute</b></i>
-      <div class="g-body">${rows}</div>
-    </div></div>
-    <div class="legend"><span><i class="lg bar"></i>Zeit zum Erledigen</span><span><i class="lg ms"></i>Termin</span><span><i class="lg urg"></i>Jetzt starten</span><span><i class="lg dn"></i>Erledigt</span></div>`;
+  const sections = days.map((d) => {
+    const items = S.tasks.filter((t) => t.due === d).sort((a, b) => (a.done - b.done) || byDue(a, b));
+    const diff = dayDiff(d);
+    const rel = diff === 0 ? 'Heute' : diff === 1 ? 'Morgen' : diff === -1 ? 'Gestern' : '';
+    return `<section class="day-sec" id="day-${d}" data-drop-day="${d}">
+      <h2 class="day-h ${diff === 0 ? 'is-today' : ''}"><span>${esc(fmtDate(d, { weekday: 'long', day: 'numeric', month: 'short' }))}</span>${rel ? `<em>${rel}</em>` : ''}</h2>
+      ${items.length ? `<div class="list">${items.map((t) => row(t, { noDate: true })).join('')}</div>` : ''}
+      <button class="add-line" data-action="new-on-day" data-d="${d}">${I.plus} Aufgabe hinzufügen</button>
+    </section>`;
+  }).join('');
+  const nodate = !S.planWeek ? open.filter((t) => !t.due) : [];
+  return `<div class="ws">
+      <div class="ws-head"><strong>${esc(monthLabel)}</strong>
+        <div class="week-nav">${S.planWeek ? '<button class="link inline" data-action="pweek" data-d="0">Heute</button>' : ''}<button class="icon-sm" data-action="pweek" data-d="-1" aria-label="7 Tage zurück">‹</button><button class="icon-sm" data-action="pweek" data-d="1" aria-label="7 Tage weiter">›</button></div></div>
+      <div class="ws-strip">${strip}</div>
+    </div>
+    ${late.length ? `<section class="day-sec late-sec">
+      <h2 class="day-h"><span>Überfällig</span><button class="btn small secondary" data-action="all-today">Alle auf heute</button></h2>
+      <div class="list">${late.map((t) => row(t)).join('')}</div></section>` : ''}
+    ${sections}
+    ${nodate.length ? `<section class="day-sec"><h2 class="day-h"><span>Ohne Datum</span><em>${nodate.length}</em></h2><div class="list">${nodate.sort(byDue).map((t) => row(t)).join('')}</div></section>` : ''}
+    <p class="hint center">Aufgabe gedrückt halten und auf einen Tag oben ziehen, um sie zu verschieben.</p>`;
 }
-function afterPlanRender() {
-  const w = app.querySelector('.gantt-wrap'); if (!w) return;
-  if (!S.planScrolled) {
-    const x = +w.querySelector('.gantt').dataset.todayX;
-    w.scrollLeft = Math.max(0, x - 60);
-    S.planScrolled = true;
-  } else if (S.planScroll != null) w.scrollLeft = S.planScroll;
-  w.addEventListener('scroll', () => { S.planScroll = w.scrollLeft; }, { passive: true });
+
+// ---------- Monat
+function planMonth() {
+  const today = todayISO();
+  const ref = parseISO(today); ref.setDate(1); ref.setMonth(ref.getMonth() + (S.planMonth || 0));
+  const y = ref.getFullYear(), m = ref.getMonth();
+  const first = new Date(y, m, 1); const startOff = (first.getDay() + 6) % 7;
+  const daysIn = new Date(y, m + 1, 0).getDate();
+  if (!S.monthPick || parseISO(S.monthPick).getMonth() !== m || parseISO(S.monthPick).getFullYear() !== y) S.monthPick = (S.planMonth ? isoDate(first) : today);
+  const cells = [];
+  for (let i = 0; i < startOff; i++) cells.push('<span class="mc empty"></span>');
+  for (let d = 1; d <= daysIn; d++) {
+    const iso = isoDate(new Date(y, m, d));
+    const items = S.tasks.filter((t) => t.due === iso);
+    const openI = items.filter((t) => !t.done);
+    const late = openI.some((t) => iso < today);
+    const dots = openI.slice(0, 4).map((t) => `<i style="background:${esc(areaOf(t).color)}"></i>`).join('') + (openI.length > 4 ? '<i class="more"></i>' : '');
+    cells.push(`<button class="mc ${iso === today ? 'is-today' : ''} ${iso === S.monthPick ? 'is-sel' : ''} ${late ? 'is-late' : ''} ${items.length && !openI.length ? 'all-done' : ''}" data-action="month-day" data-d="${iso}" data-drop-day="${iso}" aria-label="${esc(fmtDate(iso, { weekday: 'long', day: 'numeric', month: 'long' }))}, ${openI.length} offen">
+      <b>${d}</b><em>${dots}</em></button>`);
+  }
+  const sel = S.tasks.filter((t) => t.due === S.monthPick).sort((a, b) => (a.done - b.done) || byDue(a, b));
+  const monthOpen = S.tasks.filter((t) => !t.done && t.due && t.due.startsWith(`${y}-${String(m + 1).padStart(2, '0')}`)).length;
+  return `<div class="mcal">
+      <div class="ws-head"><strong>${esc(first.toLocaleDateString('de-DE', { month: 'long', year: 'numeric' }))}</strong>
+        <div class="week-nav">${S.planMonth ? '<button class="link inline" data-action="pmonth" data-d="0">Heute</button>' : ''}<button class="icon-sm" data-action="pmonth" data-d="-1" aria-label="Voriger Monat">‹</button><button class="icon-sm" data-action="pmonth" data-d="1" aria-label="Nächster Monat">›</button></div></div>
+      <div class="mc-head">${['Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa', 'So'].map((d) => `<span>${d}</span>`).join('')}</div>
+      <div class="mc-grid">${cells.join('')}</div>
+      <p class="mc-sum">${monthOpen ? `${monthOpen} offene Fristen in diesem Monat` : 'In diesem Monat ist nichts offen.'}</p>
+    </div>
+    <section class="day-sec" data-drop-day="${S.monthPick}">
+      <h2 class="day-h"><span>${esc(fmtDate(S.monthPick, { weekday: 'long', day: 'numeric', month: 'long' }))}</span>${dayDiff(S.monthPick) === 0 ? '<em>Heute</em>' : ''}</h2>
+      ${sel.length ? `<div class="list">${sel.map((t) => row(t, { noDate: true })).join('')}</div>` : ''}
+      <button class="add-line" data-action="new-on-day" data-d="${S.monthPick}">${I.plus} Aufgabe für diesen Tag</button>
+    </section>`;
+}
+
+// ---------- Projekte
+function planProjects() {
+  const projs = areas().map((a) => ({ a, s: areaStats(a) }));
+  const active = projs.filter((x) => x.s.total);
+  const empty = projs.filter((x) => !x.s.total);
+  const cards = active.map(({ a, s }) => {
+    const steps = roadmapSteps(a);
+    const cur = steps.find((x) => x.state === 'now');
+    return `<button class="plan-card" data-action="open-plan" data-id="${esc(a.id)}" style="--area:${esc(a.color)}">
+      <div class="plan-card-top">${ring(s.pct, 60, 8, a.color)}
+        <div class="plan-card-t"><strong>${esc(a.emoji)} ${esc(a.name)}</strong>
+          <span>${s.done} von ${s.total} erledigt${s.end ? ` · fertig ca. ${esc(fmtDate(s.end, { day: 'numeric', month: 'short' }))}` : ''}</span></div>${I.chevron}</div>
+      ${a.phases?.length ? `<div class="mini-steps" aria-hidden="true">${steps.map((st) => `<i class="ms-${st.state}"></i>`).join('')}</div>
+        <span class="plan-card-now">${cur ? `Gerade dran: <strong>${esc(cur.name)}</strong>` : 'Alle Abschnitte erledigt ✓'}</span>` : ''}
+      ${s.next ? `<span class="plan-card-next">${I.flag} ${esc(s.next.title)} · ${esc(fmtDate(s.next.due, { day: 'numeric', month: 'short' }))}</span>` : ''}
+    </button>`;
+  }).join('');
+  return `${cards || `<div class="empty">${sunArt()}<strong>Noch keine Projekte</strong>Lege Aufgaben an – hier entsteht dann dein Plan.</div>`}
+    <button class="add-line big" data-action="area-new">${I.plus} Neues Projekt / Lebensbereich</button>
+    ${empty.length ? `<p class="hint">Noch ohne Aufgaben: ${empty.map(({ a }) => `${esc(a.emoji)} ${esc(a.name)}`).join(', ')}</p>` : ''}`;
+}
+
+// Abschnitte eines Projekts in Reihenfolge, mit Zustand: done | now | next | later
+function roadmapSteps(a) {
+  const list = S.tasks.filter((t) => areaOf(t).id === a.id);
+  const phases = a.phases || [];
+  const groups = new Map();
+  if (phases.length) {
+    for (const p of phases) groups.set(p, []);
+    for (const t of list) { const p = phaseOf(t); const k = p && groups.has(p) ? p : 'Weitere Aufgaben'; if (!groups.has(k)) groups.set(k, []); groups.get(k).push(t); }
+  } else {
+    // ohne Abschnitte: nach Monaten der Frist
+    for (const t of [...list].sort(byDue)) {
+      const k = t.due ? fmtDate(t.due, { month: 'long', year: 'numeric' }) : 'Ohne Datum';
+      if (!groups.has(k)) groups.set(k, []);
+      groups.get(k).push(t);
+    }
+    if (groups.has('Ohne Datum')) { const v = groups.get('Ohne Datum'); groups.delete('Ohne Datum'); groups.set('Ohne Datum', v); }
+  }
+  const steps = [...groups].filter(([, items]) => items.length || phases.length).map(([name, items]) => {
+    const open = items.filter((t) => !t.done);
+    const dates = items.map((t) => t.startBy || t.due).filter(Boolean).sort();
+    const dues = items.map((t) => t.due).filter(Boolean).sort();
+    return { name, items, open, done: items.length - open.length, from: dates[0] || null, to: dues[dues.length - 1] || null, urgent: open.filter((t) => urgRank(t) >= 2).length };
+  });
+  let nowSet = false;
+  for (const st of steps) {
+    if (!st.items.length) st.state = 'empty';
+    else if (!st.open.length) st.state = 'done';
+    else if (!nowSet) { st.state = 'now'; nowSet = true; }
+    else st.state = 'later';
+  }
+  return steps;
+}
+
+function viewRoadmap(a) {
+  const s = areaStats(a);
+  const steps = roadmapSteps(a);
+  if (S.openStep === undefined || S.openStepArea !== a.id) { S.openStep = null; S.openStepArea = a.id; }
+  const cur = steps.find((x) => x.state === 'now');
+  const stateText = a.phases?.length ? { done: 'Erledigt', now: 'Gerade dran', later: 'Danach', empty: 'Noch keine Aufgaben' } : { done: 'Erledigt', now: 'Als Nächstes', later: 'Später', empty: '' };
+  const items = steps.map((st, i) => {
+    const open = S.openStep === null ? st.state === 'now' : S.openStep === i;
+    const range = st.from && st.to ? (st.from === st.to ? fmtDate(st.to, { day: 'numeric', month: 'short' }) : `${fmtDate(st.from, { day: 'numeric', month: 'short' })} – ${fmtDate(st.to, { day: 'numeric', month: 'short' })}`) : st.to ? `bis ${fmtDate(st.to, { day: 'numeric', month: 'short' })}` : '';
+    const tasks = [...st.open.sort(byDue), ...st.items.filter((t) => t.done)];
+    return `<li class="rm-step rm-${st.state}" style="--area:${esc(a.color)}">
+      <span class="rm-dot" aria-hidden="true">${st.state === 'done' ? '✓' : st.state === 'now' ? '' : i + 1}</span>
+      <div class="rm-body">
+        <button class="rm-head" data-action="step" data-i="${i}" aria-expanded="${open}">
+          <span class="rm-state">${stateText[st.state]}</span>
+          <strong>${esc(st.name)}</strong>
+          <span class="rm-meta">${st.items.length ? `${st.done} von ${st.items.length} erledigt` : ''}${range ? ` · ${esc(range)}` : ''}${st.urgent ? ` · <b class="late">${st.urgent} jetzt starten</b>` : ''}</span>
+          ${st.items.length ? `<span class="rm-bar"><i style="width:${(st.done / st.items.length) * 100}%"></i></span>` : ''}
+        </button>
+        ${open && tasks.length ? `<div class="list rm-list">${tasks.map((t) => row(t, { reason: true, inPlan: true })).join('')}</div>` : ''}
+        ${open && !tasks.length ? `<p class="hint">Noch keine Aufgaben in diesem Abschnitt. <button class="link inline" data-action="new-in-step" data-phase="${esc(st.name)}">Aufgabe hinzufügen</button></p>` : ''}
+      </div>
+    </li>`;
+  }).join('');
+  return `<main class="view">
+    <button class="back" data-action="plan-back">‹ Alle Projekte</button>
+    <section class="rm-hero" style="--area:${esc(a.color)}">
+      ${ring(s.pct, 84, 10, a.color)}
+      <div><h1>${esc(a.emoji)} ${esc(a.name)}</h1>
+        <p>${s.done} von ${s.total} Aufgaben erledigt</p>
+        ${cur && a.phases?.length ? `<p>Gerade dran: <strong>${esc(cur.name)}</strong></p>` : !s.open.length && s.total ? '<p><strong>Alles erledigt 🎉</strong></p>' : ''}
+        ${s.end ? `<p>Fertig voraussichtlich: <strong>${esc(fmtDate(s.end, { day: 'numeric', month: 'long', year: 'numeric' }))}</strong></p>` : ''}
+      </div>
+    </section>
+    ${s.next ? `<div class="rm-next">${I.flag}<span>Nächste Frist: <strong>${esc(s.next.title)}</strong> · ${esc(dueLabel(s.next).text)}</span></div>` : ''}
+    <h2 class="section-title">${a.phases?.length ? 'Schritt für Schritt' : 'Nach Monaten'}</h2>
+    <ol class="roadmap">${items}</ol>
+    <p class="hint">Tippe auf einen Abschnitt, um seine Aufgaben zu sehen. ${a.phases?.length ? 'Abschnitte änderst du unter Mehr → Lebensbereiche.' : 'Ohne eigene Abschnitte ordnet Mindora nach Monaten. Abschnitte legst du unter Mehr → Lebensbereiche an.'}</p>
+  </main>`;
 }
 
 // ================================================================== Eingang
@@ -440,15 +626,21 @@ function viewInbox() {
     ${seg}${body}</main>`;
 }
 function inboxAddressCard() {
-  const addr = S.project?.inboxAddress;
+  const p = S.project || {};
+  const addr = p.inboxAddress;
   if (store.mode !== 'cloud') return `<div class="note-card"><p><strong>E-Mails weiterleiten</strong> geht, sobald die Cloud eingerichtet ist (Anleitung, Stufe 2 und 5). Bis dahin: Text unter „Einfügen“ hineinkopieren.</p></div>`;
   if (!addr) return `<div class="note-card"><p><strong>Tipp:</strong> Mit einem eigenen Mindora-Postfach leitest du E-Mails einfach weiter – die KI legt die Aufgaben dann von selbst an. Einrichtung: Anleitung, Stufe 5.</p></div>`;
-  const last = S.project?.inboxCheckedAt ? Math.round((Date.now() - S.project.inboxCheckedAt) / 60000) : null;
+  const fast = p.inboxSource === 'gmail-script';
+  const last = p.inboxCheckedAt ? Math.round((Date.now() - p.inboxCheckedAt) / 60000) : null;
+  const stale = last != null && last > (fast ? 20 : 90);
+  const ign = p.inboxLastIgnored && Date.now() - p.inboxLastIgnored.at < 3 * 864e5 && !(p.inboxAllowed || []).includes(p.inboxLastIgnored.from) ? p.inboxLastIgnored : null;
   return `<div class="address-card">
     <p>Leite E-Mails weiter an</p>
     <button class="address" data-action="copy-address">${esc(addr)} ${I.copy}</button>
-    <small>${last == null ? 'Wird alle 15 Minuten abgerufen.' : last < 2 ? 'Gerade eben abgerufen.' : last < 90 ? `Zuletzt vor ${last} Min. abgerufen.` : 'Längere Zeit nicht abgerufen – siehe Anleitung, falls das so bleibt.'}</small>
-  </div>`;
+    <small>${stale ? 'Längere Zeit nicht abgerufen – siehe Anleitung, falls das so bleibt.' : last == null ? (fast ? 'Wird jede Minute abgerufen.' : 'Wird alle 15 Minuten abgerufen.') : last < 2 ? 'Gerade eben abgerufen' + (fast ? ' – jede Minute aktuell.' : '.') : `Zuletzt vor ${last} Min. abgerufen.`}</small>
+  </div>
+  ${ign ? `<div class="note-card"><p><strong>Nicht gelesen:</strong> „${esc(ign.subject)}“ von ${esc(ign.from)}. Mindora liest nur Mails von euren eigenen Adressen und von erlaubten Absendern.</p>
+    <div class="btn-row" style="margin-top:10px"><button class="btn small" data-action="allow-sender" data-from="${esc(ign.from)}">${esc(ign.from)} erlauben</button><button class="btn small ghost" data-action="allow-sender" data-from="@${esc(ign.from.split('@')[1] || '')}">Alle von @${esc(ign.from.split('@')[1] || '')}</button></div></div>` : ''}`;
 }
 function inboxNew(list) {
   const cards = list.map((t) => {
@@ -585,6 +777,7 @@ function viewContacts() {
     </div>`;
   }).join('');
   return `<main class="view">
+    <button class="back" data-action="back-more">‹ Mehr</button>
     <header class="page-head"><h1>Kontakte</h1><p>Alle Ansprechpartner an einem Ort – direkt anschreiben oder anrufen.</p></header>
     ${S.contacts.length > 5 ? `<input class="input" type="search" data-input="contact-q" value="${esc(S.contactQuery)}" placeholder="Suchen" style="margin-bottom:12px" aria-label="Kontakte durchsuchen">` : ''}
     ${rows ? `<div class="list">${rows}</div>` : `<div class="empty"><strong>${q ? 'Nichts gefunden' : 'Noch keine Kontakte'}</strong>${q ? 'Versuch einen anderen Suchbegriff.' : 'Ansprechpartner aus E-Mail-Signaturen landen automatisch hier. Oder leg einen mit dem Plus an.'}</div>`}
@@ -608,6 +801,10 @@ function viewMore() {
   return `<main class="view">
     <header class="page-head"><h1>Mehr</h1></header>
     ${cloud ? '' : `<div class="note-card"><p><strong>Lokaler Modus.</strong> Alles bleibt auf diesem Gerät. Für Teilen, Push-Nachrichten und den E-Mail-Eingang richte die Cloud ein (Anleitung, Stufe 2).</p></div>`}
+
+    <div class="settings" style="margin-top:4px">
+      <button class="setting" data-action="open-contacts"><span class="area-dot" style="--area:var(--brand)">👥</span><span class="grow">Kontakte<small>${S.contacts.length} Ansprechpartner – anrufen oder anschreiben</small></span>${I.chevron}</button>
+    </div>
 
     <h2 class="section-title">Lebensbereiche</h2>
     <div class="settings">
@@ -663,7 +860,7 @@ function viewMore() {
 function viewAuth() {
   const reg = S.authTab === 'register';
   return `<main class="auth">
-    <div class="auth-hero">${heroRing(0.72, '✓', 'Mindora')}<h1>Mindora</h1><p>Dein persönlicher Assistent. Aufgaben, Fristen und E-Mails – leicht geplant.</p></div>
+    <div class="auth-hero">${ring(0.72, 96, 11, 'var(--brand)', '✓')}<h1>Mindora</h1><p>Dein persönlicher Assistent. Aufgaben, Fristen und E-Mails – leicht geplant.</p></div>
     <div class="seg" role="group" aria-label="Anmelden oder registrieren">
       <button data-action="auth-tab" data-tab="login" aria-pressed="${!reg}">Anmelden</button>
       <button data-action="auth-tab" data-tab="register" aria-pressed="${reg}">Konto erstellen</button>
@@ -730,7 +927,7 @@ function urgencyBox(t) {
 }
 
 function taskSheet(task, preset = {}) {
-  const defArea = preset.areaId || (S.view === 'plan' && S.planArea && S.planArea !== 'all' ? S.planArea : S.area !== 'all' ? S.area : (areaById('alltag') ? 'alltag' : areas()[0].id));
+  const defArea = preset.areaId || (S.view === 'plan' && S.planArea && S.planArea !== 'all' ? S.planArea : S.view === 'tasks' && S.area !== 'all' ? S.area : (areaById('alltag') ? 'alltag' : areas()[0].id));
   const t = task || { title: '', due: '', time: '', reminder: 'day1', areaId: defArea, phase: null, assignee: 'all', notes: '', leadDays: null, contactId: null, ...preset };
   const tArea = task ? areaOf(task).id : t.areaId;
   const memOpts = members().length > 1 ? `<label class="field"><span>Zuständig</span><select name="assignee">
@@ -746,25 +943,28 @@ function taskSheet(task, preset = {}) {
       ${c && (c.mobile || c.phone) ? `<a class="btn secondary small" href="${esc(telHref(c.mobile || c.phone))}">${I.phone} Anrufen</a>` : ''}
     </div>` : ''}
     <form>
-      <label class="field"><span>Was ist zu tun?</span><textarea name="title" rows="2" required style="min-height:64px">${esc(t.title)}</textarea></label>
-      <div class="two">
-        <label class="field"><span>Bereich</span>${areaSelect('name="areaId"', tArea)}</label>
-        <label class="field" data-phase-wrap ${phaseOptions(tArea) ? '' : 'hidden'}><span>Abschnitt</span><select name="phase">${phaseOptions(tArea, phaseOf(t))}</select></label>
-      </div>
-      <div class="two">
-        <label class="field"><span>Fällig am</span><input type="date" name="due" value="${esc(t.due || '')}"></label>
-        <label class="field"><span>Uhrzeit</span><input type="time" name="time" value="${esc(t.time || '')}"></label>
-      </div>
-      <div class="two">
-        <label class="field"><span>Vorlauf (Tage)</span><input type="number" name="leadDays" min="0" max="120" inputmode="numeric" value="${t.leadDays ?? ''}" placeholder="z. B. 14"></label>
-        <label class="field"><span>Ansprechpartner</span><select name="contactId">${contactOptions(t.contactId)}</select></label>
-      </div>
-      <p class="hint" data-lead-hint style="margin-top:-6px"></p>
+      <label class="field"><span>Was ist zu tun?</span><textarea name="title" rows="2" required style="min-height:64px" placeholder="z. B. Bank wegen Finanzierungsbestätigung anrufen">${esc(t.title)}</textarea></label>
+      <div class="field"><span>Wann?</span>
+        <div class="date-chips">${quickDates().slice(0, 4).map(([l, d]) => `<button type="button" class="dchip" data-setdue="${d}">${l}</button>`).join('')}<button type="button" class="dchip" data-setdue="">Ohne</button></div>
+        <input type="date" name="due" class="input" value="${esc(t.due || '')}" aria-label="Fällig am"></div>
+      <label class="field"><span>Bereich</span>${areaSelect('name="areaId"', tArea)}</label>
       <label class="field"><span>Erinnerung</span><select name="reminder">${REMINDERS.map(([v, l]) => `<option value="${v}" ${(t.reminder || 'none') === v ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
       <label class="field" data-custom ${t.reminder === 'custom' ? '' : 'hidden'}><span>Erinnern am</span><input type="datetime-local" name="remindCustom" value="${esc(t.remindCustom || '')}"></label>
       <p class="hint" data-remind-hint style="margin-top:-6px"></p>
-      ${memOpts}
-      <label class="field"><span>Notizen</span><textarea name="notes" rows="4">${esc(t.notes || '')}</textarea></label>
+      <details class="more-fields" ${task && (t.leadDays != null || t.contactId || t.time || phaseOf(t) || t.notes) ? 'open' : ''}>
+        <summary>Weitere Angaben <small>Uhrzeit, Vorlauf, Abschnitt, Ansprechpartner, Notizen</small></summary>
+        <div class="two">
+          <label class="field"><span>Uhrzeit</span><input type="time" name="time" value="${esc(t.time || '')}"></label>
+          <label class="field"><span>Vorlauf (Tage)</span><input type="number" name="leadDays" min="0" max="120" inputmode="numeric" value="${t.leadDays ?? ''}" placeholder="z. B. 14"></label>
+        </div>
+        <p class="hint" data-lead-hint style="margin-top:-6px"></p>
+        <div class="two">
+          <label class="field" data-phase-wrap ${phaseOptions(tArea) ? '' : 'hidden'}><span>Abschnitt im Plan</span><select name="phase">${phaseOptions(tArea, phaseOf(t))}</select></label>
+          <label class="field"><span>Ansprechpartner</span><select name="contactId">${contactOptions(t.contactId)}</select></label>
+        </div>
+        ${memOpts}
+        <label class="field"><span>Notizen</span><textarea name="notes" rows="4">${esc(t.notes || '')}</textarea></label>
+      </details>
       <button class="btn block" type="submit">Speichern</button>
       ${task ? `<div class="btn-row" style="justify-content:space-between;margin-top:10px">
         <button type="button" class="btn ghost" data-act="done">${task.done ? 'Wieder öffnen' : 'Erledigt'}</button>
@@ -791,14 +991,17 @@ function taskSheet(task, preset = {}) {
     const at = computeRemindAt(f);
     const hint = sheet.querySelector('[data-remind-hint]');
     if (f.reminder === 'none') hint.textContent = '';
-    else if (!f.due && f.reminder !== 'custom') hint.textContent = 'Für diese Erinnerung braucht die Aufgabe ein Datum.';
+    else if (!f.due && f.reminder !== 'custom') hint.textContent = '';
     else if (at) hint.textContent = `Erinnerung: ${new Date(at).toLocaleString('de-DE', { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })} Uhr${at < Date.now() ? ' – liegt in der Vergangenheit' : ''}`;
     else hint.textContent = '';
     const lh = sheet.querySelector('[data-lead-hint]');
     if (f.due && f.leadDays != null) lh.textContent = `Starten spätestens am ${fmtDate(addDays(f.due, -f.leadDays))}. Ab dann erinnert Mindora dich.`;
-    else lh.textContent = f.due ? 'Vorlauf = wie viele Tage vorher du anfangen solltest, z. B. weil andere Zeit brauchen.' : '';
+    else lh.textContent = f.due ? 'Vorlauf = wie viele Tage vorher du anfangen musst, z. B. weil die Bank Zeit braucht. Mindora erinnert dich dann rechtzeitig.' : '';
   };
   form.addEventListener('input', upd); form.addEventListener('change', upd); upd();
+  const markChips = () => sheet.querySelectorAll('[data-setdue]').forEach((b) => b.classList.toggle('on', b.dataset.setdue === (form.due.value || '')));
+  sheet.querySelectorAll('[data-setdue]').forEach((b) => b.addEventListener('click', () => { form.due.value = b.dataset.setdue; markChips(); upd(); }));
+  form.due.addEventListener('change', markChips); markChips();
   if (!task) setTimeout(() => form.title.focus(), 280);
   form.onsubmit = async (e) => {
     e.preventDefault();
@@ -1219,7 +1422,7 @@ async function commitImport() {
       };
     }));
     if (S.saveInfo) await saveInfoFromText(p);
-    S.parsed = null; S.pasteText = ''; S.view = sel.length ? 'today' : 'contacts'; S.filter = 'open';
+    S.parsed = null; S.pasteText = ''; S.view = sel.length ? 'home' : 'contacts'; S.filter = 'open';
     render();
     const nc = (p.contacts || []).filter((c) => c.selected).length;
     toast(commitLabel(sel.length, nc).replace(' übernehmen', ' übernommen ✨'));
@@ -1263,6 +1466,116 @@ async function assessList(list) {
   return n;
 }
 
+
+// ================================================================== Verschieben & Gesten
+function quickDates() {
+  const t = todayISO();
+  const dow = (parseISO(t).getDay() + 6) % 7; // Mo = 0
+  const sat = addDays(t, dow <= 5 ? 5 - dow : 6);
+  const nextMon = addDays(t, 7 - dow);
+  return [
+    ['Heute', t, '☀️'], ['Morgen', addDays(t, 1), '🌤️'], ['Wochenende', sat, '🛋️'],
+    ['Nächste Woche', nextMon, '📅'], ['In einem Monat', (() => { const d = parseISO(t); d.setMonth(d.getMonth() + 1); return isoDate(d); })(), '🗓️'],
+  ];
+}
+async function moveTask(t, due) {
+  if (!t || t.due === due) return;
+  const old = t.due;
+  try {
+    await store.updateTask(t.id, { due, isNew: false }, t);
+    toast(due ? `Verschoben auf ${fmtDate(due)}` : 'Datum entfernt', { label: 'Rückgängig', fn: () => { const cur = S.tasks.find((x) => x.id === t.id); if (cur) store.updateTask(cur.id, { due: old }, cur); } });
+  } catch (e) { toast(fail(e)); }
+}
+function whenSheet(t) {
+  const sheet = openSheet(`
+    <div class="sheet-head"><h2>Wann?</h2><button class="btn ghost" data-dismiss>Abbrechen</button></div>
+    <p class="hint" style="margin-top:-4px">${esc(t.title)}</p>
+    <div class="when-grid">${quickDates().map(([l, d, e]) => `<button class="when" data-d="${d}"><span>${e}</span><strong>${l}</strong><small>${esc(fmtDate(d))}</small></button>`).join('')}
+      <button class="when" data-d=""><span>➖</span><strong>Ohne Datum</strong><small>irgendwann</small></button></div>
+    <label class="field" style="margin-top:14px"><span>Oder Datum wählen</span><input type="date" class="input" data-pick value="${esc(t.due || '')}"></label>`);
+  sheet.querySelectorAll('.when').forEach((b) => b.addEventListener('click', () => { closeSheet(); moveTask(t, b.dataset.d || null); }));
+  sheet.querySelector('[data-pick]').addEventListener('change', (e) => { if (e.target.value) { closeSheet(); moveTask(t, e.target.value); } });
+}
+
+// Wischen: rechts = erledigt, links = verschieben. Gedrückt halten = auf einen Tag ziehen.
+let G = null;
+let suppressClick = false;
+const dropAt = (x, y) => document.elementFromPoint(x, y)?.closest('[data-drop-day]');
+app.addEventListener('pointerdown', (e) => {
+  const rowEl = e.target.closest('.row[data-tid]');
+  if (!rowEl || e.target.closest('.check, a, input, select, textarea') || (e.pointerType === 'mouse' && e.button !== 0)) return;
+  G = { row: rowEl, id: rowEl.dataset.tid, x0: e.clientX, y0: e.clientY, mode: null, pid: e.pointerId };
+  G.timer = setTimeout(() => startDrag(e.clientX, e.clientY), 420);
+});
+function startDrag(x, y) {
+  if (!G || G.mode) return;
+  G.mode = 'drag';
+  const r = G.row.getBoundingClientRect();
+  const ghost = G.row.cloneNode(true);
+  ghost.classList.add('drag-ghost');
+  ghost.style.width = r.width + 'px';
+  ghost.style.left = r.left + 'px';
+  ghost.style.top = r.top + 'px';
+  G.dx = x - r.left; G.dy = y - r.top;
+  document.body.appendChild(ghost);
+  G.ghost = ghost;
+  G.row.classList.add('dragging');
+  document.body.classList.add('is-dragging');
+  if (navigator.vibrate) navigator.vibrate(15);
+}
+app.addEventListener('pointermove', (e) => {
+  if (!G || e.pointerId !== G.pid) return;
+  const dx = e.clientX - G.x0, dy = e.clientY - G.y0;
+  if (!G.mode) {
+    if (Math.abs(dx) > 12 && Math.abs(dx) > Math.abs(dy) * 1.3) { G.mode = 'swipe'; clearTimeout(G.timer); G.row.classList.add('swiping'); }
+    else if (Math.abs(dy) > 10 || Math.abs(dx) > 10) { clearTimeout(G.timer); G = null; return; }
+    else return;
+  }
+  if (G.mode === 'swipe') {
+    const x = Math.max(-140, Math.min(140, dx));
+    G.row.style.setProperty('--sx', x + 'px');
+    G.row.classList.toggle('sw-right', x > 70);
+    G.row.classList.toggle('sw-left', x < -70);
+  } else if (G.mode === 'drag') {
+    G.ghost.style.left = (e.clientX - G.dx) + 'px';
+    G.ghost.style.top = (e.clientY - G.dy) + 'px';
+    const target = dropAt(e.clientX, e.clientY);
+    document.querySelectorAll('.drop-hover').forEach((n) => n !== target && n.classList.remove('drop-hover'));
+    if (target) target.classList.add('drop-hover');
+    // am Rand automatisch scrollen
+    if (e.clientY < 90) window.scrollBy(0, -12); else if (e.clientY > innerHeight - 110) window.scrollBy(0, 12);
+  }
+});
+function endGesture(e, cancelled) {
+  if (!G) return;
+  clearTimeout(G.timer);
+  const g = G; G = null;
+  if (!g.mode) return;
+  suppressClick = true; setTimeout(() => { suppressClick = false; }, 350);
+  const t = S.tasks.find((x) => x.id === g.id);
+  if (g.mode === 'swipe') {
+    const dx = (e?.clientX ?? g.x0) - g.x0;
+    g.row.classList.remove('swiping', 'sw-right', 'sw-left');
+    g.row.style.removeProperty('--sx');
+    if (cancelled || !t) return;
+    if (dx > 70) { const r = g.row.getBoundingClientRect(); toggleTask(t.id, r.left + 24, r.top + r.height / 2); }
+    else if (dx < -70) whenSheet(t);
+  } else if (g.mode === 'drag') {
+    const target = !cancelled && e ? dropAt(e.clientX, e.clientY) : null;
+    g.ghost.remove();
+    g.row.classList.remove('dragging');
+    document.body.classList.remove('is-dragging');
+    document.querySelectorAll('.drop-hover').forEach((n) => n.classList.remove('drop-hover'));
+    if (target && t) moveTask(t, target.dataset.dropDay);
+  }
+}
+app.addEventListener('pointerup', (e) => endGesture(e, false));
+app.addEventListener('pointercancel', (e) => endGesture(e, true));
+// iOS: während des Ziehens nicht scrollen
+document.addEventListener('touchmove', (e) => { if (G && (G.mode === 'drag' || G.mode === 'swipe')) e.preventDefault(); }, { passive: false });
+app.addEventListener('click', (e) => { if (suppressClick) { e.stopPropagation(); e.preventDefault(); } }, true);
+app.addEventListener('contextmenu', (e) => { if (e.target.closest('.row[data-tid]')) e.preventDefault(); });
+
 // ================================================================== Daten sichern
 async function exportData() {
   const data = { app: 'mindora', version: 2, exportedAt: new Date().toISOString(), project: S.project?.name, areas: S.areas, tasks: S.tasks, infos: S.infos, contacts: S.contacts };
@@ -1291,12 +1604,29 @@ app.addEventListener('click', async (e) => {
   const el = e.target.closest('[data-action]'); if (!el || el.tagName === 'INPUT') return;
   const a = el.dataset.action;
   switch (a) {
-    case 'tab': S.view = el.dataset.tab; if (S.view === 'plan') S.planScrolled = false; render(); window.scrollTo(0, 0); break;
+    case 'tab': if (el.dataset.tab === 'plan' && S.view === 'plan') { S.planArea = null; S.planWeek = 0; S.planMonth = 0; } S.view = el.dataset.tab; render(); window.scrollTo(0, 0); break;
     case 'filter': S.filter = el.dataset.filter; render(); break;
     case 'area': S.area = el.dataset.id; render(); break;
-    case 'plan-area': S.planArea = el.dataset.id; S.planScrolled = false; render(); break;
-    case 'plan-zoom': S.planZoom = el.dataset.zoom; S.planScrolled = false; render(); break;
-    case 'plan-today': S.planScrolled = false; render(); break;
+    case 'open-plan': S.planArea = el.dataset.id; S.planMode = 'projekte'; S.view = 'plan'; S.openStep = null; S.openStepArea = el.dataset.id; render(); window.scrollTo(0, 0); break;
+    case 'plan-mode': S.planMode = el.dataset.m; S.planArea = null; S.view = 'plan'; render(); window.scrollTo(0, 0); break;
+    case 'pweek': S.planWeek = +el.dataset.d === 0 ? 0 : (S.planWeek || 0) + +el.dataset.d; render(); break;
+    case 'pmonth': S.planMonth = +el.dataset.d === 0 ? 0 : (S.planMonth || 0) + +el.dataset.d; S.monthPick = null; render(); break;
+    case 'month-day': S.monthPick = el.dataset.d; render(); break;
+    case 'goto-day': { const sec = document.getElementById('day-' + el.dataset.d); if (sec) sec.scrollIntoView({ behavior: 'smooth', block: 'start' }); else { S.planMode = 'monat'; S.monthPick = el.dataset.d; render(); } break; }
+    case 'new-on-day': taskSheet(null, { due: el.dataset.d }); break;
+    case 'home-set': S.homeSet = el.dataset.k; render(); break;
+    case 'all-today': {
+      const late = S.tasks.filter((t) => !t.done && t.due && t.due < todayISO());
+      for (const t of late) await store.updateTask(t.id, { due: todayISO() }, t).catch(() => {});
+      toast(`${late.length} ${late.length === 1 ? 'Aufgabe' : 'Aufgaben'} auf heute verschoben`); S.homeSet = 'heute'; break;
+    }
+    case 'plan-back': S.planArea = null; render(); window.scrollTo(0, 0); break;
+    case 'step': { const i = +el.dataset.i; const steps = roadmapSteps(areaById(S.planArea)); const isOpen = S.openStep === null ? steps[i].state === 'now' : S.openStep === i; S.openStep = isOpen ? -1 : i; render(); break; }
+    case 'new-in-step': taskSheet(null, { areaId: S.planArea, phase: el.dataset.phase }); break;
+    case 'week': S.weekOffset = +el.dataset.d === 0 ? 0 : (S.weekOffset || 0) + +el.dataset.d; S.dayPick = null; render(); break;
+    case 'day': S.dayPick = el.dataset.d; render(); break;
+    case 'open-contacts': S.view = 'contacts'; render(); window.scrollTo(0, 0); break;
+    case 'back-more': S.view = 'more'; render(); window.scrollTo(0, 0); break;
     case 'toggle': { const r = el.getBoundingClientRect(); toggleTask(el.dataset.id, r.left + r.width / 2, r.top + r.height / 2); break; }
     case 'edit': taskSheet(S.tasks.find((t) => t.id === el.dataset.id)); break;
     case 'new-task': taskSheet(null); break;
@@ -1307,6 +1637,11 @@ app.addEventListener('click', async (e) => {
     case 'discard-new': { const t = S.tasks.find((x) => x.id === el.dataset.id); if (t) store.deleteTask(t.id).then(() => toast('Verworfen', { label: 'Rückgängig', fn: () => { const { id, ...rest } = t; store.addTask(rest); } })).catch((err) => toast(fail(err))); break; }
     case 'accept-all': for (const t of S.tasks.filter((x) => x.isNew && !x.done)) await store.updateTask(t.id, { isNew: false }, t).catch(() => {}); toast('Alles im Plan ✓'); break;
     case 'copy-address': copyText(S.project?.inboxAddress || '', 'Adresse kopiert'); break;
+    case 'allow-sender': {
+      const list = [...new Set([...(S.project?.inboxAllowed || []), el.dataset.from.toLowerCase()])];
+      try { await store.updateProject({ inboxAllowed: list, inboxLastIgnored: null }); toast('Erlaubt ✓ Leite die Mail einfach noch einmal weiter.'); } catch (err) { toast(fail(err)); }
+      break;
+    }
     case 'clip':
       try {
         const t = await navigator.clipboard.readText();
@@ -1381,11 +1716,19 @@ function debounceSearch(key, stateKey) {
 }
 const searchInfo = debounceSearch('info-q', 'infoQuery');
 const searchContact = debounceSearch('contact-q', 'contactQuery');
+const searchTask = debounceSearch('task-q', 'taskQuery');
 app.addEventListener('input', (e) => {
   const el = e.target; const k = el.dataset.input;
+  if (k === 'quick') {
+    S.quick = el.value;
+    const pv = app.querySelector('[data-quick-preview]'); if (pv) pv.innerHTML = quickPreview(el.value);
+    const go = app.querySelector('.quick-go'); if (go) go.hidden = !el.value.trim();
+    return;
+  }
   if (k === 'paste') { S.pasteText = el.value; const b = app.querySelector('#parse-btn'); if (b) b.disabled = !el.value.trim(); }
   else if (k === 'info-q') searchInfo(el);
   else if (k === 'contact-q') searchContact(el);
+  else if (k === 'task-q') searchTask(el);
   else if (k?.startsWith('found-')) {
     const t = S.parsed.tasks[+el.dataset.i];
     if (k === 'found-title') t.title = el.value;
@@ -1411,6 +1754,7 @@ function updateCommitBtn() {
 app.addEventListener('submit', async (e) => {
   const form = e.target; const kind = form.dataset.form; if (!kind) return;
   e.preventDefault();
+  if (kind === 'quick') { const v = form.q.value; form.q.blur(); S.pendingRender = false; await submitQuick(v); return; }
   const f = Object.fromEntries(new FormData(form));
   const btn = form.querySelector('button[type="submit"]'); btn.disabled = true;
   S.authError = '';
