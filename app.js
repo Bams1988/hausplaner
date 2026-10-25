@@ -4,6 +4,7 @@ import {
   extractFromText, draftEmail, assessTasks, testConnection, urgencyOf, aiKeyOf,
   STATUS, MODELS, DEFAULT_MODEL, DEFAULT_AREAS, HOUSE_PHASES,
 } from './ai.js';
+const APP_VERSION = '8';
 
 // ================================================================== Zustand
 const REMINDERS = [
@@ -15,7 +16,7 @@ const AREA_EMOJIS = ['🏡', '💛', '📄', '🌿', '☀️', '🧒', '💼', '
 const S = {
   view: 'home', area: 'all', filter: 'open', inboxTab: 'new', planArea: null, weekOffset: 0, dayPick: null, taskQuery: '',
   me: null, authReady: false, project: null, projectState: 'loading',
-  tasks: [], infos: [], contacts: [], areas: [], ai: null, aiBusy: false,
+  tasks: [], infos: [], contacts: [], areas: [], costs: [], comments: [], files: [], ai: null, aiBusy: false, costArea: 'all', docsArea: 'all', prevView: null,
   pasteText: '', parsed: null, saveInfo: true, openInfo: null, infoQuery: '', contactQuery: '', authTab: 'login', authError: '',
   pendingRender: false,
 };
@@ -70,6 +71,7 @@ function dueLabel(t) {
   if (t.time) text += `, ${t.time}`;
   return { text, late: !t.done && d < 0 };
 }
+const fmtDateY = (s) => fmtDate(s, { weekday: 'short', day: 'numeric', month: 'short', year: parseISO(s).getFullYear() !== new Date().getFullYear() ? 'numeric' : undefined });
 const byDue = (a, b) => (a.due || '9999').localeCompare(b.due || '9999') || (a.time || '99').localeCompare(b.time || '99') || (a.createdAt || 0) - (b.createdAt || 0);
 const urgRank = (t) => { const u = urgencyOf(t); return u ? STATUS[u.status].rank : -1; };
 const byUrgency = (a, b) => urgRank(b) - urgRank(a) || ((a.startBy || a.due || '9999').localeCompare(b.startBy || b.due || '9999')) || byDue(a, b);
@@ -95,6 +97,7 @@ const I = {
   spark: '<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" class="spark"><path d="M12 2.5c.5 4.6 2.9 7 7.5 7.5-4.6.5-7 2.9-7.5 7.5-.5-4.6-2.9-7-7.5-7.5 4.6-.5 7-2.9 7.5-7.5Z"/><path d="M19 15c.2 2 1.2 3 3 3.2-1.8.2-2.8 1.2-3 3.3-.2-2.1-1.2-3.1-3-3.3 1.8-.2 2.8-1.2 3-3.2Z" opacity=".6"/></svg>',
   arrowUp: sv('<path d="M12 19V5M5.5 11.5 12 5l6.5 6.5"/>', 22, 2.6),
   chevron: sv('<path d="m9 6 6 6-6 6"/>', 18, 2),
+  camera: sv('<path d="M4 8.5A1.5 1.5 0 0 1 5.5 7h2.2l1.5-2h5.6l1.5 2h2.2A1.5 1.5 0 0 1 20 8.5v9a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 4 17.5Z"/><circle cx="12" cy="12.8" r="3.4"/>', 20, 2),
   copy: sv('<rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/>', 16, 2),
 };
 
@@ -148,10 +151,11 @@ function render() {
     if (S.projectState === 'loading') { app.innerHTML = boot(); return; }
     if (S.projectState === 'none') { app.innerHTML = viewSetup(); return; }
   }
-  const views = { home: viewHome, tasks: viewTasks, plan: viewPlan, inbox: viewInbox, contacts: viewContacts, more: viewMore };
+  const views = { home: viewHome, tasks: viewTasks, plan: viewPlan, inbox: viewInbox, contacts: viewContacts, more: viewMore, costs: viewCosts, docs: viewDocs };
   if (!views[S.view]) S.view = 'home';
   const fab = ['home', 'tasks', 'plan'].includes(S.view) ? `<button class="fab" data-action="new-task" aria-label="Aufgabe anlegen">${I.plus}</button>`
-    : S.view === 'contacts' ? `<button class="fab" data-action="new-contact" aria-label="Kontakt anlegen">${I.plus}</button>` : '';
+    : S.view === 'contacts' ? `<button class="fab" data-action="new-contact" aria-label="Kontakt anlegen">${I.plus}</button>`
+    : S.view === 'costs' ? `<button class="fab" data-action="cost-new" aria-label="Kosten erfassen">${I.plus}</button>` : '';
   app.innerHTML = views[S.view]() + tabbar() + fab;
 }
 const boot = () => '<div class="boot"><span class="boot-sun"></span>Mindora wird geladen …</div>';
@@ -159,7 +163,7 @@ app.addEventListener('focusout', () => setTimeout(() => { if (S.pendingRender &&
 
 function tabbar() {
   const newN = S.tasks.filter((t) => t.isNew && !t.done).length;
-  const tab = (id, label, icon, dot) => `<button data-action="tab" data-tab="${id}" ${S.view === id || (id === 'more' && S.view === 'contacts') ? 'aria-current="page"' : ''}>${icon}${dot ? `<b class="tab-dot">${dot}</b>` : ''}<span>${label}</span></button>`;
+  const tab = (id, label, icon, dot) => `<button data-action="tab" data-tab="${id}" ${S.view === id || (id === 'more' && ['contacts', 'costs', 'docs'].includes(S.view)) ? 'aria-current="page"' : ''}>${icon}${dot ? `<b class="tab-dot">${dot}</b>` : ''}<span>${label}</span></button>`;
   return `<nav class="tabbar">${tab('home', 'Übersicht', I.today)}${tab('tasks', 'Aufgaben', I.list)}${tab('plan', 'Plan', I.plan)}${tab('inbox', 'Eingang', I.inbox, newN)}${tab('more', 'Mehr', I.more)}</nav>`;
 }
 
@@ -248,6 +252,7 @@ function viewHome() {
         <div class="week-nav"><button class="icon-sm" data-action="week" data-d="-1" aria-label="7 Tage zurück">‹</button><button class="icon-sm" data-action="week" data-d="1" aria-label="7 Tage weiter">›</button></div></div>
       ${weekChart()}
     </section>
+    ${homeCosts()}
     ${projHtml ? `<section class="card plain"><div class="card-head"><h2>Projekte</h2><button class="link" data-action="plan-mode" data-m="projekte">Alle</button></div>${projHtml}</section>` : ''}
     ${!S.tasks.length ? `<div class="btn-row" style="margin-top:16px"><button class="btn secondary" data-action="template">Checkliste Hausbau laden</button></div>` : ''}
   </main>`;
@@ -263,7 +268,8 @@ function quickAdd() {
   </form>`;
 }
 function parseQuick(text) {
-  let t = ` ${text} `;
+  const rp = takeRepeat(` ${text} `);
+  let t = rp.text;
   let areaId = null;
   const tag = t.match(/\s#([^\s#]+)/);
   if (tag) {
@@ -272,6 +278,8 @@ function parseQuick(text) {
     if (a) areaId = a.id;
     t = t.replace(tag[0], ' ');
   }
+  // Ein einzelner Wochentag („Arzt Montag 10 Uhr“) ist in der Schnelleingabe immer ein Datum
+  t = t.replace(/(?<!\b(?:am|bis|zum|nächsten|kommenden|diesen))\s(montag|dienstag|mittwoch|donnerstag|freitag|samstag|sonntag)(?=\s)/gi, (_, w) => ` am ${w.toLowerCase()}`);
   const d = extractDate(t, new Date());
   if (d) {
     t = t.replace(/\s(?:bis\s+(?:zum\s+)?|am\s+|ab\s+|um\s+)?(?:\d{1,2}\.\d{1,2}\.(?:\d{2,4})?)/gi, ' ')
@@ -288,20 +296,21 @@ function parseQuick(text) {
     const g = guessPhase(title);
     if (g !== 'Allgemein' && areaById('hausbau')) { areaId = 'hausbau'; phase = HOUSE_PHASES.includes(g) ? g : null; }
   }
-  return { title: title.charAt(0).toUpperCase() + title.slice(1), due: d?.date || null, time: d?.time || null, areaId: areaId || (areaById('alltag') ? 'alltag' : areas()[0].id), phase };
+  const due = d?.date || (rp.repeat ? firstRepeatDue(rp.repeat) : null);
+  return { title: title.charAt(0).toUpperCase() + title.slice(1), due, time: d?.time || null, areaId: areaId || (areaById('alltag') ? 'alltag' : areas()[0].id), phase, repeat: rp.repeat };
 }
 function quickPreview(text) {
   if (!text.trim()) return '';
   const q = parseQuick(text);
   const a = areaById(q.areaId);
-  return `<span class="qp">📅 ${q.due ? esc(fmtDate(q.due)) : 'ohne Datum'}</span>${q.time ? `<span class="qp">⏰ ${esc(q.time)}</span>` : ''}<span class="qp" style="--area:${esc(a.color)}">${esc(a.emoji)} ${esc(a.name)}</span><span class="qp hint-q">#bereich ändert den Bereich</span>`;
+  return `<span class="qp">📅 ${q.due ? esc(fmtDate(q.due)) : 'ohne Datum'}</span>${q.time ? `<span class="qp">⏰ ${esc(q.time)}</span>` : ''}${q.repeat ? `<span class="qp">↻ ${esc(REPEAT_SHORT[q.repeat])}</span>` : ''}<span class="qp" style="--area:${esc(a.color)}">${esc(a.emoji)} ${esc(a.name)}</span><span class="qp hint-q">#bereich ändert den Bereich</span>`;
 }
 async function submitQuick(text) {
   const q = parseQuick(text);
   if (!q.title) return;
   try {
     if (!S.areas.length) await ensureAreasStored();
-    await store.addTask({ title: q.title, due: q.due, time: q.time, areaId: q.areaId, phase: q.phase, reminder: !q.due ? 'none' : q.time ? 'hour1' : dayDiff(q.due) <= 1 ? 'day0' : 'day1', notes: '', source: 'quick' });
+    await store.addTask({ title: q.title, due: q.due, time: q.time, areaId: q.areaId, phase: q.phase, repeat: q.repeat || null, repeatDay: q.repeat && q.due ? parseISO(q.due).getDate() : null, reminder: !q.due ? 'none' : q.time ? 'hour1' : dayDiff(q.due) <= 1 ? 'day0' : 'day1', notes: '', source: 'quick' });
     S.quick = '';
     if (q.due) S.dayPick = q.due;
     render();
@@ -417,6 +426,11 @@ function row(t, opt = {}) {
   if (!opt.inPlan) meta.push(`<span class="area-tag" style="--area:${esc(a.color)}">${esc(a.emoji)} ${esc(phaseOf(t) || a.name)}</span>`);
   const c = t.contactId ? contactById(t.contactId) : null;
   if (c && !opt.reason) meta.push(`<span>${esc(c.name)}</span>`);
+  if (t.repeat && !t.done) meta.push(`<span class="rep">↻ ${esc(REPEAT_SHORT[t.repeat] || '')}</span>`);
+  const nc = counts().c.get(t.id), nf = counts().f.get(t.id);
+  if (nc) meta.push(`<span class="ico-n" aria-label="${nc} Kommentare">💬 ${nc}</span>`);
+  if (nf) meta.push(`<span class="ico-n" aria-label="${nf} Dateien">📎 ${nf}</span>`);
+  if (t.done && t.doneBy && members().length > 1) meta.push(`<span>✓ ${esc(whoName(t.doneBy))}</span>`);
   const why = opt.reason && u && u.status !== 'im_plan' && (u.next || u.reason) ? `<div class="row-why">${esc(u.next || u.reason)}</div>` : '';
   const who = members().length > 1 && t.assignee && t.assignee !== 'all' ? `<span class="who" title="${esc(nameOf(t.assignee))}">${esc(initial(t.assignee))}</span>` : '';
   return `<div class="row ${t.done ? 'done' : ''}" data-tid="${esc(t.id)}" style="--area:${esc(a.color)}">
@@ -607,10 +621,21 @@ function viewRoadmap(a) {
       </div>
     </section>
     ${s.next ? `<div class="rm-next">${I.flag}<span>Nächste Frist: <strong>${esc(s.next.title)}</strong> · ${esc(dueLabel(s.next).text)}</span></div>` : ''}
+    ${roadmapLinks(a)}
     <h2 class="section-title">${a.phases?.length ? 'Schritt für Schritt' : 'Nach Monaten'}</h2>
     <ol class="roadmap">${items}</ol>
     <p class="hint">Tippe auf einen Abschnitt, um seine Aufgaben zu sehen. ${a.phases?.length ? 'Abschnitte änderst du unter Mehr → Lebensbereiche.' : 'Ohne eigene Abschnitte ordnet Mindora nach Monaten. Abschnitte legst du unter Mehr → Lebensbereiche an.'}</p>
   </main>`;
+}
+
+function roadmapLinks(a) {
+  const cs = costStats(a.id);
+  const nf = S.files.filter((f) => fileArea(f) === a.id).length;
+  const showCosts = cs.list.length || cs.budget || a.id === 'hausbau';
+  return `<div class="rm-links">
+    ${showCosts ? `<button class="rm-link" data-action="open-costs" data-area="${esc(a.id)}"><span class="rm-ico">💶</span><span><strong>Kosten</strong><small>${cs.list.length ? `${esc(eur(cs.paid))} von ${esc(eur(cs.planned))} bezahlt` : 'Zahlungsplan & Budget'}</small></span>${I.chevron}</button>` : ''}
+    <button class="rm-link" data-action="open-docs" data-area="${esc(a.id)}"><span class="rm-ico">📷</span><span><strong>Fotos & Dokumente</strong><small>${nf ? `${nf} ${nf === 1 ? 'Datei' : 'Dateien'}` : a.id === 'hausbau' ? 'Baufortschritt, Rechnungen, Protokolle' : 'Belege und Unterlagen'}</small></span>${I.chevron}</button>
+  </div>`;
 }
 
 // ================================================================== Eingang
@@ -686,15 +711,19 @@ function inboxPaste() {
   if (p) {
     const sel = p.tasks.filter((t) => t.selected).length;
     const csel = (p.contacts || []).filter((c) => c.selected).length;
+    const psel = (p.payments || []).filter((x) => x.selected).length;
+    const payHtml = p.payments?.length ? `<div class="group-head"><h2>${p.payments.length} ${p.payments.length === 1 ? 'Zahlung' : 'Zahlungen'}</h2></div>
+      <p class="hint">Landet unter Kosten – mit Erinnerung vor dem Fälligkeitstag.</p>${p.payments.map((x, i) => foundPayment(x, i)).join('')}` : '';
     const contactsHtml = p.contacts?.length ? `<div class="group-head"><h2>${p.contacts.length} ${p.contacts.length === 1 ? 'Kontakt' : 'Kontakte'}</h2></div>${p.contacts.map((c, i) => foundContact(c, i)).join('')}` : '';
-    results = p.tasks.length || p.contacts?.length ? `
+    results = p.tasks.length || p.contacts?.length || p.payments?.length ? `
       ${p.ai && p.summary ? `<div class="ai-note">${I.spark}<span>${esc(p.summary)}</span></div>` : ''}
       <div class="group-head"><h2>${p.tasks.length} ${p.tasks.length === 1 ? 'Aufgabe' : 'Aufgaben'} gefunden</h2></div>
       <p class="hint">${p.ai ? 'Vorschläge der KI. Passe an, was nicht stimmt, und wähle ab, was du nicht brauchst.' : 'Häkchen setzen, Text und Datum bei Bedarf anpassen.'}</p>
       ${p.tasks.map((t, i) => foundItem(t, i)).join('')}
+      ${payHtml}
       ${contactsHtml}
       <label class="opt"><input type="checkbox" data-action="save-info" ${S.saveInfo ? 'checked' : ''}> E-Mail zusätzlich in der Ablage speichern</label>
-      <div class="sticky-action"><button class="btn block" data-action="commit-import" id="commit-btn" ${sel || csel ? '' : 'disabled'}>${commitLabel(sel, csel)}</button></div>`
+      <div class="sticky-action"><button class="btn block" data-action="commit-import" id="commit-btn" ${sel || csel || psel ? '' : 'disabled'}>${commitLabel(sel, csel, psel)}</button></div>`
       : `<div class="empty"><strong>Keine Aufgaben erkannt</strong>In diesem Text steht nichts, was nach einer Bitte oder Frist klingt.<br><br>
          <button class="btn secondary small" data-action="new-task">Selbst anlegen</button>
          <button class="btn ghost small" data-action="info-only">Nur ablegen</button></div>`;
@@ -714,12 +743,26 @@ function inboxPaste() {
     </div>
     ${mainBtn}${results}`;
 }
-function commitLabel(n, c = 0) {
-  if (!n && !c) return 'Nichts ausgewählt';
+function commitLabel(n, c = 0, z = 0) {
+  if (!n && !c && !z) return 'Nichts ausgewählt';
   const parts = [];
   if (n) parts.push(`${n} ${n === 1 ? 'Aufgabe' : 'Aufgaben'}`);
+  if (z) parts.push(`${z} ${z === 1 ? 'Zahlung' : 'Zahlungen'}`);
   if (c) parts.push(`${c} ${c === 1 ? 'Kontakt' : 'Kontakte'}`);
-  return parts.join(' und ') + ' übernehmen';
+  return (parts.length > 1 ? parts.slice(0, -1).join(', ') + ' und ' + parts[parts.length - 1] : parts[0]) + ' übernehmen';
+}
+function foundPayment(x, i) {
+  return `<div class="found ${x.selected ? '' : 'off'}">
+    <input type="checkbox" data-action="pick-pay" data-i="${i}" ${x.selected ? 'checked' : ''} aria-label="Zahlung übernehmen">
+    <div class="found-body">
+      <input class="found-title one" data-input="pay-title" data-i="${i}" value="${esc(x.title)}" aria-label="Wofür">
+      <div class="found-line">
+        <label class="mini">€ <input class="amt-in" inputmode="decimal" data-input="pay-amount" data-i="${i}" value="${esc(eurInput(x.amount))}" aria-label="Betrag"></label>
+        <input type="date" data-input="pay-due" data-i="${i}" value="${esc(x.due || '')}" aria-label="Fällig am">
+        <span class="found-src" style="margin:0">${esc(kindName(x.kind))}${x.payee ? ` · an ${esc(x.payee)}` : ''}</span>
+      </div>
+      ${x.existing ? `<div class="found-warn">Gibt es schon unter Kosten: „${esc(x.existing)}“</div>` : ''}
+    </div></div>`;
 }
 const KIND = { frist: 'Frist', termin: 'Termin', geschaetzt: 'Vorschlag der KI', keine: '' };
 const areaSelect = (attrs, selected) => `<select ${attrs}>${areas().map((a) => `<option value="${esc(a.id)}" ${a.id === selected ? 'selected' : ''}>${esc(a.emoji)} ${esc(a.name)}</option>`).join('')}</select>`;
@@ -804,6 +847,8 @@ function viewMore() {
 
     <div class="settings" style="margin-top:4px">
       <button class="setting" data-action="open-contacts"><span class="area-dot" style="--area:var(--brand)">👥</span><span class="grow">Kontakte<small>${S.contacts.length} Ansprechpartner – anrufen oder anschreiben</small></span>${I.chevron}</button>
+      <button class="setting" data-action="open-costs"><span class="area-dot" style="--area:#4A8FE7">💶</span><span class="grow">Kosten & Zahlungen<small>${S.costs.length ? `${esc(eur(costStats('all').paid))} von ${esc(eur(costStats('all').planned))} bezahlt` : 'Budget, Ratenplan, Rechnungen'}</small></span>${I.chevron}</button>
+      <button class="setting" data-action="open-docs"><span class="area-dot" style="--area:#E9A23B">📷</span><span class="grow">Fotos & Dokumente<small>${S.files.length ? `${S.files.length} ${S.files.length === 1 ? 'Datei' : 'Dateien'}` : 'Baufortschritt, Belege, Protokolle'}</small></span>${I.chevron}</button>
     </div>
 
     <h2 class="section-title">Lebensbereiche</h2>
@@ -839,6 +884,11 @@ function viewMore() {
     <h2 class="section-title">Vorlagen</h2>
     <div class="settings">
       <button class="setting" data-action="template"><span class="grow">Checkliste Hausbau<small>Vom Bauantrag bis zur Abnahme</small></span>${I.chevron}</button>
+    </div>
+
+    <h2 class="section-title">App</h2>
+    <div class="settings">
+      <button class="setting" data-action="hard-reload"><span class="grow">Neueste Version laden<small>Version ${APP_VERSION} – Speicher leeren und neu starten</small></span></button>
     </div>
 
     <h2 class="section-title">Daten</h2>
@@ -934,6 +984,7 @@ function taskSheet(task, preset = {}) {
       <option value="all" ${!t.assignee || t.assignee === 'all' ? 'selected' : ''}>Beide</option>
       ${members().map((u) => `<option value="${esc(u)}" ${t.assignee === u ? 'selected' : ''}>${esc(nameOf(u))}</option>`).join('')}</select></label>` : '';
   const c = t.contactId ? contactById(t.contactId) : null;
+  const pending = [];
   const sheet = openSheet(`
     <div class="sheet-head"><h2>${task ? 'Aufgabe' : 'Neue Aufgabe'}</h2><button class="btn ghost" data-dismiss>${task ? 'Schließen' : 'Abbrechen'}</button></div>
     ${task?.isNew && !task.done ? `<div class="note-card soft"><p>📬 Neu aus der E-Mail${task.mailSubject ? ` „${esc(task.mailSubject)}“` : ''}. Speichern bestätigt sie.</p></div>` : ''}
@@ -947,6 +998,8 @@ function taskSheet(task, preset = {}) {
       <div class="field"><span>Wann?</span>
         <div class="date-chips">${quickDates().slice(0, 4).map(([l, d]) => `<button type="button" class="dchip" data-setdue="${d}">${l}</button>`).join('')}<button type="button" class="dchip" data-setdue="">Ohne</button></div>
         <input type="date" name="due" class="input" value="${esc(t.due || '')}" aria-label="Fällig am"></div>
+      <label class="field"><span>Wiederholen</span><select name="repeat">${REPEATS.map(([v, l]) => `<option value="${v}" ${(t.repeat || '') === v ? 'selected' : ''}>${v ? '↻ ' : ''}${l}</option>`).join('')}</select></label>
+      <p class="hint" data-repeat-hint style="margin-top:-6px"></p>
       <label class="field"><span>Bereich</span>${areaSelect('name="areaId"', tArea)}</label>
       <label class="field"><span>Erinnerung</span><select name="reminder">${REMINDERS.map(([v, l]) => `<option value="${v}" ${(t.reminder || 'none') === v ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
       <label class="field" data-custom ${t.reminder === 'custom' ? '' : 'hidden'}><span>Erinnern am</span><input type="datetime-local" name="remindCustom" value="${esc(t.remindCustom || '')}"></label>
@@ -965,12 +1018,18 @@ function taskSheet(task, preset = {}) {
         ${memOpts}
         <label class="field"><span>Notizen</span><textarea name="notes" rows="4">${esc(t.notes || '')}</textarea></label>
       </details>
+      <div class="field"><span>Fotos & Dateien</span><div data-att-wrap>${attachBox({ taskId: task?.id }, pending)}</div></div>
       <button class="btn block" type="submit">Speichern</button>
       ${task ? `<div class="btn-row" style="justify-content:space-between;margin-top:10px">
         <button type="button" class="btn ghost" data-act="done">${task.done ? 'Wieder öffnen' : 'Erledigt'}</button>
-        <button type="button" class="btn ghost danger-text" data-act="delete">Löschen</button></div>
-        ${task.createdBy && members().length > 1 ? `<p class="hint">Angelegt von ${esc(nameOf(task.createdBy))}${task.done && task.doneBy ? `, erledigt von ${esc(nameOf(task.doneBy))}` : ''}</p>` : ''}` : ''}
-    </form>`);
+        <button type="button" class="btn ghost danger-text" data-act="delete">Löschen</button></div>` : ''}
+    </form>
+    ${task ? `<section class="thread-wrap" data-thread>
+      <h3 class="thread-h">Verlauf & Kommentare</h3>
+      ${threadList(task)}
+      <div class="cmt-form"><textarea rows="1" data-cmt placeholder="${members().length > 1 ? 'Kommentar für alle, z. B. „Bank hat zurückgerufen“' : 'Notiz zum Verlauf, z. B. „Bank hat zurückgerufen“'}" aria-label="Kommentar"></textarea><button type="button" class="btn small" data-cmt-send>Senden</button></div>
+      ${members().length > 1 ? '<p class="hint" style="margin-top:6px">Die anderen bekommen eine Push-Nachricht.</p>' : ''}
+    </section>` : ''}`);
   const form = sheet.querySelector('form');
   const formData = () => {
     const f = Object.fromEntries(new FormData(form));
@@ -978,6 +1037,7 @@ function taskSheet(task, preset = {}) {
       title: f.title.trim(), due: f.due || null, time: f.time || null, reminder: f.reminder, remindCustom: f.remindCustom || null,
       areaId: f.areaId, phase: f.phase || null, notes: f.notes.trim(), assignee: f.assignee || 'all',
       leadDays: f.leadDays === '' ? null : Math.max(0, Math.min(120, parseInt(f.leadDays, 10) || 0)), contactId: f.contactId || null,
+      repeat: f.repeat || null, repeatDay: f.repeat && f.due ? parseISO(f.due).getDate() : null,
     };
   };
   const upd = (e) => {
@@ -994,6 +1054,11 @@ function taskSheet(task, preset = {}) {
     else if (!f.due && f.reminder !== 'custom') hint.textContent = '';
     else if (at) hint.textContent = `Erinnerung: ${new Date(at).toLocaleString('de-DE', { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })} Uhr${at < Date.now() ? ' – liegt in der Vergangenheit' : ''}`;
     else hint.textContent = '';
+    const rh = sheet.querySelector('[data-repeat-hint]');
+    if (f.repeat) {
+      const base = { ...f, due: f.due || firstRepeatDue(f.repeat) };
+      rh.textContent = `${f.due ? '' : `Beginnt ${fmtDate(base.due)}. `}Nach dem Abhaken legt Mindora den nächsten Termin automatisch an – nächstes Mal ${fmtDateY(stepRepeat(base.due, f.repeat, base.repeatDay))}.`;
+    } else rh.textContent = '';
     const lh = sheet.querySelector('[data-lead-hint]');
     if (f.due && f.leadDays != null) lh.textContent = `Starten spätestens am ${fmtDate(addDays(f.due, -f.leadDays))}. Ab dann erinnert Mindora dich.`;
     else lh.textContent = f.due ? 'Vorlauf = wie viele Tage vorher du anfangen musst, z. B. weil die Bank Zeit braucht. Mindora erinnert dich dann rechtzeitig.' : '';
@@ -1007,14 +1072,19 @@ function taskSheet(task, preset = {}) {
     e.preventDefault();
     const data = formData();
     if (!data.title) return;
+    if (data.repeat && !data.due) { data.due = firstRepeatDue(data.repeat); data.repeatDay = parseISO(data.due).getDate(); }
     try {
       if (data.areaId && !S.areas.find((a) => a.id === data.areaId)) await ensureAreasStored();
-      if (task) await store.updateTask(task.id, { ...data, isNew: false }, task);
-      else await store.addTask({ ...data, source: 'manual' });
+      let id = task?.id;
+      if (task) await store.updateTask(task.id, { ...data, isNew: false }, S.tasks.find((x) => x.id === task.id) || task);
+      else id = await store.addTask({ ...data, source: 'manual' });
       closeSheet();
-      toast(task ? 'Gespeichert' : 'Aufgabe angelegt');
+      if (pending.length) await uploadFiles(pending.map((p) => p.file), { taskId: id, areaId: data.areaId });
+      else toast(task ? 'Gespeichert' : 'Aufgabe angelegt');
     } catch (err) { toast(fail(err)); }
   };
+  wireAttach(sheet, () => ({ taskId: task?.id, areaId: form.areaId.value }), pending);
+  if (task) wireThread(sheet, task.id);
   sheet.querySelector('[data-act="mail"]')?.addEventListener('click', () => {
     const cur = { ...task, ...formData() };
     composeSheet({ task: cur, contact: cur.contactId ? contactById(cur.contactId) : null });
@@ -1038,13 +1108,25 @@ function taskSheet(task, preset = {}) {
 const CHEERS = ['Erledigt 🎉', 'Geschafft ✨', 'Ein Punkt weniger 🙌', 'Stark gemacht 💪', 'Weiter so 🌿', 'Abgehakt ☀️'];
 async function toggleTask(id, x, y) {
   const t = S.tasks.find((k) => k.id === id); if (!t) return;
-  const patch = t.done ? { done: false, doneAt: null, doneBy: null } : { done: true, doneAt: Date.now(), doneBy: S.me?.uid || null, isNew: false };
+  const patch = t.done ? { done: false, doneAt: null, doneBy: null, nextId: null } : { done: true, doneAt: Date.now(), doneBy: S.me?.uid || null, isNew: false };
   if (!t.done && x != null) celebrate(x, y);
   try {
+    let nextDue = null;
+    if (!t.done && t.repeat) {
+      nextDue = nextOccurrence(t);
+      if (nextDue) patch.nextId = await store.addTask(repeatCopy(t, nextDue));
+    }
+    if (t.done && t.nextId) { const nx = S.tasks.find((k) => k.id === t.nextId); if (nx && !nx.done) await store.deleteTask(nx.id); }
     await store.updateTask(id, patch, t);
     if (!t.done) {
+      const undo = { label: 'Rückgängig', fn: async () => {
+        if (patch.nextId) await store.deleteTask(patch.nextId).catch(() => {});
+        const cur = S.tasks.find((k) => k.id === id) || { ...t, ...patch };
+        store.updateTask(id, { done: false, doneAt: null, doneBy: null, nextId: null }, cur);
+      } };
+      if (nextDue) { toast(`Erledigt ✓ Nächstes Mal: ${fmtDateY(nextDue)}`, undo); return; }
       const openLeft = S.tasks.filter((k) => !k.done && k.due && k.due <= todayISO()).length;
-      toast(openLeft === 0 && t.due && t.due <= todayISO() ? 'Alles für heute geschafft ☀️' : pick(CHEERS), { label: 'Rückgängig', fn: () => store.updateTask(id, { done: false, doneAt: null, doneBy: null }, { ...t, ...patch }) });
+      toast(openLeft === 0 && t.due && t.due <= todayISO() ? 'Alles für heute geschafft ☀️' : pick(CHEERS), undo);
     }
   } catch (e) { toast(fail(e)); }
 }
@@ -1380,7 +1462,11 @@ async function runParseAI(text) {
       const ex = open.find((e) => similarity(e.title, t.title) >= 0.75);
       return { ...t, ai: true, doneInThread: t.done, existing: ex ? ex.title : null, selected: !t.done && !ex, notes: t.details, from: r.from, messageDate: r.date, subject: r.subject };
     });
-    S.parsed = { ai: true, raw: text, summary: r.summary, tasks, contacts, messages: [{ subject: r.subject, from: r.from, date: r.date }] };
+    const payments = (r.payments || []).map((x) => {
+      const ex = S.costs.find((c) => c.amount != null && x.amount != null && Math.abs(c.amount - x.amount) < 0.01 && similarity(c.title, x.title) >= 0.5);
+      return { ...x, existing: ex ? ex.title : null, selected: !ex };
+    });
+    S.parsed = { ai: true, raw: text, summary: r.summary, tasks, contacts, payments, messages: [{ subject: r.subject, from: r.from, date: r.date }] };
   } catch (e) { toast(fail(e)); }
   S.aiBusy = false;
   render();
@@ -1390,6 +1476,7 @@ async function commitImport() {
   const p = S.parsed; if (!p) return;
   const sel = p.tasks.filter((t) => t.selected && t.title.trim());
   const btn = app.querySelector('#commit-btn'); if (btn) btn.disabled = true;
+  for (const x of p.payments || []) if (x.selected && x.amountText != null) x.amount = parseEur(x.amountText);
   const idByKey = new Map();
   const keyOf = (x) => [(x.email || '').toLowerCase(), norm(x.name)];
   try {
@@ -1421,11 +1508,19 @@ async function commitImport() {
         reminder: !t.due ? 'none' : dayDiff(t.due) <= 1 ? 'day0' : 'day1', notes: `${notes}${src ? `\n\nAus der E-Mail ${src}` : ''}${t.subject ? `\nBetreff: ${t.subject}` : ''}`, source: p.ai ? 'mail-ki' : 'mail',
       };
     }));
+    const pays = (p.payments || []).filter((x) => x.selected && x.title.trim());
+    if (pays.length) {
+      if (!S.areas.length) await ensureAreasStored();
+      const subj = p.messages?.[0]?.subject;
+      await store.addCosts(pays.map((x) => ({ title: x.title.trim(), amount: x.amount ?? null, due: x.due || null, kind: x.kind || 'rechnung', areaId: x.areaId, paid: false,
+        contactId: x.payee ? findContact({ name: x.payee })?.id || null : null, note: [x.payee && `Empfänger: ${x.payee}`, subj && `Aus der E-Mail „${subj}“`].filter(Boolean).join('\n'), source: 'mail-ki' })));
+    }
     if (S.saveInfo) await saveInfoFromText(p);
-    S.parsed = null; S.pasteText = ''; S.view = sel.length ? 'home' : 'contacts'; S.filter = 'open';
+    S.parsed = null; S.pasteText = ''; S.view = sel.length ? 'home' : pays.length ? 'costs' : 'contacts'; S.filter = 'open';
+    if (S.view === 'costs') { S.prevView = 'inbox'; S.costArea = 'all'; }
     render();
     const nc = (p.contacts || []).filter((c) => c.selected).length;
-    toast(commitLabel(sel.length, nc).replace(' übernehmen', ' übernommen ✨'));
+    toast(commitLabel(sel.length, nc, pays.length).replace(' übernehmen', ' übernommen ✨'));
   } catch (e) { toast(fail(e)); if (btn) btn.disabled = false; }
 }
 function saveInfoFromText(p) {
@@ -1576,9 +1671,539 @@ document.addEventListener('touchmove', (e) => { if (G && (G.mode === 'drag' || G
 app.addEventListener('click', (e) => { if (suppressClick) { e.stopPropagation(); e.preventDefault(); } }, true);
 app.addEventListener('contextmenu', (e) => { if (e.target.closest('.row[data-tid]')) e.preventDefault(); });
 
+// ================================================================== Wiederkehrende Aufgaben
+const REPEATS = [['', 'Nicht wiederholen'], ['daily', 'Jeden Tag'], ['weekdays', 'Werktags (Mo–Fr)'], ['weekly', 'Jede Woche'], ['biweekly', 'Alle 2 Wochen'], ['monthly', 'Jeden Monat'], ['quarterly', 'Alle 3 Monate'], ['yearly', 'Jedes Jahr']];
+const REPEAT_SHORT = { daily: 'täglich', weekdays: 'werktags', weekly: 'wöchentlich', biweekly: '14-tägig', monthly: 'monatlich', quarterly: 'vierteljährlich', yearly: 'jährlich' };
+function stepRepeat(iso, r, anchorDay) {
+  const d = parseISO(iso);
+  if (r === 'daily') d.setDate(d.getDate() + 1);
+  else if (r === 'weekdays') { do d.setDate(d.getDate() + 1); while (d.getDay() === 0 || d.getDay() === 6); }
+  else if (r === 'weekly') d.setDate(d.getDate() + 7);
+  else if (r === 'biweekly') d.setDate(d.getDate() + 14);
+  else if (r === 'monthly' || r === 'quarterly' || r === 'yearly') {
+    const day = anchorDay || d.getDate();
+    d.setDate(1);
+    d.setMonth(d.getMonth() + (r === 'monthly' ? 1 : r === 'quarterly' ? 3 : 12));
+    d.setDate(Math.min(day, new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate()));
+  } else return null;
+  return isoDate(d);
+}
+// Nächster Termin nach dem Abhaken – immer in der Zukunft, auch wenn spät erledigt
+function nextOccurrence(t) {
+  const today = todayISO();
+  let n = stepRepeat(t.due || today, t.repeat, t.repeatDay);
+  for (let i = 0; n && n <= today && i < 3000; i++) n = stepRepeat(n, t.repeat, t.repeatDay);
+  return n;
+}
+// Erster Termin, wenn eine Wiederholung ohne Datum angelegt wird
+function firstRepeatDue(repeat) {
+  let d = todayISO();
+  if (repeat === 'weekdays') while ([0, 6].includes(parseISO(d).getDay())) d = addDays(d, 1);
+  return d;
+}
+function repeatCopy(t, due) {
+  const o = {};
+  for (const k of ['title', 'areaId', 'phase', 'notes', 'reminder', 'time', 'leadDays', 'contactId', 'assignee', 'repeat', 'repeatDay', 'dueKind']) if (t[k] != null) o[k] = t[k];
+  if (o.reminder === 'custom') o.reminder = 'day0';
+  return { ...o, due, source: 'repeat', repeatOf: t.repeatOf || t.id };
+}
+const REPEAT_RX = [
+  [/\s(?:jeden\s+tag|täglich)(?=\s)/i, 'daily'],
+  [/\s(?:werktags|jeden\s+werktag|an\s+werktagen)(?=\s)/i, 'weekdays'],
+  [/\s(?:alle\s+(?:2|zwei)\s+wochen|zweiwöchentlich|14-tägig|vierzehntägig)(?=\s)/i, 'biweekly'],
+  [/\s(?:jede\s+woche|wöchentlich)(?=\s)/i, 'weekly'],
+  [/\s(?:jedes\s+quartal|vierteljährlich|alle\s+(?:3|drei)\s+monate)(?=\s)/i, 'quarterly'],
+  [/\s(?:jeden\s+monat|monatlich)(?=\s)/i, 'monthly'],
+  [/\s(?:jedes\s+jahr|jährlich)(?=\s)/i, 'yearly'],
+];
+// „jeden Montag“ → wöchentlich, Wochentag bleibt für die Datumserkennung stehen
+function takeRepeat(text) {
+  let t = text;
+  const wd = t.match(/\sjeden\s+(montag|dienstag|mittwoch|donnerstag|freitag|samstag|sonntag)(?=\s)/i);
+  if (wd) return { text: t.replace(wd[0], ` am ${wd[1].toLowerCase()}`), repeat: 'weekly' };
+  for (const [rx, r] of REPEAT_RX) { const m = t.match(rx); if (m) return { text: t.replace(m[0], ' '), repeat: r }; }
+  return { text: t, repeat: null };
+}
+
+// ================================================================== Zähler (Kommentare, Dateien)
+let CNT = null;
+function counts() {
+  if (CNT) return CNT;
+  CNT = { c: new Map(), f: new Map(), cf: new Map() };
+  const inc = (m, k) => k && m.set(k, (m.get(k) || 0) + 1);
+  for (const c of S.comments) inc(CNT.c, c.taskId);
+  for (const f of S.files) { inc(CNT.f, f.taskId); inc(CNT.cf, f.costId); }
+  return CNT;
+}
+const filesFor = (kind, id) => S.files.filter((f) => (kind === 'task' ? f.taskId : f.costId) === id).sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+const fileCount = (kind, id) => (kind === 'task' ? counts().f : counts().cf).get(id) || 0;
+
+// ================================================================== Kosten & Zahlungsplan
+const COST_KINDS = [['rate', 'Abschlag / Rate'], ['rechnung', 'Rechnung'], ['sonderwunsch', 'Sonderwunsch'], ['eigenleistung', 'Eigenleistung'], ['neben', 'Nebenkosten'], ['finanzierung', 'Finanzierung & Gebühren'], ['sonst', 'Sonstiges']];
+const kindName = (k) => (COST_KINDS.find((x) => x[0] === k) || COST_KINDS[COST_KINDS.length - 1])[1];
+const eur = (n) => (n == null || !isFinite(n) ? '–' : Number(n).toLocaleString('de-DE', { style: 'currency', currency: 'EUR', minimumFractionDigits: Number(n) % 1 ? 2 : 0, maximumFractionDigits: 2 }));
+const eurInput = (n) => (n == null || !isFinite(n) ? '' : Number(n).toLocaleString('de-DE', { minimumFractionDigits: Number(n) % 1 ? 2 : 0, maximumFractionDigits: 2 }));
+function parseEur(s) {
+  if (s == null) return null;
+  let v = String(s).trim().replace(/[€\s]|eur(o)?/gi, '');
+  if (!v) return null;
+  if (/,\d{1,2}$/.test(v)) v = v.replace(/\./g, '').replace(',', '.');
+  else if (/^\d{1,3}([.,]\d{3})+$/.test(v)) v = v.replace(/[.,]/g, '');
+  else v = v.replace(',', '.');
+  const n = parseFloat(v);
+  return isFinite(n) ? Math.round(n * 100) / 100 : null;
+}
+const costArea = (c) => (c.areaId && areaById(c.areaId) ? c.areaId : areaById('hausbau') ? 'hausbau' : areas()[0].id);
+function costStats(areaId = 'all') {
+  const today = todayISO();
+  const list = S.costs.filter((c) => areaId === 'all' || costArea(c) === areaId);
+  const sum = (xs) => xs.reduce((s, c) => s + (Number(c.amount) || 0), 0);
+  const planned = sum(list), paid = sum(list.filter((c) => c.paid));
+  const budget = areaId === 'all' ? areas().reduce((s, a) => s + (Number(a.budget) || 0), 0) : Number(areaById(areaId)?.budget) || 0;
+  const upcoming = list.filter((c) => !c.paid && c.due).sort((a, b) => a.due.localeCompare(b.due));
+  return { list, planned, paid, open: planned - paid, budget, rest: budget ? budget - planned : null, upcoming, late: upcoming.filter((c) => c.due < today), unknown: list.filter((c) => c.amount == null).length };
+}
+function costBar(st) {
+  const max = Math.max(st.budget || 0, st.planned, 1);
+  const over = st.budget && st.planned > st.budget;
+  return `<div class="cbar ${over ? 'over' : ''}" role="img" aria-label="Bezahlt ${esc(eur(st.paid))}, noch offen ${esc(eur(st.open))}${st.budget ? `, Budget ${esc(eur(st.budget))}` : ''}">
+    <i class="c-paid" style="width:${(st.paid / max) * 100}%"></i><i class="c-open" style="width:${(Math.max(0, st.open) / max) * 100}%"></i>
+    ${over ? `<b class="c-mark" style="left:${(st.budget / max) * 100}%"></b>` : ''}</div>`;
+}
+function costRow(c) {
+  const a = areaById(costArea(c));
+  const late = !c.paid && c.due && c.due < todayISO();
+  const meta = [];
+  if (c.isNew && !c.paid) meta.push('<span class="badge s-jetzt_starten">Neu aus E-Mail</span>');
+  if (c.paid) meta.push(`<span>Bezahlt${c.paidAt ? ` am ${esc(fmtDate(c.paidAt, { day: 'numeric', month: 'short' }))}` : ''}</span>`);
+  else if (c.due) meta.push(`<span class="${late ? 'late' : ''}">${late ? 'Überfällig seit' : 'Fällig'} ${esc(dueLabel({ due: c.due }).text)}</span>`);
+  else meta.push('<span>Noch ohne Termin</span>');
+  if (S.costArea === 'all' && areas().filter((x) => S.costs.some((k) => costArea(k) === x.id)).length > 1) meta.push(`<span class="area-tag" style="--area:${esc(a.color)}">${esc(a.emoji)} ${esc(a.name)}</span>`);
+  const nf = fileCount('cost', c.id);
+  if (nf) meta.push(`<span>📎 ${nf}</span>`);
+  return `<div class="row cost-row ${c.paid ? 'done' : ''}" style="--area:${esc(a.color)}">
+    <button class="check" data-action="cost-paid" data-id="${esc(c.id)}" aria-label="${c.paid ? 'Wieder als offen markieren' : 'Als bezahlt markieren'}: ${esc(c.title)}">${I.check}</button>
+    <button class="row-main" data-action="cost-edit" data-id="${esc(c.id)}"><div class="row-title">${esc(c.title)}</div><div class="row-meta">${meta.join('')}</div></button>
+    <span class="amt ${c.amount == null ? 'muted' : ''}">${c.amount == null ? 'Betrag?' : esc(eur(c.amount))}</span></div>`;
+}
+function homeCosts() {
+  if (!S.costs.length) return '';
+  const st = costStats('all');
+  const nx = st.upcoming[0];
+  return `<section class="card"><button class="card-link" data-action="open-costs">
+    <div class="card-head"><h2>Kosten</h2><span class="link">Alle ›</span></div>
+    <p class="cs-mini"><b>${esc(eur(st.paid))}</b> bezahlt von ${esc(eur(st.planned))}${st.budget ? ` · Budget ${esc(eur(st.budget))}` : ''}</p>
+    ${costBar(st)}
+    ${st.late.length ? `<p class="cs-next late">${st.late.length} ${st.late.length === 1 ? 'Zahlung ist' : 'Zahlungen sind'} überfällig</p>`
+      : nx ? `<p class="cs-next">Nächste Zahlung: <strong>${esc(nx.title)}</strong> · ${esc(eur(nx.amount))} · ${esc(dueLabel({ due: nx.due }).text)}</p>` : ''}
+  </button></section>`;
+}
+function viewCosts() {
+  const ar = S.costArea && (S.costArea === 'all' || areaById(S.costArea)) ? S.costArea : 'all';
+  S.costArea = ar;
+  const st = costStats(ar);
+  const area = ar !== 'all' ? areaById(ar) : null;
+  const used = areas().filter((a) => S.costs.some((c) => costArea(c) === a.id) || a.id === ar);
+  const chips = used.length > 1 || ar !== 'all' ? `<div class="chips" role="group" aria-label="Bereich">
+      <button class="chip" data-action="cost-area" data-id="all" aria-pressed="${ar === 'all'}">Alle</button>
+      ${used.map((a) => `<button class="chip" data-action="cost-area" data-id="${esc(a.id)}" aria-pressed="${ar === a.id}" style="--area:${esc(a.color)}">${esc(a.emoji)} ${esc(a.name)}</button>`).join('')}</div>` : '';
+  const head = `<button class="back" data-action="back">‹ Zurück</button>
+    <header class="page-head"><h1>Kosten${area ? ` · ${esc(area.name)}` : ''}</h1></header>${chips}`;
+  if (!st.list.length) {
+    return `<main class="view">${head}
+      <div class="empty">${sunArt()}<strong>Noch keine Kosten erfasst</strong>Behalte Raten, Rechnungen und Sonderwünsche im Blick – mit Budget und Erinnerung vor jeder Zahlung.</div>
+      <div class="btn-col">
+        <button class="btn block" data-action="cost-template">Ratenplan aus Vorlage anlegen</button>
+        <button class="btn block secondary" data-action="cost-new">Einzelne Kosten erfassen</button>
+        ${st.budget ? '' : `<button class="btn block ghost" data-action="cost-budget">Budget festlegen</button>`}
+      </div></main>`;
+  }
+  const summary = `<section class="card cost-card">
+    <div class="cs-top"><div><span class="cs-label">Bereits bezahlt</span><b class="cs-big">${esc(eur(st.paid))}</b>
+      <span class="cs-sub">von ${esc(eur(st.planned))} geplant${st.unknown ? ` · ${st.unknown} ohne Betrag` : ''}</span></div>
+      ${ring(st.planned ? st.paid / st.planned : 0, 64, 8)}</div>
+    ${costBar(st)}
+    <div class="cs-legend"><span><i class="c-paid"></i>Bezahlt</span><span><i class="c-open"></i>Noch offen <b>${esc(eur(st.open))}</b></span>
+      ${st.budget ? (st.rest >= 0 ? `<span><i class="c-rest"></i>Puffer <b>${esc(eur(st.rest))}</b></span>` : `<span class="late"><i class="c-over"></i><b>${esc(eur(-st.rest))} über Budget</b></span>`) : ''}</div>
+    <button class="cs-budget" data-action="cost-budget">${st.budget ? `Budget${area ? '' : ' gesamt'}: <strong>${esc(eur(st.budget))}</strong> <span class="link inline">ändern</span>` : `${I.plus} Budget festlegen – dann siehst du, wie viel Puffer bleibt`}</button>
+  </section>`;
+  const today = todayISO();
+  const tl = st.upcoming.slice(0, 5);
+  const timeline = tl.length ? `<section class="card"><div class="card-head"><h2>Nächste Zahlungen</h2></div>
+    <ol class="pay-tl">${tl.map((c) => { const d = parseISO(c.due); return `<li><button data-action="cost-edit" data-id="${esc(c.id)}" class="${c.due < today ? 'is-late' : ''}">
+      <span class="pt-date"><b>${d.getDate()}</b>${esc(d.toLocaleDateString('de-DE', { month: 'short' }).replace('.', ''))}</span>
+      <span class="pt-t"><strong>${esc(c.title)}</strong><small>${c.due < today ? 'überfällig' : esc(dueLabel({ due: c.due }).text)} · ${esc(kindName(c.kind))}</small></span>
+      <span class="pt-a">${esc(c.amount == null ? 'Betrag?' : eur(c.amount))}</span></button></li>`; }).join('')}</ol></section>` : '';
+  const sortRate = (a, b) => (a.order ?? 999) - (b.order ?? 999) || (a.due || '9999').localeCompare(b.due || '9999') || (a.createdAt || 0) - (b.createdAt || 0);
+  const sortOther = (a, b) => (a.paid - b.paid) || (a.due || '9999').localeCompare(b.due || '9999') || (a.createdAt || 0) - (b.createdAt || 0);
+  const groups = COST_KINDS.map(([k, label]) => {
+    const items = st.list.filter((c) => (COST_KINDS.some((x) => x[0] === c.kind) ? c.kind : 'sonst') === k).sort(k === 'rate' ? sortRate : sortOther);
+    if (!items.length) return '';
+    const sum = items.reduce((s, c) => s + (Number(c.amount) || 0), 0);
+    const paid = items.filter((c) => c.paid).length;
+    return `<div class="group-head"><h2>${esc(label)}</h2><span>${paid} von ${items.length} bezahlt · ${esc(eur(sum))}</span></div>
+      <div class="list">${items.map(costRow).join('')}</div>`;
+  }).join('');
+  return `<main class="view">${head}
+    ${st.late.length ? `<div class="note-card warn"><p><strong>${st.late.length} ${st.late.length === 1 ? 'Zahlung ist' : 'Zahlungen sind'} überfällig.</strong> Schon bezahlt? Dann einfach abhaken.</p></div>` : ''}
+    ${summary}${timeline}${groups}
+    <button class="add-line big" data-action="cost-new">${I.plus} Kosten oder Zahlung erfassen</button>
+    <button class="add-line" data-action="cost-template">${I.plus} Ratenplan aus Vorlage</button>
+    <p class="hint">Haken = bezahlt. Belege wie Rechnungen oder Überweisungsbestätigungen hängst du direkt an die Zahlung.</p>
+  </main>`;
+}
+async function toggleCostPaid(id, x, y) {
+  const c = S.costs.find((k) => k.id === id); if (!c) return;
+  const patch = c.paid ? { paid: false, paidAt: null } : { paid: true, paidAt: todayISO(), isNew: false };
+  if (!c.paid && x != null) celebrate(x, y);
+  try {
+    await store.updateCost(id, patch);
+    if (!c.paid) toast(`Bezahlt ✓${c.amount != null ? ` ${eur(c.amount)}` : ''}`, { label: 'Rückgängig', fn: () => store.updateCost(id, { paid: false, paidAt: null }) });
+  } catch (e) { toast(fail(e)); }
+}
+function costSheet(c, preset = {}) {
+  const isNew = !c;
+  const v = c || { title: '', amount: null, kind: 'rechnung', areaId: S.costArea && S.costArea !== 'all' ? S.costArea : (areaById('hausbau') ? 'hausbau' : areas()[0].id), due: '', paid: false, paidAt: null, contactId: null, note: '', ...preset };
+  const pending = [];
+  const sheet = openSheet(`
+    <div class="sheet-head"><h2>${isNew ? 'Neue Kosten' : 'Kosten'}</h2><button class="btn ghost" data-dismiss>${isNew ? 'Abbrechen' : 'Schließen'}</button></div>
+    ${c?.isNew && !c.paid ? `<div class="note-card soft"><p>📬 Aus einer E-Mail erkannt. Speichern bestätigt den Eintrag.</p></div>` : ''}
+    <form>
+      <label class="field"><span>Wofür?</span><input name="title" required value="${esc(v.title)}" placeholder="z. B. 2. Abschlag Rohbau"></label>
+      <div class="two">
+        <label class="field"><span>Betrag (€)</span><input name="amount" inputmode="decimal" autocomplete="off" value="${esc(eurInput(v.amount))}" placeholder="z. B. 28.500"></label>
+        <label class="field"><span>Art</span><select name="kind">${COST_KINDS.map(([k, l]) => `<option value="${k}" ${v.kind === k ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
+      </div>
+      <div class="two">
+        <label class="field"><span>Fällig am</span><input type="date" name="due" value="${esc(v.due || '')}"></label>
+        <label class="field"><span>Bereich</span>${areaSelect('name="areaId"', costArea(v))}</label>
+      </div>
+      <label class="opt toggle-paid"><input type="checkbox" name="paid" ${v.paid ? 'checked' : ''}> Bereits bezahlt</label>
+      <label class="field" data-paidat ${v.paid ? '' : 'hidden'} style="margin-top:12px"><span>Bezahlt am</span><input type="date" name="paidAt" value="${esc(v.paidAt || todayISO())}"></label>
+      <label class="field" style="margin-top:14px"><span>Empfänger / Ansprechpartner</span><select name="contactId">${contactOptions(v.contactId)}</select></label>
+      <label class="field"><span>Notiz</span><textarea name="note" rows="2" placeholder="z. B. Rechnungsnummer, Verwendungszweck">${esc(v.note || '')}</textarea></label>
+      <div class="field"><span>Belege – Rechnung, Foto, PDF</span><div data-att-wrap>${attachBox({ costId: c?.id }, pending)}</div></div>
+      <p class="hint">Für offene Zahlungen mit Datum erinnert Mindora 3 Tage vorher und am Fälligkeitstag per Push.</p>
+      <button class="btn block" type="submit">Speichern</button>
+      ${!isNew ? `<div class="btn-row" style="justify-content:space-between;margin-top:10px">
+        <button type="button" class="btn ghost" data-act="paid">${c.paid ? 'Wieder offen' : 'Als bezahlt markieren'}</button>
+        <button type="button" class="btn ghost danger-text" data-act="delete">Löschen</button></div>` : ''}
+    </form>`);
+  const form = sheet.querySelector('form');
+  form.paid.addEventListener('change', () => { sheet.querySelector('[data-paidat]').hidden = !form.paid.checked; });
+  wireAttach(sheet, () => ({ costId: c?.id, areaId: form.areaId.value }), pending);
+  if (isNew) setTimeout(() => form.title.focus(), 280);
+  form.onsubmit = async (e) => {
+    e.preventDefault();
+    const f = Object.fromEntries(new FormData(form));
+    const data = {
+      title: f.title.trim(), amount: parseEur(f.amount), kind: f.kind, due: f.due || null, areaId: f.areaId,
+      paid: !!f.paid, paidAt: f.paid ? (f.paidAt || todayISO()) : null, contactId: f.contactId || null, note: f.note.trim(), isNew: false,
+    };
+    if (!data.title) return;
+    if (f.amount.trim() && data.amount == null) { toast('Der Betrag ist nicht lesbar, z. B. 1.250,50'); return; }
+    try {
+      if (!S.areas.length) await ensureAreasStored();
+      let id = c?.id;
+      if (c) await store.updateCost(c.id, data); else id = await store.addCost(data);
+      closeSheet();
+      if (pending.length) await uploadFiles(pending.map((p) => p.file), { costId: id, areaId: data.areaId });
+      else toast(c ? 'Gespeichert' : 'Kosten erfasst');
+    } catch (err) { toast(fail(err)); }
+  };
+  sheet.querySelector('[data-act="paid"]')?.addEventListener('click', (e) => { const r = e.target.getBoundingClientRect(); closeSheet(); toggleCostPaid(c.id, r.left + 20, r.top + 10); });
+  sheet.querySelector('[data-act="delete"]')?.addEventListener('click', async () => {
+    if (!confirm('Diesen Eintrag löschen?')) return;
+    closeSheet();
+    try { await store.deleteCost(c.id); toast('Gelöscht', { label: 'Rückgängig', fn: () => { const { id, ...rest } = c; store.addCost(rest); } }); } catch (err) { toast(fail(err)); }
+  });
+}
+function budgetSheet() {
+  const list = S.costArea && S.costArea !== 'all' ? [areaById(S.costArea)] : areas();
+  const sheet = openSheet(`
+    <div class="sheet-head"><h2>Budget</h2><button class="btn ghost" data-dismiss>Abbrechen</button></div>
+    <p class="hint" style="margin-top:-4px">Wie viel wollt oder könnt ihr insgesamt ausgeben? Beim Hausbau z. B. Finanzierungssumme plus Eigenkapital. Mindora zeigt dann, wie viel Puffer bleibt.</p>
+    <form>
+      ${list.map((a) => `<label class="field"><span>${esc(a.emoji)} ${esc(a.name)}</span><input inputmode="decimal" autocomplete="off" name="${esc(a.id)}" value="${esc(eurInput(a.budget))}" placeholder="kein Budget"></label>`).join('')}
+      <button class="btn block" type="submit">Speichern</button>
+    </form>`);
+  sheet.querySelector('form').onsubmit = async (e) => {
+    e.preventDefault();
+    try {
+      await ensureAreasStored();
+      for (const a of list) {
+        const v = parseEur(e.target[a.id].value);
+        if ((v ?? null) !== (a.budget ?? null)) await store.setArea(a.id, { budget: v });
+      }
+      closeSheet(); toast('Budget gespeichert');
+    } catch (err) { toast(fail(err)); }
+  };
+}
+// Ratenplan nach Baufortschritt – Beispielwerte aus der Makler- und Bauträgerverordnung (§ 3 MaBV)
+const RATE_PLAN = [['Beginn der Erdarbeiten', 30], ['Rohbau inkl. Zimmererarbeiten', 28], ['Dachflächen und Dachrinnen', 5.6], ['Rohinstallation Heizung', 2.1], ['Rohinstallation Sanitär', 2.1],
+  ['Rohinstallation Elektro', 2.1], ['Fenstereinbau inkl. Verglasung', 7], ['Innenputz', 4.2], ['Estrich', 2.1], ['Fliesen im Sanitärbereich', 2.8], ['Bezugsfertigkeit / Übergabe', 8.4], ['Fassadenarbeiten', 2.1], ['Vollständige Fertigstellung', 3.5]];
+const SIDE_COSTS = ['Notar und Grundbuch', 'Grunderwerbsteuer', 'Vermessung und Gebäudeeinmessung', 'Bodengutachten', 'Hausanschlüsse (Strom, Wasser, Abwasser, Internet)', 'Baustrom und Bauwasser',
+  'Bauherrenhaftpflicht und Bauleistungsversicherung', 'Bodenplatte oder Keller (falls nicht im Vertrag)', 'Außenanlagen, Terrasse, Garage', 'Küche', 'Umzug'];
+function rateSheet() {
+  const defArea = S.costArea && S.costArea !== 'all' ? S.costArea : areaById('hausbau') ? 'hausbau' : areas()[0].id;
+  const sheet = openSheet(`
+    <div class="sheet-head"><h2>Ratenplan</h2><button class="btn ghost" data-dismiss>Abbrechen</button></div>
+    <div class="note-card soft"><p>Beispiel nach Baufortschritt (MaBV). Fertighausfirmen wie allkauf haben oft einen <strong>eigenen Zahlungsplan</strong> – übernimm Raten und Prozente einfach aus eurem Bauvertrag. Termine trägst du ein, sobald sie feststehen.</p></div>
+    <form>
+      <div class="two">
+        <label class="field"><span>Gesamtpreis laut Vertrag (€)</span><input name="total" inputmode="decimal" autocomplete="off" placeholder="z. B. 380.000"></label>
+        <label class="field"><span>Bereich</span>${areaSelect('name="areaId"', defArea)}</label>
+      </div>
+      <div class="rates">${RATE_PLAN.map(([n, p], i) => `<div class="rate"><input type="checkbox" name="on${i}" checked aria-label="Rate übernehmen">
+        <input class="rate-n" name="n${i}" value="${esc(n)}" aria-label="Bezeichnung"><span class="rate-p"><input name="p${i}" inputmode="decimal" value="${esc(String(p).replace('.', ','))}" aria-label="Prozent">%</span>
+        <span class="rate-a" data-a="${i}"></span></div>`).join('')}</div>
+      <p class="rate-sum" data-sum></p>
+      <label class="opt"><input type="checkbox" name="side" checked> Typische Nebenkosten als Liste dazu (Notar, Grunderwerbsteuer, Anschlüsse, Küche …) – Beträge trägst du später ein</label>
+      <button class="btn block" type="submit" style="margin-top:16px">Ratenplan anlegen</button>
+    </form>`);
+  const form = sheet.querySelector('form');
+  const upd = () => {
+    const total = parseEur(form.total.value);
+    let sum = 0;
+    RATE_PLAN.forEach((_, i) => {
+      const on = form[`on${i}`].checked; const p = parseEur(form[`p${i}`].value) || 0;
+      if (on) sum += p;
+      sheet.querySelector(`[data-a="${i}"]`).textContent = on && total ? eur(Math.round(total * p) / 100) : '';
+      form[`n${i}`].closest('.rate').classList.toggle('off', !on);
+    });
+    const s = Math.round(sum * 10) / 10;
+    const el = sheet.querySelector('[data-sum]');
+    el.textContent = `Summe: ${String(s).replace('.', ',')} %${Math.abs(s - 100) > 0.05 ? ' – sollte 100 % ergeben' : ' ✓'}`;
+    el.classList.toggle('late', Math.abs(s - 100) > 0.05);
+  };
+  form.addEventListener('input', upd); upd();
+  form.onsubmit = async (e) => {
+    e.preventDefault();
+    const total = parseEur(form.total.value);
+    const areaId = form.areaId.value;
+    const list = [];
+    let n = 0;
+    RATE_PLAN.forEach((_, i) => {
+      if (!form[`on${i}`].checked) return;
+      const p = parseEur(form[`p${i}`].value) || 0;
+      n++;
+      list.push({ title: `${n}. Rate: ${form[`n${i}`].value.trim()}`, amount: total ? Math.round(total * p) / 100 : null, kind: 'rate', areaId, due: null, order: n, note: `${String(p).replace('.', ',')} % des Gesamtpreises` });
+    });
+    if (form.side.checked) SIDE_COSTS.forEach((t, i) => { if (!S.costs.some((c) => c.title === t && costArea(c) === areaId)) list.push({ title: t, amount: null, kind: 'neben', areaId, due: null, order: 100 + i }); });
+    if (!list.length) return;
+    try {
+      if (!S.areas.length) await ensureAreasStored();
+      await store.addCosts(list);
+      closeSheet();
+      S.costArea = areaId; S.prevView = S.view === 'costs' ? S.prevView : S.view; S.view = 'costs'; render(); window.scrollTo(0, 0);
+      toast(`${list.length} Einträge angelegt ✨`);
+    } catch (err) { toast(fail(err)); }
+  };
+}
+
+// ================================================================== Fotos & Dokumente
+const MAX_FILE = 15 * 1024 * 1024;
+const ACCEPT = 'image/*,application/pdf,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv';
+const extOf = (n) => ((String(n).match(/\.([a-z0-9]{1,5})$/i) || [])[1] || 'Datei').toUpperCase();
+const fmtSize = (b) => (!b ? '' : b < 1024 * 1024 ? `${Math.max(1, Math.round(b / 1024))} KB` : `${(b / 1024 / 1024).toFixed(1).replace('.', ',')} MB`);
+function fileThumb(f) {
+  return f.thumb ? `<img src="${esc(f.thumb)}" alt="" loading="lazy">` : `<span class="att-doc">${esc(extOf(f.name))}</span>`;
+}
+function attachBox(link, pending = []) {
+  const files = link.taskId ? filesFor('task', link.taskId) : link.costId ? filesFor('cost', link.costId) : [];
+  const items = files.map((f) => `<button type="button" class="att-item" data-file="${esc(f.id)}" aria-label="${esc(f.name)} öffnen">${fileThumb(f)}</button>`).join('')
+    + pending.map((p, i) => `<span class="att-item pending">${p.url ? `<img src="${p.url}" alt="">` : `<span class="att-doc">${esc(extOf(p.file.name))}</span>`}<button type="button" class="att-x" data-unpend="${i}" aria-label="Entfernen">×</button></span>`).join('');
+  return `<div class="att">${items}<label class="att-add">${I.camera}<span>Foto / Datei</span><input type="file" multiple accept="${ACCEPT}" data-attach></label></div>
+    ${pending.length ? '<p class="hint" style="margin:6px 0 0">Wird beim Speichern hochgeladen.</p>' : ''}`;
+}
+function wireAttach(sheet, link, pending) {
+  const wrap = sheet.querySelector('[data-att-wrap]'); if (!wrap) return;
+  const redraw = () => { wrap.innerHTML = attachBox(link(), pending); };
+  wrap.addEventListener('change', async (e) => {
+    if (!e.target.matches('[data-attach]') || !e.target.files.length) return;
+    const files = [...e.target.files];
+    const l = link();
+    if (l.taskId || l.costId) await uploadFiles(files, l);
+    else for (const f of files) pending.push({ file: f, url: /^image\/(jpeg|png|webp|gif)/.test(f.type) ? URL.createObjectURL(f) : null });
+    redraw();
+  });
+  wrap.addEventListener('click', (e) => {
+    const x = e.target.closest('[data-unpend]');
+    if (x) { e.preventDefault(); pending.splice(+x.dataset.unpend, 1); redraw(); return; }
+    const f = e.target.closest('[data-file]');
+    if (f) openViewer(S.files.find((k) => k.id === f.dataset.file));
+  });
+  (sheet.refreshers ||= []).push(redraw);
+}
+async function loadImage(file) {
+  const url = URL.createObjectURL(file);
+  try { const img = new Image(); img.src = url; await img.decode(); return img; } finally { setTimeout(() => URL.revokeObjectURL(url), 2000); }
+}
+function drawScaled(img, maxSide) {
+  const s = Math.min(1, maxSide / Math.max(img.naturalWidth, img.naturalHeight));
+  const c = document.createElement('canvas');
+  c.width = Math.max(1, Math.round(img.naturalWidth * s)); c.height = Math.max(1, Math.round(img.naturalHeight * s));
+  const g = c.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, c.width, c.height); g.drawImage(img, 0, 0, c.width, c.height);
+  return c;
+}
+// Fotos verkleinern (spart Speicher und Datenvolumen), Vorschaubild erzeugen
+async function prepareFile(file) {
+  const stamp = new Date().toLocaleString('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }).replace(',', '');
+  let name = file.name && !/^image\.(jpe?g|png|heic)$/i.test(file.name) ? file.name : `Foto ${stamp}.jpg`;
+  const meta = { name, type: file.type || 'application/octet-stream', thumb: null };
+  if (/^image\//.test(file.type) && !/svg|gif/.test(file.type)) {
+    try {
+      const img = await loadImage(file);
+      const big = drawScaled(img, 1800);
+      const blob = await new Promise((ok) => big.toBlob(ok, 'image/jpeg', 0.8));
+      meta.thumb = drawScaled(img, 260).toDataURL('image/jpeg', 0.62);
+      meta.w = big.width; meta.h = big.height;
+      if (blob && (blob.size < file.size || /heic|heif/i.test(file.type))) { meta.type = 'image/jpeg'; meta.name = name.replace(/\.(heic|heif|png|webp|jpeg)$/i, '.jpg'); return { blob, meta }; }
+    } catch { /* Bild nicht lesbar – unverändert speichern */ }
+  }
+  return { blob: file, meta };
+}
+async function uploadFiles(files, link) {
+  const l = { taskId: link.taskId || null, costId: link.costId || null, areaId: link.areaId || null };
+  let ok = 0;
+  for (const [i, f] of files.entries()) {
+    if (f.size > MAX_FILE) { toast(`„${f.name}“ ist zu groß (höchstens 15 MB).`); continue; }
+    toast(files.length > 1 ? `Wird gespeichert … ${i + 1} von ${files.length}` : 'Wird gespeichert …');
+    try {
+      const { blob, meta } = await prepareFile(f);
+      if (blob.size > MAX_FILE) { toast(`„${f.name}“ ist zu groß (höchstens 15 MB).`); continue; }
+      await store.addFile({ ...meta, ...l }, blob);
+      ok++;
+    } catch (e) { toast(fail(e)); return ok; }
+  }
+  if (ok) toast(ok === 1 ? 'Gespeichert 📎' : `${ok} Dateien gespeichert 📎`);
+  return ok;
+}
+const fileArea = (f) => {
+  if (f.areaId && areaById(f.areaId)) return f.areaId;
+  const t = f.taskId && S.tasks.find((x) => x.id === f.taskId); if (t) return areaOf(t).id;
+  const c = f.costId && S.costs.find((x) => x.id === f.costId); if (c) return costArea(c);
+  return null;
+};
+const blobCache = new Map();
+async function openViewer(f) {
+  if (!f) return;
+  document.querySelector('.viewer')?.remove();
+  const isImg = /^image\//.test(f.type), isPdf = /pdf/i.test(f.type) || /\.pdf$/i.test(f.name);
+  const task = f.taskId ? S.tasks.find((t) => t.id === f.taskId) : null;
+  const cost = f.costId ? S.costs.find((c) => c.id === f.costId) : null;
+  const v = document.createElement('div');
+  v.className = 'viewer'; v.setAttribute('role', 'dialog'); v.setAttribute('aria-modal', 'true'); v.setAttribute('aria-label', f.name);
+  const info = [fmtStamp(f.createdAt), members().length > 1 && f.createdBy ? whoName(f.createdBy) : '', fmtSize(f.size)].filter(Boolean).join(' · ');
+  v.innerHTML = `<div class="viewer-top"><span class="viewer-name">${esc(f.name)}</span><button class="viewer-x" data-v="close" aria-label="Schließen">×</button></div>
+    <div class="viewer-body">${f.thumb ? `<img src="${esc(f.thumb)}" class="blur" alt="">` : ''}<span class="spin"></span></div>
+    <div class="viewer-info">${esc(info)}${task ? `<button class="viewer-link" data-v="task">Aufgabe: ${esc(task.title)} ›</button>` : cost ? `<button class="viewer-link" data-v="cost">Kosten: ${esc(cost.title)} ›</button>` : ''}</div>
+    <div class="viewer-bar"><button class="btn" data-v="share">${I.share} Öffnen / Sichern</button><button class="btn ghost light" data-v="delete">Löschen</button></div>`;
+  document.body.appendChild(v);
+  let blob = null, url = null;
+  const close = () => { v.remove(); if (url) URL.revokeObjectURL(url); document.removeEventListener('keydown', onKey); };
+  const onKey = (e) => { if (e.key === 'Escape') { e.stopImmediatePropagation(); close(); } };
+  document.addEventListener('keydown', onKey, true);
+  v.addEventListener('click', async (e) => {
+    const b = e.target.closest('[data-v]'); if (!b) return;
+    const k = b.dataset.v;
+    if (k === 'close') close();
+    else if (k === 'task') { close(); taskSheet(S.tasks.find((t) => t.id === f.taskId)); }
+    else if (k === 'cost') { close(); costSheet(S.costs.find((c) => c.id === f.costId)); }
+    else if (k === 'delete') {
+      if (!confirm(`„${f.name}“ endgültig löschen?`)) return;
+      close();
+      try { await store.deleteFile(f); blobCache.delete(f.id); toast('Gelöscht'); } catch (err) { toast(fail(err)); }
+    } else if (k === 'share' && blob) {
+      const file = new File([blob], f.name, { type: f.type || blob.type });
+      if (navigator.canShare?.({ files: [file] })) { try { await navigator.share({ files: [file], title: f.name }); return; } catch (err) { if (err.name === 'AbortError') return; } }
+      const a = document.createElement('a'); a.href = url; a.download = f.name; a.target = '_blank'; a.rel = 'noopener'; document.body.appendChild(a); a.click(); a.remove();
+    }
+  });
+  try {
+    blob = blobCache.get(f.id) || await store.getFileBlob(f);
+    blobCache.set(f.id, blob); if (blobCache.size > 24) blobCache.delete(blobCache.keys().next().value);
+    if (!v.isConnected) return;
+    url = URL.createObjectURL(blob);
+    v.querySelector('.viewer-body').innerHTML = isImg ? `<img src="${url}" alt="${esc(f.name)}">`
+      : isPdf ? `<iframe src="${url}" title="${esc(f.name)}"></iframe>`
+      : `<div class="viewer-doc"><span class="att-doc big">${esc(extOf(f.name))}</span><p>${esc(f.name)}</p><p class="muted">Zum Ansehen auf „Öffnen / Sichern“ tippen.</p></div>`;
+  } catch (e) { if (v.isConnected) v.querySelector('.viewer-body').innerHTML = `<p class="viewer-err">${esc(fail(e))}</p>`; }
+}
+function viewDocs() {
+  const ar = S.docsArea && (S.docsArea === 'all' || areaById(S.docsArea)) ? S.docsArea : 'all';
+  S.docsArea = ar;
+  const list = S.files.filter((f) => ar === 'all' || fileArea(f) === ar).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+  const used = areas().filter((a) => S.files.some((f) => fileArea(f) === a.id) || a.id === ar);
+  const chips = used.length > 1 || ar !== 'all' ? `<div class="chips" role="group" aria-label="Bereich">
+      <button class="chip" data-action="docs-area" data-id="all" aria-pressed="${ar === 'all'}">Alle</button>
+      ${used.map((a) => `<button class="chip" data-action="docs-area" data-id="${esc(a.id)}" aria-pressed="${ar === a.id}" style="--area:${esc(a.color)}">${esc(a.emoji)} ${esc(a.name)}</button>`).join('')}</div>` : '';
+  const upl = `<label class="btn block secondary upl">${I.camera} Foto oder Datei hinzufügen<input type="file" multiple accept="${ACCEPT}" data-action="docs-upload"></label>`;
+  const months = new Map();
+  for (const f of list) { const k = new Date(f.createdAt || Date.now()).toLocaleDateString('de-DE', { month: 'long', year: 'numeric' }); if (!months.has(k)) months.set(k, []); months.get(k).push(f); }
+  const caption = (f) => { const t = f.taskId && S.tasks.find((x) => x.id === f.taskId); const c = f.costId && S.costs.find((x) => x.id === f.costId); return t ? t.title : c ? c.title : f.name; };
+  const body = list.length ? [...months].map(([m, fs]) => `<h2 class="section-title">${esc(m)}</h2>
+      <div class="gal">${fs.map((f) => `<button class="gal-item" data-action="file-open" data-id="${esc(f.id)}">${fileThumb(f)}<span class="gal-cap">${esc(caption(f))}</span></button>`).join('')}</div>`).join('')
+    : `<div class="empty">${sunArt()}<strong>Noch keine Fotos oder Dokumente</strong>Halte den Baufortschritt fest und sammle Rechnungen, Angebote und Protokolle – hier oder direkt an der passenden Aufgabe.</div>`;
+  return `<main class="view"><button class="back" data-action="back">‹ Zurück</button>
+    <header class="page-head"><h1>Fotos & Dokumente</h1></header>${chips}${upl}${body}
+    <p class="hint">Fotos werden automatisch verkleinert. Dateien bis 15 MB.</p></main>`;
+}
+
+// ================================================================== Kommentare & Verlauf
+function fmtStamp(ms) {
+  if (!ms) return '';
+  const d = new Date(ms); const iso = isoDate(d); const diff = dayDiff(iso);
+  const hm = d.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' });
+  return diff === 0 ? `heute ${hm}` : diff === -1 ? `gestern ${hm}` : `${fmtDate(iso, { day: 'numeric', month: 'short', year: d.getFullYear() !== new Date().getFullYear() ? 'numeric' : undefined })}, ${hm}`;
+}
+const isMine = (uid) => uid === 'local' || (uid && uid === S.me?.uid);
+const whoName = (uid, fallback) => (uid === 'mindora' ? 'Mindora' : isMine(uid) ? 'Du' : (S.project?.memberNames || {})[uid] || fallback || 'Jemand');
+function threadList(t) {
+  const ev = [];
+  if (t.createdAt) ev.push({ at: t.createdAt, sys: true, by: t.createdBy, text: t.source === 'repeat' ? 'Als nächster Termin angelegt' : /mail/.test(t.source || '') ? `Aus einer E-Mail angelegt${t.mailSubject ? ` („${t.mailSubject}“)` : ''}` : 'Angelegt' });
+  for (const c of S.comments) if (c.taskId === t.id) ev.push({ at: c.at || 0, text: c.text, by: c.by, byName: c.byName, id: c.id });
+  if (t.done && t.doneAt) ev.push({ at: t.doneAt, sys: true, done: true, by: t.doneBy, text: 'Erledigt' });
+  ev.sort((a, b) => a.at - b.at);
+  const showWho = (by) => by && (members().length > 1 || by === 'mindora');
+  return `<ol class="thread">${ev.map((e) => e.sys
+    ? `<li class="ev sys ${e.done ? 'ok' : ''}"><span>${e.done ? '✓ ' : ''}${esc(e.text)}${showWho(e.by) ? ` · ${esc(whoName(e.by))}` : ''}</span><time>${esc(fmtStamp(e.at))}</time></li>`
+    : `<li class="ev cmt ${isMine(e.by) ? 'mine' : ''}"><div class="bubble">${members().length > 1 || !isMine(e.by) ? `<b>${esc(whoName(e.by, e.byName))}</b>` : ''}<p>${esc(e.text)}</p></div>
+        <time>${esc(fmtStamp(e.at))}${isMine(e.by) ? ` · <button type="button" class="link inline" data-delc="${esc(e.id)}">löschen</button>` : ''}</time></li>`).join('')}</ol>`;
+}
+function wireThread(sheet, taskId) {
+  const wrap = sheet.querySelector('[data-thread]'); if (!wrap) return;
+  const ta = wrap.querySelector('[data-cmt]');
+  const btn = wrap.querySelector('[data-cmt-send]');
+  const grow = () => { ta.style.height = 'auto'; ta.style.height = Math.min(140, ta.scrollHeight) + 'px'; btn.disabled = !ta.value.trim(); };
+  ta.addEventListener('input', grow); grow();
+  const send = async () => {
+    const text = ta.value.trim(); if (!text) return;
+    btn.disabled = true;
+    try { await store.addComment({ taskId, text }); ta.value = ''; grow(); } catch (e) { toast(fail(e)); btn.disabled = false; }
+  };
+  btn.addEventListener('click', send);
+  ta.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); send(); } });
+  wrap.addEventListener('click', async (e) => {
+    const d = e.target.closest('[data-delc]'); if (!d) return;
+    if (!confirm('Kommentar löschen?')) return;
+    try { await store.deleteComment(d.dataset.delc); } catch (err) { toast(fail(err)); }
+  });
+  const redraw = () => { const t = S.tasks.find((x) => x.id === taskId); if (t) wrap.querySelector('.thread').outerHTML = threadList(t); };
+  (sheet.refreshers ||= []).push(redraw);
+}
+function refreshSheet() { sheetRoot.querySelector('.sheet')?.refreshers?.forEach((f) => { try { f(); } catch (e) { console.warn(e); } }); }
+
+// ================================================================== App aktualisieren
+async function hardReload() {
+  try { const regs = await navigator.serviceWorker?.getRegistrations?.() || []; await Promise.all(regs.map((r) => r.update().catch(() => {}))); } catch {}
+  try { const keys = await caches.keys(); await Promise.all(keys.map((k) => caches.delete(k))); } catch {}
+  location.replace(location.pathname + '?v=' + Date.now());
+}
+
 // ================================================================== Daten sichern
 async function exportData() {
-  const data = { app: 'mindora', version: 2, exportedAt: new Date().toISOString(), project: S.project?.name, areas: S.areas, tasks: S.tasks, infos: S.infos, contacts: S.contacts };
+  const data = { app: 'mindora', version: 2, exportedAt: new Date().toISOString(), project: S.project?.name, areas: S.areas, tasks: S.tasks, infos: S.infos, contacts: S.contacts, costs: S.costs, comments: S.comments };
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
   const name = `mindora-sicherung-${todayISO()}.json`;
   const file = new File([blob], name, { type: 'application/json' });
@@ -1595,6 +2220,8 @@ async function importData(file) {
     if (tasks.length) await store.addTasks(tasks);
     for (const { id, ...i } of data.infos || []) if (!S.infos.some((x) => x.text === i.text)) await store.addInfo(i);
     for (const { id, ...c } of data.contacts || []) if (c.name && !findContact(c)) await store.addContact(c);
+    const costs = (data.costs || []).map(({ id, ...c }) => c).filter((c) => !S.costs.some((x) => x.title === c.title && x.amount === c.amount));
+    if (costs.length) await store.addCosts(costs);
     toast(`${tasks.length} Aufgaben eingespielt`);
   } catch (e) { toast(fail(e)); }
 }
@@ -1626,6 +2253,17 @@ app.addEventListener('click', async (e) => {
     case 'week': S.weekOffset = +el.dataset.d === 0 ? 0 : (S.weekOffset || 0) + +el.dataset.d; S.dayPick = null; render(); break;
     case 'day': S.dayPick = el.dataset.d; render(); break;
     case 'open-contacts': S.view = 'contacts'; render(); window.scrollTo(0, 0); break;
+    case 'open-costs': if (S.view !== 'costs') S.prevView = S.view; S.costArea = el.dataset.area || 'all'; S.view = 'costs'; render(); window.scrollTo(0, 0); break;
+    case 'open-docs': if (S.view !== 'docs') S.prevView = S.view; S.docsArea = el.dataset.area || 'all'; S.view = 'docs'; render(); window.scrollTo(0, 0); break;
+    case 'back': S.view = S.prevView && S.prevView !== S.view ? S.prevView : 'more'; S.prevView = null; render(); window.scrollTo(0, 0); break;
+    case 'cost-area': S.costArea = el.dataset.id; render(); break;
+    case 'docs-area': S.docsArea = el.dataset.id; render(); break;
+    case 'cost-new': costSheet(null); break;
+    case 'cost-edit': costSheet(S.costs.find((c) => c.id === el.dataset.id)); break;
+    case 'cost-paid': { const r = el.getBoundingClientRect(); toggleCostPaid(el.dataset.id, r.left + r.width / 2, r.top + r.height / 2); break; }
+    case 'cost-template': rateSheet(); break;
+    case 'cost-budget': budgetSheet(); break;
+    case 'file-open': openViewer(S.files.find((f) => f.id === el.dataset.id)); break;
     case 'back-more': S.view = 'more'; render(); window.scrollTo(0, 0); break;
     case 'toggle': { const r = el.getBoundingClientRect(); toggleTask(el.dataset.id, r.left + r.width / 2, r.top + r.height / 2); break; }
     case 'edit': taskSheet(S.tasks.find((t) => t.id === el.dataset.id)); break;
@@ -1696,6 +2334,7 @@ app.addEventListener('click', async (e) => {
     case 'template': templateSheet(); break;
     case 'export': exportData(); break;
     case 'logout': if (confirm('Abmelden?')) store.signOut(); break;
+    case 'hard-reload': hardReload(); break;
     case 'auth-tab': S.authTab = el.dataset.tab; S.authError = ''; render(); break;
     case 'reset-pw': {
       const email = app.querySelector('input[name="email"]')?.value || prompt('Deine E-Mail-Adresse');
@@ -1729,6 +2368,12 @@ app.addEventListener('input', (e) => {
   else if (k === 'info-q') searchInfo(el);
   else if (k === 'contact-q') searchContact(el);
   else if (k === 'task-q') searchTask(el);
+  else if (k?.startsWith('pay-')) {
+    const x = S.parsed.payments[+el.dataset.i];
+    if (k === 'pay-title') x.title = el.value;
+    if (k === 'pay-amount') x.amountText = el.value;
+    if (k === 'pay-due') x.due = el.value || null;
+  }
   else if (k?.startsWith('found-')) {
     const t = S.parsed.tasks[+el.dataset.i];
     if (k === 'found-title') t.title = el.value;
@@ -1741,6 +2386,8 @@ app.addEventListener('change', (e) => {
   const el = e.target; const a = el.dataset.action;
   if (el.dataset.input === 'found-area') { const t = S.parsed.tasks[+el.dataset.i]; t.areaId = el.value; t.phase = null; }
   if (a === 'pick') { S.parsed.tasks[+el.dataset.i].selected = el.checked; el.closest('.found').classList.toggle('off', !el.checked); updateCommitBtn(); }
+  else if (a === 'pick-pay') { S.parsed.payments[+el.dataset.i].selected = el.checked; el.closest('.found').classList.toggle('off', !el.checked); updateCommitBtn(); }
+  else if (a === 'docs-upload' && el.files.length) { const files = [...el.files]; el.value = ''; uploadFiles(files, { areaId: S.docsArea !== 'all' ? S.docsArea : null }); }
   else if (a === 'pick-contact') { S.parsed.contacts[+el.dataset.i].selected = el.checked; el.closest('.found').classList.toggle('off', !el.checked); updateCommitBtn(); }
   else if (a === 'save-info') S.saveInfo = el.checked;
   else if (a === 'ocr' && el.files[0]) ocr(el.files[0]);
@@ -1749,7 +2396,8 @@ app.addEventListener('change', (e) => {
 function updateCommitBtn() {
   const n = S.parsed.tasks.filter((x) => x.selected).length;
   const c = (S.parsed.contacts || []).filter((x) => x.selected).length;
-  const b = app.querySelector('#commit-btn'); b.disabled = !n && !c; b.textContent = commitLabel(n, c);
+  const z = (S.parsed.payments || []).filter((x) => x.selected).length;
+  const b = app.querySelector('#commit-btn'); b.disabled = !n && !c && !z; b.textContent = commitLabel(n, c, z);
 }
 app.addEventListener('submit', async (e) => {
   const form = e.target; const kind = form.dataset.form; if (!kind) return;
@@ -1787,6 +2435,9 @@ store.init({
   onInfos(list) { S.infos = list; render(); },
   onContacts(list) { S.contacts = list; render(); },
   onAreas(list) { S.areas = list; render(); },
+  onCosts(list) { S.costs = list; render(); },
+  onComments(list) { S.comments = list; CNT = null; render(); refreshSheet(); },
+  onFiles(list) { S.files = list; CNT = null; render(); refreshSheet(); },
   onAi(cfg) { S.ai = cfg; render(); },
   onError(e) { toast(fail(e)); },
   onPush(n) { toast(`${n.title || 'Erinnerung'}${n.body ? ': ' + n.body : ''}`); },

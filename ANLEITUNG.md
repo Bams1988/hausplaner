@@ -10,7 +10,7 @@ Die Einrichtung hat fünf Stufen. Schon nach Stufe 1 kannst du die App benutzen.
 | 2. Cloud (Firebase) | Teilen mit deiner Frau, Daten auf allen Geräten | ca. 15 Min. |
 | 3. Erinnerungen | Push-Nachrichten zu Fristen und Morgen-Übersicht | ca. 10 Min. |
 | 4. KI-Assistent | E-Mails mit KI auswerten, Kontakte, Mail-Entwürfe, tägliche Fristprüfung | ca. 10 Min. |
-| 5. E-Mail-Eingang | Mails einfach weiterleiten – Aufgaben entstehen automatisch | ca. 15 Min. |
+| 5. E-Mail-Eingang | Mails einfach weiterleiten – Aufgaben entstehen innerhalb von 1–2 Minuten | ca. 15 Min. |
 
 > **Du hattest schon den Hausplaner eingerichtet?** Dann lies zuerst den Abschnitt **„Umstieg vom Hausplaner“** ganz unten. Stufe 1–4 musst du nicht wiederholen.
 
@@ -91,7 +91,7 @@ Firebase ist ein Dienst von Google. Der kostenlose Tarif „Spark“ reicht für
 
 ## Stufe 3 – Push-Erinnerungen
 
-Ein kleines Programm in deinem GitHub-Repository schaut alle 15 Minuten nach fälligen Erinnerungen und schickt sie an eure iPhones. Das ist kostenlos.
+Ein kleines Programm in deinem GitHub-Repository schaut alle 5 Minuten nach fälligen Erinnerungen und schickt sie an eure iPhones. Das ist kostenlos.
 
 ### 3.1 Zugangsschlüssel aus Firebase holen
 1. Firebase → **Projekteinstellungen → Dienstkonten → Neuen privaten Schlüssel generieren**.
@@ -145,45 +145,66 @@ Der Schlüssel wird in eurem Bauprojekt gespeichert. Deine Frau kann die KI dami
 
 ---
 
-## Stufe 5 – E-Mail-Eingang (Gmail)
+## Stufe 5 – E-Mail-Eingang (Gmail, jede Minute)
 
-Mindora bekommt ein eigenes Postfach. Alles, was du dorthin weiterleitest, liest die KI alle 15 Minuten, legt die Aufgaben an (markiert als **neu**), ergänzt Kontakte, legt die Mail in der Ablage ab und schickt dir eine Push-Nachricht. Voraussetzung: Stufe 2, 3 und 4 sind eingerichtet.
+Mindora bekommt ein eigenes Gmail-Postfach. Ein kleines Programm – der **Mindora-Postbote** – läuft direkt in diesem Gmail-Konto bei Google und schaut **jede Minute** nach neuen Mails. Es lässt sie von der KI auswerten, legt Aufgaben (markiert als **neu**) und Kontakte an, speichert die Mail in der Ablage und schickt dir eine Push-Nachricht. Kostenlos, ohne App-Passwort. Voraussetzung: Stufe 2, 3 und 4 sind eingerichtet.
 
 ### 5.1 Neues Gmail-Konto
-1. Auf **accounts.google.com** ein neues Google-Konto anlegen, z. B. `mindora.deinname@gmail.com`. Nimm ein eigenes Konto nur für Mindora – nicht dein privates.
-2. **Bestätigung in zwei Schritten** einschalten: myaccount.google.com → **Sicherheit** → **Bestätigung in zwei Schritten**. (Ohne sie gibt es kein App-Passwort.)
+Auf **accounts.google.com** ein neues Google-Konto anlegen, z. B. `mindora.deinname@gmail.com` – nur für Mindora, nicht dein privates.
 
-### 5.2 App-Passwort erzeugen
-1. myaccount.google.com/apppasswords öffnen (oder in den Kontoeinstellungen nach „App-Passwörter“ suchen).
-2. Name `Mindora` eingeben → **Erstellen**.
-3. Google zeigt ein **16-stelliges Passwort** (vier Vierergruppen). Kopieren – es wird nur einmal angezeigt. Leerzeichen sind egal.
+### 5.2 Postbote anlegen
+1. Mit dem **Mindora-Gmail-Konto** angemeldet **script.google.com** öffnen (oben rechts prüfen, dass das richtige Konto aktiv ist).
+2. **Neues Projekt**. Oben links auf „Unbenanntes Projekt“ klicken → Name `Mindora Postbote` → **Umbenennen**.
+3. Im Editor den vorhandenen Text (`function myFunction() …`) komplett löschen.
+4. Die Datei **`Mindora-Postbote.gs`** mit einem Texteditor öffnen, **alles** kopieren und einfügen. Mit dem Disketten-Symbol (oder Strg+S) speichern.
 
-IMAP ist bei Gmail heute immer eingeschaltet. Falls die Gmail-Einstellungen unter **Weiterleitung und POP/IMAP** doch einen IMAP-Schalter zeigen, stell ihn auf **Aktivieren**.
+### 5.3 Zugang zu Firebase hinterlegen
+1. Links auf das **Zahnrad (Projekteinstellungen)**.
+2. Ganz unten **Skripteigenschaften → Skripteigenschaft hinzufügen**:
+   - Eigenschaft: `FIREBASE_SERVICE_ACCOUNT`
+   - Wert: der **gesamte Inhalt** der Firebase-`.json`-Datei aus Schritt 3.1. (Hast du sie gelöscht: in Firebase unter Projekteinstellungen → Dienstkonten einfach einen neuen privaten Schlüssel erzeugen.)
+3. **Skripteigenschaft hinzufügen** → Eigenschaft `APP_URL`, Wert: deine App-Adresse, z. B. `https://DEINNAME.github.io/hausplaner/`
+4. **Skripteigenschaften speichern**.
 
-### 5.3 Zugang bei GitHub hinterlegen
-GitHub-Repository → **Settings → Secrets and variables → Actions → Secrets → New repository secret**, zweimal:
+### 5.4 Einschalten
+1. Links auf **Editor** (Symbol `< >`).
+2. Oben in der Leiste im Auswahlfeld neben „Ausführen“ die Funktion **`einrichten`** wählen → **Ausführen**.
+3. Google fragt nach Berechtigungen: **Berechtigungen prüfen** → Mindora-Konto wählen → es erscheint „Google hat diese App nicht überprüft“. Das ist normal, weil es dein eigenes Programm ist: **Erweitert** → **Zu Mindora Postbote (unsicher) wechseln** → **Zulassen**.
+4. Unten im **Ausführungsprotokoll** erscheinen grüne Häkchen:
+   „✓ Firebase-Zugang gefunden“, „✓ Gemeinsamer Bereich …“, „✓ Zeitplan eingerichtet …“.
 
-| Name | Inhalt |
-|---|---|
-| `INBOX_USER` | die neue Gmail-Adresse, z. B. `mindora.deinname@gmail.com` |
-| `INBOX_PASSWORD` | das 16-stellige App-Passwort aus 5.2 |
+Ab jetzt läuft der Postbote von selbst jede Minute – auch wenn der Computer aus ist.
 
-### 5.4 Testen
-1. Leite eine E-Mail an die neue Adresse weiter – **von der Adresse aus, mit der du dich bei Mindora angemeldet hast**. Nur so weiß Mindora, dass sie von dir kommt.
-2. GitHub → **Actions → Mindora → Run workflow**, Haken „Test-Nachricht“ dabei **entfernen** → **Run workflow**. (Oder bis zu 15 Minuten warten.)
-3. Nach etwa einer Minute kommt eine Push-Nachricht „📬 … neue Aufgaben“. In Mindora steht unter **Eingang → Neu** die Adresse und die neuen Aufgaben. Mit **Passt** übernimmst du sie, mit **Weg damit** verwirfst du sie.
+### 5.5 Alten GitHub-Abruf abschalten
+Falls du vorher `INBOX_USER` und `INBOX_PASSWORD` bei GitHub eingetragen hast: unter **Settings → Secrets and variables → Actions** beide **löschen** (Mülleimer). Sonst lesen zwei Programme dasselbe Postfach.
 
-**Wer darf an das Postfach schreiben?** Immer erlaubt sind die Adressen, mit denen ihr bei Mindora angemeldet seid. Willst du z. B. Mails von allkauf automatisch weiterleiten lassen (Weiterleitungsregel in deinem GMX-Postfach), trag unter **Mehr → E-Mail-Eingang** `@allkauf.de` ein. Alles andere ignoriert Mindora – so entstehen keine Aufgaben aus Werbung und es entstehen keine KI-Kosten.
+### 5.6 Testen
+1. Eine E-Mail an die Mindora-Adresse weiterleiten – **von der Adresse, mit der du bei Mindora angemeldet bist**.
+2. Nach 1–2 Minuten kommt „📬 … neue Aufgaben“. In Mindora steht sie unter **Eingang → Neu**.
+
+**Was passiert mit anderen Absendern?** Mindora liest nur Mails von euren eigenen Adressen und von erlaubten Absendern. Kommt etwas von einem anderen Absender (z. B. weil du bei GMX eine automatische Weiterleitung für allkauf eingerichtet hast), zeigt Mindora unter **Eingang** „Nicht gelesen: …“ mit einem Knopf **Erlauben**. Danach die Mail einmal neu weiterleiten.
+
+**Nachsehen, was der Postbote macht:** script.google.com → Mindora Postbote → links **Ausführungen**. Jede Minute steht dort ein Lauf; bei verarbeiteten Mails steht im Protokoll z. B. „Verarbeitet: „Bauvorhaben“ – 2 neue Aufgaben“ oder „Ignoriert: … Absender ist nicht erlaubt“. In Gmail bekommen verarbeitete Mails das Label **Mindora**.
 
 ---
 
 ## So benutzt du Mindora
 
-**Heute:** Der Bogen oben zeigt, wie viel du diese Woche geschafft hast. Darunter steht, was als Nächstes dran ist – mit dem konkreten nächsten Schritt.
+**Übersicht:** Oben die Schnelleingabe („Bank anrufen morgen 10 Uhr #hausbau“, „Müll rausbringen jeden Dienstag“). Darunter vier Kacheln (Heute, Überfällig, Jetzt starten, 7 Tage) – antippen zeigt die passenden Aufgaben. Dazu Wochenblick, Kosten und Projekte.
+
+**Gesten:** Aufgabe nach rechts wischen = erledigt, nach links = verschieben, gedrückt halten und auf einen Tag ziehen = neues Datum.
 
 **Lebensbereiche:** Hausbau, Familie, Finanzen & Verträge, Gesundheit und Alltag sind vorbereitet. Unter **Mehr → Lebensbereiche** legst du eigene an (z. B. Urlaub, Auto, Kinder), mit Symbol, Farbe und optionalen Abschnitten für den Plan.
 
-**Plan:** Der Reiter **Plan** zeigt alle Aufgaben mit Datum als Zeitstrahl, gruppiert nach Abschnitten (beim Hausbau: Finanzierung, Pläne & Behörden …). Jeder Balken reicht vom Starttermin (Frist minus Vorlauf) bis zur Frist, Termine sind Rauten, die gelbe Linie ist heute. Der Plan aktualisiert sich von selbst, sobald du Aufgaben anlegst, verschiebst oder abhakst. Mit **Wochen/Monate** zoomst du, seitlich wischen scrollt.
+**Plan:** **7 Tage** (jeder Tag ein Abschnitt), **Monat** (Kalender mit Punkten) und **Projekte** (Fortschritt Schritt für Schritt, dazu Kosten und Fotos des Projekts).
+
+**Wiederkehrende Aufgaben:** In der Aufgabe unter **Wiederholen** (täglich, werktags, wöchentlich, alle 2 Wochen, monatlich, vierteljährlich, jährlich) – oder direkt in der Schnelleingabe: „jeden Montag“, „monatlich“, „jährlich“. Beim Abhaken legt Mindora den nächsten Termin automatisch an.
+
+**Kosten & Zahlungen:** **Mehr → Kosten & Zahlungen** (oder im Projekt Hausbau). Mit **Ratenplan aus Vorlage** legst du die Abschläge nach Baufortschritt an – Gesamtpreis eintragen, Prozente aus eurem allkauf-Vertrag übernehmen. Dazu kommen Rechnungen, Sonderwünsche und Nebenkosten. Mit **Budget festlegen** siehst du, wie viel Puffer bleibt. Haken = bezahlt. Für offene Zahlungen mit Datum kommt 3 Tage vorher und am Fälligkeitstag eine Push-Nachricht. Rechnungen in E-Mails erkennt die KI und legt sie hier an.
+
+**Fotos & Dokumente:** In jeder Aufgabe und jeder Zahlung unter **Fotos & Dateien** – Foto aufnehmen oder Datei/PDF wählen. Alles zusammen unter **Mehr → Fotos & Dokumente**. Fotos werden automatisch verkleinert, Dateien bis 15 MB. **Öffnen / Sichern** gibt die Datei an andere Apps weiter (z. B. „In Dateien sichern“).
+
+**Kommentare:** Unten in jeder Aufgabe steht der **Verlauf** (angelegt, erledigt von wem) und darunter das Kommentarfeld. Die anderen bekommen eine Push-Nachricht. In der Liste zeigen 💬 und 📎, wo es Kommentare oder Dateien gibt.
 
 **E-Mails einlesen:** Weiterleiten an das Mindora-Postfach (Stufe 5) – oder im Mail-Programm den Text markieren und kopieren → **Eingang → Einfügen** → einfügen → auswerten. Die App erkennt Bitten („Bitte senden Sie…“, „Wir benötigen…“), Fragen an dich, Fristen („bis spätestens 06.11.“, „innerhalb von 14 Tagen“, „KW 47“) und Termine. Du prüfst die Vorschläge, passt sie an und übernimmst sie. Die E-Mail wird auf Wunsch unter **Eingang → Ablage** gespeichert.
 
@@ -224,8 +245,8 @@ Allkauf bietet keine öffentliche Schnittstelle. Der Login ist mit Google Authen
 | „Guthaben aufgebraucht“ | In der Anthropic Console unter Billing Guthaben aufladen. |
 | Keine „Jetzt angehen“-Push | Kommt einmal morgens ab 7 Uhr und nur, wenn eine Aufgabe **neu** dringend wird. Die Aufgabe braucht Frist und Vorlauf. |
 | Erinnerungen kommen gar nicht mehr | GitHub → Actions → „Mindora“ → falls dort „disabled“ steht: **Enable workflow**. |
-| Weitergeleitete Mail ergibt keine Aufgabe | GitHub → Actions → letzten Lauf öffnen. „Absender nicht erlaubt“: von der Adresse weiterleiten, mit der du bei Mindora angemeldet bist, oder den Absender unter Mehr → E-Mail-Eingang erlauben. „Invalid credentials“: App-Passwort neu erzeugen (5.2) und `INBOX_PASSWORD` ersetzen. |
-| „Mehrere Projekte gefunden“ | Mindora → Mehr: Es gibt mehr als einen gemeinsamen Bereich in Firebase. In Firebase → Firestore → `projects` die ID eures Bereichs kopieren und bei GitHub als **Variable** `INBOX_PROJECT` eintragen. |
+| Weitergeleitete Mail ergibt keine Aufgabe | script.google.com → Mindora Postbote → **Ausführungen** → letzten Lauf öffnen und die Meldung lesen. „Ignoriert“: von deiner Mindora-Login-Adresse weiterleiten oder den Absender in der App erlauben. |
+| „Es gibt mehrere gemeinsame Bereiche“ | Die Meldung nennt die IDs. Die richtige im Postboten unter Projekteinstellungen → Skripteigenschaften als `PROJEKT_ID` eintragen. |
 
 **Kosten:** GitHub Pages, GitHub Actions (öffentliches Repository) und Firebase Spark sind kostenlos. Für zwei Personen bleibt ihr weit unter allen Grenzen. Nur der optionale KI-Assistent kostet etwas, siehe Stufe 4.
 

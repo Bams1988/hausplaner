@@ -140,6 +140,22 @@ function extractTool(areas) {
             },
           },
         },
+        zahlungen: {
+          type: 'array',
+          description: 'Geldbeträge, die die Familie zahlen muss: Rechnungen, Abschlags- oder Ratenforderungen, Gebühren, Angebote mit Anzahlung. Leer lassen, wenn keine.',
+          items: {
+            type: 'object',
+            required: ['titel', 'betrag', 'art', 'bereich_id'],
+            properties: {
+              titel: { type: 'string', description: 'Kurz, wofür, z. B. „2. Abschlag Rohbau“ oder „Rechnung Vermessungsbüro“. Max. 60 Zeichen.' },
+              betrag: { type: ['number', 'null'], description: 'Zu zahlender Betrag in Euro (brutto) als Zahl, z. B. 28500.5. null, wenn kein Betrag genannt ist.' },
+              faellig: { type: ['string', 'null'], description: 'Zahlungsziel als YYYY-MM-DD (z. B. „zahlbar innerhalb 14 Tagen“ ab Rechnungsdatum umrechnen).' },
+              art: { type: 'string', enum: ['rate', 'rechnung', 'sonderwunsch', 'eigenleistung', 'neben', 'finanzierung', 'sonst'], description: 'rate = Abschlag nach Baufortschritt; rechnung = sonstige Rechnung; sonderwunsch = Mehrkosten für Sonderwünsche; neben = Baunebenkosten wie Notar, Vermessung, Anschlüsse; finanzierung = Bankgebühren, Zinsen.' },
+              bereich_id: { type: 'string', enum: areas.map((a) => a.id) },
+              empfaenger: { type: ['string', 'null'], description: 'Wer das Geld bekommt.' },
+            },
+          },
+        },
         kontakte: {
           type: 'array',
           items: {
@@ -179,6 +195,7 @@ Regeln:
 - Datumsangaben immer als echtes Datum berechnen: „innerhalb von 14 Tagen“ ab Datum der Nachricht, „KW 47“ = Freitag dieser Woche, „Ende November“ = letzter Tag des Monats.
 - Vorlauf realistisch für Deutschland schätzen, z. B. Bankunterlagen 1–3 Wochen, Notar/Grundbuch 2–4 Wochen, Behörden 2–6 Wochen, Handwerkerangebote 2–3 Wochen, Arzttermin vereinbaren 1–4 Wochen, eigene Unterschrift/Upload 1–2 Tage, Termin wahrnehmen 0–1 Tag.
 - Kontakte: nur echte Personen oder Stellen mit mindestens einer Kontaktangabe (aus Signaturen, Kopfzeilen, Text). Nicht die Familie selbst. Telefonnummern so übernehmen, wie sie dastehen.
+- Zahlungen: Rechnungen, Abschlagsforderungen und Gebühren zusätzlich unter „zahlungen“ erfassen (Betrag brutto in Euro). Für eine reine Zahlungsaufforderung KEINE zusätzliche Aufgabe „… überweisen“ anlegen – Mindora erinnert an Zahlungen selbst. Nur wenn außer dem Überweisen noch etwas zu tun ist, gibt es eine Aufgabe.
 - Erfinde nichts. Fehlt eine Angabe, setze null.`;
 
   const known = contacts.length ? `\n\nBereits gespeicherte Kontakte (für die Zuordnung):\n${contacts.slice(0, 80).map((c) => `- ${c.name}${c.company ? ` (${c.company})` : ''}${c.email ? ` <${c.email}>` : ''}`).join('\n')}` : '';
@@ -212,6 +229,14 @@ Regeln:
         done: !!a.erledigt,
       };
     }).filter((t) => t.title),
+    payments: (Array.isArray(r.zahlungen) ? r.zahlungen : []).map((z) => ({
+      title: String(z.titel || '').trim().slice(0, 80),
+      amount: typeof z.betrag === 'number' && isFinite(z.betrag) ? Math.round(z.betrag * 100) / 100 : (typeof z.betrag === 'string' && /\d/.test(z.betrag) ? Number(z.betrag.replace(/\./g, '').replace(',', '.')) || null : null),
+      due: validDate(z.faellig),
+      kind: ['rate', 'rechnung', 'sonderwunsch', 'eigenleistung', 'neben', 'finanzierung', 'sonst'].includes(z.art) ? z.art : 'rechnung',
+      areaId: ids.has(z.bereich_id) ? z.bereich_id : (ids.has('hausbau') ? 'hausbau' : fallbackArea),
+      payee: z.empfaenger || null,
+    })).filter((z) => z.title),
     contacts: (r.kontakte || []).map((k) => ({
       name: String(k.name || '').trim(), company: k.firma || '', role: k.rolle || '', email: (k.email || '').trim().toLowerCase(),
       phone: k.telefon || '', mobile: k.mobil || '', address: k.adresse || '', notes: k.notiz || '',

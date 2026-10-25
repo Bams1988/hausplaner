@@ -31,6 +31,23 @@ function withReminder(task) {
   return { ...task, remindAt, reminded: remindAt === task.remindAt ? !!task.reminded : false, startBy: startByOf(task) };
 }
 
+// Dateien im lokalen Modus: Inhalte in IndexedDB (localStorage ist zu klein)
+const IDB = { db: null };
+function idb() {
+  if (IDB.db) return IDB.db;
+  IDB.db = new Promise((ok, no) => {
+    const r = indexedDB.open('mindora-files', 1);
+    r.onupgradeneeded = () => r.result.createObjectStore('blobs');
+    r.onsuccess = () => ok(r.result); r.onerror = () => no(r.error);
+  });
+  return IDB.db;
+}
+async function idbDo(mode, fn) {
+  const db = await idb();
+  return new Promise((ok, no) => { const tx = db.transaction('blobs', mode); const req = fn(tx.objectStore('blobs')); tx.oncomplete = () => ok(req?.result); tx.onerror = () => no(tx.error); });
+}
+export const PART_SIZE = 900 * 1024; // Firestore erlaubt max. 1 MiB je Dokument
+
 export function createStore() {
   const cfg = self.HAUS_CONFIG || {};
   return cfg.firebase && cfg.firebase.apiKey ? new CloudStore(cfg) : new LocalStore();
@@ -54,10 +71,14 @@ class LocalStore {
     this.h.onContacts([...d.contacts].sort((a, b) => a.name.localeCompare(b.name, 'de')));
     this.h.onAi(this.ai);
     this.h.onAreas([...(d.areas || [])]);
+    this.h.onCosts?.([...(d.costs || [])]);
+    this.h.onComments?.([...(d.comments || [])]);
+    this.h.onFiles?.([...(d.files || [])]);
   }
   async init(h) {
     this.h = h;
-    this.data = { name: 'Mindora', tasks: [], infos: [], contacts: [], areas: [], settings: {}, ...this.load() };
+    this.data = { name: 'Mindora', tasks: [], infos: [], contacts: [], areas: [], costs: [], comments: [], files: [], settings: {}, ...this.load() };
+    for (const k of ['costs', 'comments', 'files']) this.data[k] = this.data[k] || [];
     try { this.ai = JSON.parse(localStorage.getItem(AI_LOCAL)) || null; } catch { this.ai = null; }
     this.me = { uid: 'local', name: 'Ich', email: null };
     h.onAuth(this.me);
@@ -94,6 +115,24 @@ class LocalStore {
     try { settings ? localStorage.setItem(AI_LOCAL, JSON.stringify(settings)) : localStorage.removeItem(AI_LOCAL); } catch {}
     this.emit();
   }
+  // --- Kosten
+  async addCost(c) { const id = uid6(); this.data.costs.push({ id, createdAt: Date.now(), createdBy: 'local', paid: false, ...c }); this.save(); return id; }
+  async addCosts(list) { for (const c of list) this.data.costs.push({ id: uid6(), createdAt: Date.now(), createdBy: 'local', paid: false, ...c }); this.save(); }
+  async updateCost(id, patch) { const i = this.data.costs.findIndex((c) => c.id === id); if (i < 0) return; this.data.costs[i] = { ...this.data.costs[i], ...patch }; this.save(); }
+  async deleteCost(id) { this.data.costs = this.data.costs.filter((c) => c.id !== id); this.save(); }
+  // --- Kommentare
+  async addComment(c) { this.data.comments.push({ id: uid6(), at: Date.now(), by: 'local', ...c }); this.save(); }
+  async deleteComment(id) { this.data.comments = this.data.comments.filter((c) => c.id !== id); this.save(); }
+  // --- Dateien
+  async addFile(meta, blob) {
+    const id = uid6();
+    await idbDo('readwrite', (st) => st.put(blob, id));
+    this.data.files.push({ id, createdAt: Date.now(), createdBy: 'local', ...meta });
+    this.save(); return id;
+  }
+  async updateFile(id, patch) { const i = this.data.files.findIndex((f) => f.id === id); if (i < 0) return; this.data.files[i] = { ...this.data.files[i], ...patch }; this.save(); }
+  async getFileBlob(meta) { const b = await idbDo('readonly', (st) => st.get(meta.id)); if (!b) throw new Error('Datei nicht gefunden.'); return b; }
+  async deleteFile(meta) { await idbDo('readwrite', (st) => st.delete(meta.id)).catch(() => {}); this.data.files = this.data.files.filter((f) => f.id !== meta.id); this.save(); }
   exportLocal() { return this.data; }
 }
 
@@ -145,6 +184,9 @@ class CloudStore {
       onSnapshot(collection(this.db, 'projects', pid, 'infos'), (s) => this.h.onInfos(s.docs.map((d) => ({ id: d.id, ...d.data() })).sort((a, b) => b.createdAt - a.createdAt)), err),
       onSnapshot(collection(this.db, 'projects', pid, 'contacts'), (s) => this.h.onContacts(s.docs.map((d) => ({ id: d.id, ...d.data() })).sort((a, b) => (a.name || '').localeCompare(b.name || '', 'de'))), err),
       onSnapshot(collection(this.db, 'projects', pid, 'areas'), (s) => this.h.onAreas(s.docs.map((d) => ({ id: d.id, ...d.data() }))), err),
+      onSnapshot(collection(this.db, 'projects', pid, 'costs'), (s) => this.h.onCosts?.(s.docs.map((d) => ({ id: d.id, ...d.data() }))), err),
+      onSnapshot(collection(this.db, 'projects', pid, 'comments'), (s) => this.h.onComments?.(s.docs.map((d) => ({ id: d.id, ...d.data() }))), err),
+      onSnapshot(collection(this.db, 'projects', pid, 'files'), (s) => this.h.onFiles?.(s.docs.map((d) => ({ id: d.id, ...d.data() }))), err),
       onSnapshot(doc(this.db, 'projects', pid, 'private', 'ai'), (s) => this.h.onAi(s.exists() && s.data().apiKey ? s.data() : null), () => this.h.onAi(null)),
     ];
     this.unsubs.push(() => this.unsubP.forEach((u) => u()));
@@ -231,6 +273,46 @@ class CloudStore {
   setArea(id, data) { return this.F.setDoc(this.F.doc(this.col('areas'), id), clean(data), { merge: true }); }
   deleteArea(id) { return this.F.deleteDoc(this.F.doc(this.col('areas'), id)); }
   updateProject(patch) { return this.F.updateDoc(this.F.doc(this.db, 'projects', this.projectId), clean(patch)); }
+  // --- Kosten
+  async addCost(c) { const ref = this.F.doc(this.col('costs')); await this.F.setDoc(ref, { createdAt: Date.now(), createdBy: this.me.uid, paid: false, ...clean(c) }); return ref.id; }
+  async addCosts(list) {
+    const batch = this.F.writeBatch(this.db);
+    for (const c of list) batch.set(this.F.doc(this.col('costs')), { createdAt: Date.now(), createdBy: this.me.uid, paid: false, ...clean(c) });
+    await batch.commit();
+  }
+  updateCost(id, patch) { return this.F.updateDoc(this.F.doc(this.col('costs'), id), clean(patch)); }
+  deleteCost(id) { return this.F.deleteDoc(this.F.doc(this.col('costs'), id)); }
+  // --- Kommentare (notified=false → der Hintergrunddienst schickt der anderen Person eine Push-Nachricht)
+  addComment(c) { return this.F.addDoc(this.col('comments'), { at: Date.now(), by: this.me.uid, byName: this.me.name || '', notified: false, ...clean(c) }); }
+  deleteComment(id) { return this.F.deleteDoc(this.F.doc(this.col('comments'), id)); }
+  // --- Dateien: Inhalt in Teilen zu je max. 900 KB (Sammlung fileParts), Eckdaten + Vorschaubild in files
+  async addFile(meta, blob) {
+    const { doc, setDoc, Bytes } = this.F;
+    const ref = doc(this.col('files'));
+    const buf = new Uint8Array(await blob.arrayBuffer());
+    const parts = Math.max(1, Math.ceil(buf.length / PART_SIZE));
+    for (let i = 0; i < parts; i++) {
+      await setDoc(doc(this.col('fileParts'), `${ref.id}_${i}`), { fileId: ref.id, i, data: Bytes.fromUint8Array(buf.subarray(i * PART_SIZE, (i + 1) * PART_SIZE)) });
+    }
+    await setDoc(ref, { createdAt: Date.now(), createdBy: this.me.uid, ...clean(meta), parts, size: buf.length });
+    return ref.id;
+  }
+  updateFile(id, patch) { return this.F.updateDoc(this.F.doc(this.col('files'), id), clean(patch)); }
+  async getFileBlob(meta) {
+    const { doc, getDoc } = this.F;
+    const chunks = [];
+    for (let i = 0; i < (meta.parts || 1); i++) {
+      const s = await getDoc(doc(this.col('fileParts'), `${meta.id}_${i}`));
+      if (!s.exists()) throw new Error('Datei ist unvollständig. Bitte erneut hochladen.');
+      chunks.push(s.data().data.toUint8Array());
+    }
+    return new Blob(chunks, { type: meta.type || 'application/octet-stream' });
+  }
+  async deleteFile(meta) {
+    const { doc, deleteDoc } = this.F;
+    await deleteDoc(doc(this.col('files'), meta.id));
+    for (let i = 0; i < (meta.parts || 1); i++) await deleteDoc(doc(this.col('fileParts'), `${meta.id}_${i}`)).catch(() => {});
+  }
   setAi(settings) {
     const ref = this.F.doc(this.db, 'projects', this.projectId, 'private', 'ai');
     return settings ? this.F.setDoc(ref, { ...settings, updatedBy: this.me.uid, updatedAt: Date.now() }) : this.F.deleteDoc(ref);
