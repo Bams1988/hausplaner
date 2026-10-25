@@ -1,4 +1,4 @@
-// Mindora-Hintergrunddienst: E-Mail-Eingang, Erinnerungen, Fristprüfung und Morgen-Übersicht.
+// MindSpace-Hintergrunddienst: E-Mail-Eingang, Erinnerungen, Fristprüfung und Morgen-Übersicht.
 // Läuft automatisch alle 15 Minuten über GitHub Actions (siehe .github/workflows/reminders.yml).
 import admin from 'firebase-admin';
 import { assessTasks, urgencyOf, aiKeyOf, STATUS } from '../ai.js';
@@ -26,24 +26,40 @@ const today = `${part('year')}-${part('month')}-${part('day')}`;
 const hour = Number(part('hour'));
 const todayDate = new Date(`${today}T12:00:00`); // „heute“ in Berliner Zeit
 
-const fmtDue = (t) => {
+const fmtDue = (t, lang = 'de') => {
   if (!t.due) return '';
   const [y, m, d] = t.due.split('-').map(Number);
-  const s = new Date(Date.UTC(y, m - 1, d, 12)).toLocaleDateString('de-DE', { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'UTC' });
-  return t.due === today ? `heute${t.time ? ' ' + t.time + ' Uhr' : ''}` : `${s}${t.time ? ', ' + t.time + ' Uhr' : ''}`;
+  const en = lang === 'en';
+  const s = new Date(Date.UTC(y, m - 1, d, 12)).toLocaleDateString(en ? 'en-GB' : 'de-DE', { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'UTC' });
+  const tm = t.time ? (en ? ` ${t.time}` : ` ${t.time} Uhr`) : '';
+  return t.due === today ? `${en ? 'today' : 'heute'}${tm}` : `${s}${t.time ? ',' + tm : ''}`;
 };
+// Zweisprachige Texte: T(lang, deutsch, englisch)
+const T = (lang, de, en) => (lang === 'en' ? en : de);
+const STATUS_EN = { jetzt_starten: 'Start now', kritisch: 'Getting tight', unrealistisch: 'Clarify deadline', im_plan: 'On track' };
+const statusLabel = (st, lang) => (lang === 'en' ? STATUS_EN[st] : STATUS[st].label);
 
 async function tokensFor(uids) {
   const out = [];
   for (const uid of uids) {
     const snap = await db.doc(`users/${uid}`).get();
-    for (const token of snap.get('tokens') || []) out.push({ uid, token });
+    const lang = snap.get('lang') || 'de';
+    for (const token of snap.get('tokens') || []) out.push({ uid, token, lang });
   }
   return out;
 }
 
+// title/body dürfen Funktionen (lang) => Text sein; dann wird je Sprache getrennt gesendet
 async function send(targets, title, body, tag) {
   if (!targets.length) return 0;
+  if (typeof title === 'function' || typeof body === 'function') {
+    let n = 0;
+    for (const lang of ['de', 'en']) {
+      const grp = targets.filter((t) => (t.lang || 'de') === lang);
+      if (grp.length) n += await send(grp, typeof title === 'function' ? title(lang) : title, typeof body === 'function' ? body(lang) : body, tag);
+    }
+    return n;
+  }
   const res = await fcm.sendEachForMulticast({
     tokens: targets.map((t) => t.token),
     notification: { title, body },
@@ -77,22 +93,26 @@ if (!TEST && process.env.INBOX_USER) {
 for (const p of projects.docs) {
   const members = p.get('members') || [];
   const all = await tokensFor(members);
-  const pname = p.get('name') || 'Mindora';
+  const pname = p.get('name') || 'MindSpace';
+  // Zugriff je Bereich: Mitglieder ohne Eintrag oder mit 'all' sehen alles
+  const access = p.get('access') || {};
+  const can = (uid, areaId) => { const a = access[uid]; return !a || a === 'all' || (Array.isArray(a) && a.includes(areaId || 'hausbau')); };
+  const forArea = (areaId, list = all) => list.filter((x) => can(x.uid, areaId));
+  const full = all.filter((x) => !Array.isArray(access[x.uid]));
 
   if (TEST) {
-    sent += await send(all, pname, 'Test: Push-Nachrichten funktionieren.', 'test');
+    sent += await send(all, pname, (l) => T(l, 'Test: Push-Nachrichten funktionieren.', 'Test: push notifications work.'), 'test');
     continue;
   }
 
   const open = (await p.ref.collection('tasks').where('done', '==', false).get()).docs;
+  const targetsFor = (t) => forArea(t.areaId, t.assignee && t.assignee !== 'all' ? all.filter((x) => x.uid === t.assignee) : all);
 
   // 1) Einzelne Erinnerungen
   for (const doc of open) {
     const t = doc.data();
     if (!t.remindAt || t.reminded || t.remindAt > now || t.remindAt < now - MAX_AGE) continue;
-    const targets = t.assignee && t.assignee !== 'all' ? all.filter((x) => x.uid === t.assignee) : all;
-    const when = fmtDue(t);
-    sent += await send(targets, `Erinnerung: ${t.title}`.slice(0, 120), when ? `Fällig ${when}` : pname, doc.id);
+    sent += await send(targetsFor(t), (l) => `${T(l, 'Erinnerung', 'Reminder')}: ${t.title}`.slice(0, 120), (l) => (t.due ? `${T(l, 'Fällig', 'Due')} ${fmtDue(t, l)}` : pname), doc.id);
     await doc.ref.update({ reminded: true, remindedAt: now });
   }
 
@@ -104,12 +124,13 @@ for (const p of projects.docs) {
       const s = await p.ref.collection('private').doc('ai').get();
       if (s.exists && s.get('apiKey')) aiCfg = { apiKey: s.get('apiKey'), model: s.get('model') };
     } catch (e) { console.warn('KI-Einstellungen nicht lesbar:', e.message); }
+    const projLang = (full[0] || all[0])?.lang || 'de';
 
     if (aiCfg && tasks.size) {
       const list = [...tasks.values()];
       for (let i = 0; i < list.length; i += 30) {
         try {
-          const res = await assessTasks(aiCfg, list.slice(i, i + 30), { now: todayDate });
+          const res = await assessTasks(aiCfg, list.slice(i, i + 30), { now: todayDate, lang: projLang });
           for (const r of res) {
             const t = tasks.get(r.id);
             const patch = { aiStatus: r.status, aiReason: r.reason, aiNext: r.next, aiStartBy: r.startBy, aiFor: aiKeyOf(t), aiAt: now };
@@ -120,7 +141,7 @@ for (const p of projects.docs) {
       }
     }
 
-    // Benachrichtigen, wenn eine Aufgabe neu dringend geworden ist
+    // Benachrichtigen, wenn eine Aufgabe neu dringend geworden ist – jede Person nur über ihre Bereiche
     const alerts = [];
     for (const t of tasks.values()) {
       const u = urgencyOf(t, todayDate);
@@ -130,20 +151,22 @@ for (const p of projects.docs) {
       alerts.push({ t, u, key });
     }
     alerts.sort((a, b) => STATUS[b.u.status].rank - STATUS[a.u.status].rank);
-    if (alerts.length > 3) {
-      const body = alerts.slice(0, 4).map(({ t, u }) => `• ${STATUS[u.status].label}: ${t.title}`).join('\n') + (alerts.length > 4 ? `\n… und ${alerts.length - 4} weitere` : '');
-      sent += await send(all, `${alerts.length} Aufgaben jetzt angehen`, body, 'urgent');
-    } else {
-      for (const { t, u } of alerts) {
-        const targets = t.assignee && t.assignee !== 'all' ? all.filter((x) => x.uid === t.assignee) : all;
-        sent += await send(targets, `${STATUS[u.status].label}: ${t.title}`.slice(0, 120), (u.next || u.reason || `Fällig ${fmtDue(t)}`).slice(0, 200), 'urg-' + t.id);
+    for (const uid of members) {
+      const mine = alerts.filter(({ t }) => targetsFor(t).some((x) => x.uid === uid));
+      const toks = all.filter((x) => x.uid === uid);
+      if (!mine.length || !toks.length) continue;
+      if (mine.length > 3) {
+        sent += await send(toks, (l) => T(l, `${mine.length} Aufgaben jetzt angehen`, `${mine.length} tasks to tackle now`),
+          (l) => mine.slice(0, 4).map(({ t, u }) => `• ${statusLabel(u.status, l)}: ${t.title}`).join('\n') + (mine.length > 4 ? T(l, `\n… und ${mine.length - 4} weitere`, `\n… and ${mine.length - 4} more`) : ''), 'urgent');
+      } else {
+        for (const { t, u } of mine) sent += await send(toks, (l) => `${statusLabel(u.status, l)}: ${t.title}`.slice(0, 120), (l) => (u.next || u.reason || `${T(l, 'Fällig', 'Due')} ${fmtDue(t, l)}`).slice(0, 200), 'urg-' + t.id);
       }
     }
     for (const { t, key } of alerts) await t.ref.update({ urgNotified: key });
     await p.ref.update({ lastAssess: today });
   }
 
-  // 3a) Neue Kommentare den anderen Mitgliedern melden
+  // 3a) Neue Kommentare den anderen Mitgliedern melden (nur wer den Bereich sehen darf)
   try {
     const neu = (await p.ref.collection('comments').where('notified', '==', false).get()).docs;
     const names = p.get('memberNames') || {};
@@ -151,8 +174,9 @@ for (const p of projects.docs) {
       const c = d.data();
       if (c.at && c.at > now - 864e5) {
         const task = (await p.ref.collection('tasks').doc(String(c.taskId || '-')).get()).data();
-        const who = names[c.by] || c.byName || 'Jemand';
-        sent += await send(all.filter((x) => x.uid !== c.by), `💬 ${who} zu „${task?.title || 'einer Aufgabe'}“`.slice(0, 120), String(c.text || '').slice(0, 200), 'c-' + d.id);
+        const who = names[c.by] || c.byName || 'MindSpace';
+        const area = c.areaId || task?.areaId;
+        sent += await send(forArea(area).filter((x) => x.uid !== c.by), (l) => `💬 ${who} ${T(l, 'zu', 'on')} „${task?.title || T(l, 'einer Aufgabe', 'a task')}“`.slice(0, 120), String(c.text || '').slice(0, 200), 'c-' + d.id);
       }
       await d.ref.update({ notified: true });
     }
@@ -168,22 +192,25 @@ for (const p of projects.docs) {
         const days = Math.round((new Date(`${c.due}T12:00:00`) - todayDate) / 864e5);
         const stage = days <= 0 ? 'due' : days <= 3 ? 'soon' : null;
         if (!stage || days < -7 || c.payNotified === `${stage}|${c.due}`) continue;
-        const amount = c.amount != null ? Number(c.amount).toLocaleString('de-DE', { style: 'currency', currency: 'EUR' }) : '';
-        const head = stage === 'soon' ? 'Zahlung bald fällig' : days < 0 ? 'Zahlung überfällig' : 'Zahlung heute fällig';
-        sent += await send(all, `💶 ${head}: ${c.title}`.slice(0, 120), [amount, `fällig ${fmtDue(c)}`].filter(Boolean).join(' · '), 'pay-' + d.id);
+        const head = (l) => (stage === 'soon' ? T(l, 'Zahlung bald fällig', 'Payment due soon') : days < 0 ? T(l, 'Zahlung überfällig', 'Payment overdue') : T(l, 'Zahlung heute fällig', 'Payment due today'));
+        const amount = (l) => (c.amount != null ? Number(c.amount).toLocaleString(l === 'en' ? 'en-GB' : 'de-DE', { style: 'currency', currency: 'EUR' }) : '');
+        sent += await send(forArea(c.areaId), (l) => `💶 ${head(l)}: ${c.title}`.slice(0, 120), (l) => [amount(l), `${T(l, 'fällig', 'due')} ${fmtDue(c, l)}`].filter(Boolean).join(' · '), 'pay-' + d.id);
         await d.ref.update({ payNotified: `${stage}|${c.due}` });
       }
     } catch (e) { console.warn('Zahlungen:', e.message); }
   }
 
-  // 3) Morgen-Übersicht (einmal pro Tag ab 7 Uhr)
+  // 3) Morgen-Übersicht (einmal pro Tag ab 7 Uhr) – jede Person nur mit ihren Bereichen
   if (hour >= DIGEST_HOUR && p.get('lastDigest') !== today) {
-    const due = open.map((d) => d.data()).filter((t) => t.due && t.due <= today).sort((a, b) => a.due.localeCompare(b.due));
-    if (due.length) {
+    const dueAll = open.map((d) => d.data()).filter((t) => t.due && t.due <= today).sort((a, b) => a.due.localeCompare(b.due));
+    for (const uid of members) {
+      const toks = all.filter((x) => x.uid === uid);
+      const due = dueAll.filter((t) => can(uid, t.areaId));
+      if (!due.length || !toks.length) continue;
       const late = due.filter((t) => t.due < today).length;
-      const head = `Heute: ${due.length} ${due.length === 1 ? 'Aufgabe' : 'Aufgaben'}${late ? ` (${late} überfällig)` : ''}`;
-      const body = due.slice(0, 3).map((t) => `• ${t.title}`).join('\n') + (due.length > 3 ? `\n… und ${due.length - 3} weitere` : '');
-      sent += await send(all, head, body, 'digest');
+      sent += await send(toks,
+        (l) => T(l, `Heute: ${due.length} ${due.length === 1 ? 'Aufgabe' : 'Aufgaben'}${late ? ` (${late} überfällig)` : ''}`, `Today: ${due.length} ${due.length === 1 ? 'task' : 'tasks'}${late ? ` (${late} overdue)` : ''}`),
+        (l) => due.slice(0, 3).map((t) => `• ${t.title}`).join('\n') + (due.length > 3 ? T(l, `\n… und ${due.length - 3} weitere`, `\n… and ${due.length - 3} more`) : ''), 'digest');
     }
     await p.ref.update({ lastDigest: today });
   }
