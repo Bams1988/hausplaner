@@ -1,5 +1,5 @@
 // Service Worker: Offline-Start und Push-Nachrichten.
-const VERSION = 'mindora-v8';
+const VERSION = 'mindora-v9';
 const SHELL = ['./', 'index.html', 'styles.css', 'app.js', 'store.js', 'parser.js', 'ai.js', 'config.js', 'manifest.webmanifest', 'icons/icon-180.png', 'icons/icon-192.png', 'icons/icon-512.png'];
 
 importScripts('config.js');

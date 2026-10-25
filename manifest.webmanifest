@@ -1,4 +1,5 @@
 {
+  "id": "./",
   "name": "Mindora",
   "short_name": "Mindora",
   "description": "Dein persönlicher Assistent: Aufgaben, Fristen, Plan und E-Mails – leicht geplant.",
@@ -6,12 +7,19 @@
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
-  "orientation": "portrait",
   "background_color": "#F3F7F4",
   "theme_color": "#F3F7F4",
+  "categories": ["productivity", "lifestyle"],
+  "launch_handler": { "client_mode": "focus-existing" },
   "icons": [
     { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
     { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
     { "src": "icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ],
+  "shortcuts": [
+    { "name": "Neue Aufgabe", "url": "./?neu=1", "icons": [{ "src": "icons/icon-192.png", "sizes": "192x192" }] },
+    { "name": "Planer", "url": "./?ansicht=plan", "icons": [{ "src": "icons/icon-192.png", "sizes": "192x192" }] },
+    { "name": "Eingang", "url": "./?ansicht=inbox", "icons": [{ "src": "icons/icon-192.png", "sizes": "192x192" }] },
+    { "name": "Kosten", "url": "./?ansicht=costs", "icons": [{ "src": "icons/icon-192.png", "sizes": "192x192" }] }
   ]
 }

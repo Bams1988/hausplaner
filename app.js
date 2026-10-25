@@ -4,7 +4,7 @@ import {
   extractFromText, draftEmail, assessTasks, testConnection, urgencyOf, aiKeyOf,
   STATUS, MODELS, DEFAULT_MODEL, DEFAULT_AREAS, HOUSE_PHASES,
 } from './ai.js';
-const APP_VERSION = '8';
+const APP_VERSION = '9';
 
 // ================================================================== Zustand
 const REMINDERS = [
@@ -33,6 +33,10 @@ const dayDiff = (s, from = todayISO()) => Math.round((parseISO(s) - parseISO(fro
 const fmtDate = (s, o = { weekday: 'short', day: 'numeric', month: 'short' }) => parseISO(s).toLocaleDateString('de-DE', o).replace(/\.$/, '');
 const isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 const standalone = window.matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+const isDesktop = () => window.matchMedia('(min-width: 900px) and (hover: hover)').matches;
+let installPrompt = null;
+window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); installPrompt = e; render(); });
+window.addEventListener('appinstalled', () => { installPrompt = null; toast('Mindora ist jetzt als Programm installiert ✨'); render(); });
 const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 const members = () => S.project?.members || [];
 const nameOf = (uid) => (S.project?.memberNames || {})[uid] || 'Unbekannt';
@@ -164,7 +168,7 @@ app.addEventListener('focusout', () => setTimeout(() => { if (S.pendingRender &&
 function tabbar() {
   const newN = S.tasks.filter((t) => t.isNew && !t.done).length;
   const tab = (id, label, icon, dot) => `<button data-action="tab" data-tab="${id}" ${S.view === id || (id === 'more' && ['contacts', 'costs', 'docs'].includes(S.view)) ? 'aria-current="page"' : ''}>${icon}${dot ? `<b class="tab-dot">${dot}</b>` : ''}<span>${label}</span></button>`;
-  return `<nav class="tabbar">${tab('home', 'Übersicht', I.today)}${tab('tasks', 'Aufgaben', I.list)}${tab('plan', 'Plan', I.plan)}${tab('inbox', 'Eingang', I.inbox, newN)}${tab('more', 'Mehr', I.more)}</nav>`;
+  return `<nav class="tabbar"><div class="side-brand" aria-hidden="true"><img src="icons/icon-192.png" alt="">Mindora</div>${tab('home', 'Übersicht', I.today)}${tab('tasks', 'Aufgaben', I.list)}${tab('plan', 'Plan', I.plan)}${tab('inbox', 'Eingang', I.inbox, newN)}${tab('more', 'Mehr', I.more)}<button class="side-new" data-action="new-task">${I.plus}<span>Neue Aufgabe</span><kbd>N</kbd></button></nav>`;
 }
 
 // ================================================================== Kleine Grafiken
@@ -236,23 +240,29 @@ function viewHome() {
       </button>`).join('')}
       <button class="proj-card add" data-action="area-new"><span class="proj-plus">+</span><strong>Neues Projekt</strong><span>z. B. Urlaub, Auto</span></button></div>` : '';
 
-  return `<main class="view">
+  if (!standalone && !isIOS && window.matchMedia('(hover: hover)').matches && !localStorage.getItem('hp-hide-desktop')) {
+    banner += `<div class="note-card install-card"><p><strong>Mindora als Programm nutzen:</strong> eigenes Fenster, eigenes Symbol in der Taskleiste, startet wie jede App. ${installPrompt ? '' : esc(installHow())}</p>
+      ${installPrompt ? '<button class="btn small" data-action="install">Jetzt installieren</button>' : ''}<button class="x" data-action="hide-banner" data-key="hp-hide-desktop" aria-label="Hinweis schließen">×</button></div>`;
+  }
+  return `<main class="view home-view">
     <header class="hello"><p class="hello-date">${esc(new Date().toLocaleDateString('de-DE', { weekday: 'long', day: 'numeric', month: 'long' }))}</p><h1>${esc(greeting())}</h1></header>
     ${quickAdd()}
     ${banner}${gestureTip}
     ${newOnes.length ? `<button class="inbox-hint" data-action="goto-new">${I.inbox}<span><strong>${newOnes.length} ${newOnes.length === 1 ? 'neue Aufgabe' : 'neue Aufgaben'}</strong> aus E-Mails – kurz prüfen</span>${I.chevron}</button>` : ''}
+    <div class="home-grid"><div class="hg-a">
     <div class="tiles" role="tablist" aria-label="Filter">${tiles}</div>
     <section class="card">
       <div class="card-head"><h2>${esc(cur.label === '7 Tage' ? 'Die nächsten 7 Tage' : cur.label)}</h2>
         ${S.homeSet === 'nachholen' && list.length ? `<button class="btn small secondary" data-action="all-today">Alle auf heute</button>` : ''}</div>
       ${listHtml}
-    </section>
+    </section></div><div class="hg-b">
     <section class="card">
       <div class="card-head"><h2>Wochenblick</h2>
         <div class="week-nav"><button class="icon-sm" data-action="week" data-d="-1" aria-label="7 Tage zurück">‹</button><button class="icon-sm" data-action="week" data-d="1" aria-label="7 Tage weiter">›</button></div></div>
       ${weekChart()}
     </section>
     ${homeCosts()}
+    </div></div>
     ${projHtml ? `<section class="card plain"><div class="card-head"><h2>Projekte</h2><button class="link" data-action="plan-mode" data-m="projekte">Alle</button></div>${projHtml}</section>` : ''}
     ${!S.tasks.length ? `<div class="btn-row" style="margin-top:16px"><button class="btn secondary" data-action="template">Checkliste Hausbau laden</button></div>` : ''}
   </main>`;
@@ -513,7 +523,8 @@ function planMonth() {
     const late = openI.some((t) => iso < today);
     const dots = openI.slice(0, 4).map((t) => `<i style="background:${esc(areaOf(t).color)}"></i>`).join('') + (openI.length > 4 ? '<i class="more"></i>' : '');
     cells.push(`<button class="mc ${iso === today ? 'is-today' : ''} ${iso === S.monthPick ? 'is-sel' : ''} ${late ? 'is-late' : ''} ${items.length && !openI.length ? 'all-done' : ''}" data-action="month-day" data-d="${iso}" data-drop-day="${iso}" aria-label="${esc(fmtDate(iso, { weekday: 'long', day: 'numeric', month: 'long' }))}, ${openI.length} offen">
-      <b>${d}</b><em>${dots}</em></button>`);
+      <b>${d}</b><em>${dots}</em>
+      <span class="mc-t">${openI.sort(byDue).slice(0, 3).map((t) => `<i style="--area:${esc(areaOf(t).color)}">${esc(t.title)}</i>`).join('')}${openI.length > 3 ? `<i class="more">+${openI.length - 3} weitere</i>` : ''}</span></button>`);
   }
   const sel = S.tasks.filter((t) => t.due === S.monthPick).sort((a, b) => (a.done - b.done) || byDue(a, b));
   const monthOpen = S.tasks.filter((t) => !t.done && t.due && t.due.startsWith(`${y}-${String(m + 1).padStart(2, '0')}`)).length;
@@ -831,9 +842,17 @@ function viewContacts() {
 function pushState() {
   if (store.mode !== 'cloud') return { on: false, text: 'Braucht die Cloud-Einrichtung' };
   if (typeof Notification === 'undefined') return { on: false, text: isIOS && !standalone ? 'Erst zum Home-Bildschirm hinzufügen' : 'Auf diesem Gerät nicht verfügbar' };
-  if (Notification.permission === 'denied') return { on: false, text: 'Abgelehnt – in den iPhone-Einstellungen erlauben' };
+  if (Notification.permission === 'denied') return { on: false, text: isIOS ? 'Abgelehnt – in den iPhone-Einstellungen erlauben' : 'Abgelehnt – im Browser beim Schloss-Symbol neben der Adresse erlauben' };
   if (Notification.permission === 'granted' && localStorage.getItem('hausplaner-push-token')) return { on: true, text: 'Aktiv auf diesem Gerät' };
   return { on: false, text: 'Noch nicht aktiviert' };
+}
+function installHow() {
+  const ua = navigator.userAgent;
+  if (/Edg\//.test(ua)) return 'In Edge: oben rechts auf „…“ → „Apps“ → „Diese Website als App installieren“.';
+  if (/Chrome\//.test(ua)) return 'In Chrome: rechts in der Adresszeile auf das Symbol „Installieren“ klicken (Bildschirm mit Pfeil) oder Menü ⋮ → „Streamen, speichern und teilen“ → „Seite als App installieren“.';
+  if (/Safari\//.test(ua) && /Macintosh/.test(ua)) return 'In Safari auf dem Mac: Menü „Ablage“ → „Zum Dock hinzufügen“.';
+  if (/Firefox\//.test(ua)) return 'Firefox kann keine Web-Apps installieren – öffne Mindora dafür in Edge oder Chrome.';
+  return 'Öffne Mindora in Edge oder Chrome und wähle dort „App installieren“.';
 }
 function viewMore() {
   const cloud = store.mode === 'cloud';
@@ -888,6 +907,10 @@ function viewMore() {
 
     <h2 class="section-title">App</h2>
     <div class="settings">
+      ${standalone ? '' : installPrompt
+        ? `<button class="setting" data-action="install"><span class="area-dot" style="--area:var(--brand)">💻</span><span class="grow">Als Programm installieren<small>Eigenes Fenster und Symbol – auf diesem Computer oder Gerät</small></span><span class="end">Installieren</span></button>`
+        : !isIOS ? `<div class="setting"><span class="area-dot" style="--area:var(--brand)">💻</span><span class="grow">Als Programm installieren<small>${esc(installHow())}</small></span></div>` : ''}
+      ${isDesktop() ? `<div class="setting"><span class="area-dot" style="--area:#8E7CE0">⌨️</span><span class="grow">Tastenkürzel<small>N = neue Aufgabe · / = Schnelleingabe · 1–5 = Bereiche wechseln · Esc = schließen</small></span></div>` : ''}
       <button class="setting" data-action="hard-reload"><span class="grow">Neueste Version laden<small>Version ${APP_VERSION} – Speicher leeren und neu starten</small></span></button>
     </div>
 
@@ -2019,13 +2042,15 @@ function attachBox(link, pending = []) {
 function wireAttach(sheet, link, pending) {
   const wrap = sheet.querySelector('[data-att-wrap]'); if (!wrap) return;
   const redraw = () => { wrap.innerHTML = attachBox(link(), pending); };
-  wrap.addEventListener('change', async (e) => {
-    if (!e.target.matches('[data-attach]') || !e.target.files.length) return;
-    const files = [...e.target.files];
+  wrap.addFiles = async (files) => {
     const l = link();
     if (l.taskId || l.costId) await uploadFiles(files, l);
     else for (const f of files) pending.push({ file: f, url: /^image\/(jpeg|png|webp|gif)/.test(f.type) ? URL.createObjectURL(f) : null });
     redraw();
+  };
+  wrap.addEventListener('change', (e) => {
+    if (!e.target.matches('[data-attach]') || !e.target.files.length) return;
+    wrap.addFiles([...e.target.files]);
   });
   wrap.addEventListener('click', (e) => {
     const x = e.target.closest('[data-unpend]');
@@ -2326,7 +2351,7 @@ app.addEventListener('click', async (e) => {
       toast('Push-Nachrichten werden aktiviert …');
       try {
         const r = await store.enablePush(permP);
-        const msg = { unsupported: 'Dieses Gerät unterstützt keine Push-Nachrichten im Browser (iPhone: ab iOS 16.4, vom Home-Bildschirm geöffnet).', denied: 'Nicht erlaubt. Ändern unter iPhone-Einstellungen → Mitteilungen → Mindora.', dismissed: 'Die Abfrage wurde geschlossen. Tippe noch einmal auf Aktivieren und wähle „Erlauben“.', novapid: 'In config.js fehlt der vapidKey (Schritt 2.6).', notoken: 'Push-Anmeldung fehlgeschlagen. Versuch es gleich noch einmal.' };
+        const msg = { unsupported: 'Dieses Gerät unterstützt keine Push-Nachrichten im Browser (iPhone: ab iOS 16.4, vom Home-Bildschirm geöffnet).', denied: isIOS ? 'Nicht erlaubt. Ändern unter iPhone-Einstellungen → Mitteilungen → Mindora.' : 'Nicht erlaubt. Klicke links neben der Adresse auf das Schloss-Symbol und erlaube Benachrichtigungen.', dismissed: 'Die Abfrage wurde geschlossen. Tippe noch einmal auf Aktivieren und wähle „Erlauben“.', novapid: 'In config.js fehlt der vapidKey (Schritt 2.6).', notoken: 'Push-Anmeldung fehlgeschlagen. Versuch es gleich noch einmal.' };
         toast(r.ok ? 'Push-Nachrichten sind aktiv 🔔' : msg[r.reason]);
       } catch (err) { toast(fail(err)); }
       render(); break;
@@ -2335,6 +2360,7 @@ app.addEventListener('click', async (e) => {
     case 'export': exportData(); break;
     case 'logout': if (confirm('Abmelden?')) store.signOut(); break;
     case 'hard-reload': hardReload(); break;
+    case 'install': if (installPrompt) { installPrompt.prompt(); const r = await installPrompt.userChoice.catch(() => null); if (r?.outcome === 'accepted') installPrompt = null; render(); } break;
     case 'auth-tab': S.authTab = el.dataset.tab; S.authError = ''; render(); break;
     case 'reset-pw': {
       const email = app.querySelector('input[name="email"]')?.value || prompt('Deine E-Mail-Adresse');
@@ -2422,6 +2448,39 @@ app.addEventListener('submit', async (e) => {
   } catch (err) { S.authError = fail(err); btn.disabled = false; render(); }
 });
 
+// ================================================================== Computer: Tastenkürzel, Dateien hineinziehen
+document.addEventListener('keydown', (e) => {
+  if (e.metaKey || e.ctrlKey || e.altKey || e.isComposing) return;
+  const t = e.target;
+  if (t && (/^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName) || t.isContentEditable)) return;
+  if (sheetRoot.innerHTML || document.querySelector('.viewer')) return;
+  if (store.mode === 'cloud' && (!S.me || S.projectState !== 'ready')) return;
+  const tabs = ['home', 'tasks', 'plan', 'inbox', 'more'];
+  if (e.key === 'n' || e.key === 'N') { e.preventDefault(); if (S.view === 'costs') costSheet(null); else taskSheet(null); }
+  else if (e.key === '/') {
+    e.preventDefault();
+    if (S.view !== 'home') { S.view = 'home'; render(); window.scrollTo(0, 0); }
+    app.querySelector('[data-input="quick"]')?.focus();
+  } else if (/^[1-5]$/.test(e.key)) { S.view = tabs[+e.key - 1]; render(); window.scrollTo(0, 0); }
+});
+const hasFiles = (e) => [...(e.dataTransfer?.types || [])].includes('Files');
+document.addEventListener('dragover', (e) => {
+  if (!hasFiles(e)) return;
+  const zone = sheetRoot.querySelector('[data-att-wrap]') || (S.view === 'docs' ? app : null);
+  if (!zone) return;
+  e.preventDefault(); e.dataTransfer.dropEffect = 'copy';
+  document.body.classList.add('file-over');
+});
+document.addEventListener('dragleave', (e) => { if (!e.relatedTarget) document.body.classList.remove('file-over'); });
+document.addEventListener('drop', (e) => {
+  document.body.classList.remove('file-over');
+  if (!hasFiles(e)) return;
+  const files = [...e.dataTransfer.files];
+  const wrap = sheetRoot.querySelector('[data-att-wrap]');
+  if (wrap?.addFiles) { e.preventDefault(); wrap.addFiles(files); }
+  else if (S.view === 'docs') { e.preventDefault(); uploadFiles(files, { areaId: S.docsArea !== 'all' ? S.docsArea : null }); }
+});
+
 // ================================================================== Start
 store.init({
   onAuth(me) {
@@ -2431,7 +2490,7 @@ store.init({
     render();
   },
   onProject(p) { S.project = p; S.projectState = p ? 'ready' : 'none'; render(); },
-  onTasks(list) { S.tasks = list; render(); },
+  onTasks(list) { S.tasks = list; render(); if (S.openNewOnReady) { S.openNewOnReady = false; setTimeout(() => taskSheet(null), 300); } },
   onInfos(list) { S.infos = list; render(); },
   onContacts(list) { S.contacts = list; render(); },
   onAreas(list) { S.areas = list; render(); },
@@ -2443,5 +2502,13 @@ store.init({
   onPush(n) { toast(`${n.title || 'Erinnerung'}${n.body ? ': ' + n.body : ''}`); },
 }).catch((e) => { app.innerHTML = `<div class="boot">Start fehlgeschlagen: ${esc(fail(e))}<br><br>Prüfe die Internetverbindung und config.js.</div>`; });
 
+// Verknüpfungen aus dem Programm-Symbol (Rechtsklick in der Taskleiste): ?ansicht=plan, ?neu=1
+{
+  const q = new URLSearchParams(location.search);
+  const v = q.get('ansicht');
+  if (v && ['home', 'tasks', 'plan', 'inbox', 'more', 'costs', 'docs'].includes(v)) S.view = v;
+  if (q.get('neu')) S.openNewOnReady = true;
+  if (v || q.get('neu')) history.replaceState(null, '', location.pathname);
+}
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch((e) => console.warn('Service Worker:', e));
 document.addEventListener('visibilitychange', () => { if (!document.hidden) render(); });

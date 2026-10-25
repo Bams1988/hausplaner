@@ -188,6 +188,32 @@ Falls du vorher `INBOX_USER` und `INBOX_PASSWORD` bei GitHub eingetragen hast: u
 
 ---
 
+## Mindora am Computer
+
+Mindora läuft auch auf Windows-PC und Mac als eigenes Programm – mit eigenem Fenster und Symbol in Taskleiste oder Dock. Es ist dieselbe App wie auf dem iPhone, alle Daten sind sofort überall gleich. Eine Installation mit Admin-Rechten ist nicht nötig.
+
+**Windows mit Microsoft Edge (empfohlen)**
+1. In Edge deine Mindora-Adresse öffnen (z. B. `https://bams1988.github.io/hausplaner/`) und anmelden.
+2. Oben rechts auf **…** → **Apps** → **Diese Website als App installieren** → **Installieren**.
+3. Im Fenster, das danach kommt, **An Taskleiste anheften** und **Desktopverknüpfung erstellen** anhaken.
+
+**Windows oder Mac mit Google Chrome**
+In der Adresszeile rechts auf das Symbol **Installieren** klicken (Bildschirm mit Pfeil) – oder Menü **⋮** → **Streamen, speichern und teilen** → **Seite als App installieren**.
+
+**Mac mit Safari**
+Menü **Ablage** → **Zum Dock hinzufügen**.
+
+Alternativ in Mindora unter **Mehr → App → Als Programm installieren** (Edge und Chrome).
+
+**Am Computer gibt es zusätzlich:**
+- Seitenleiste links statt Leiste unten, breite Übersicht in zwei Spalten, Monatskalender mit Aufgabentiteln.
+- Tastenkürzel: **N** = neue Aufgabe, **/** = Schnelleingabe, **1–5** = Übersicht, Aufgaben, Plan, Eingang, Mehr, **Esc** = schließen.
+- Dateien (PDF, Fotos) einfach mit der Maus in eine geöffnete Aufgabe, Zahlung oder in „Fotos & Dokumente“ ziehen.
+- Rechtsklick auf das Mindora-Symbol in der Taskleiste: **Neue Aufgabe**, **Planer**, **Eingang**, **Kosten**.
+- Push-Nachrichten: unter **Mehr → Push-Nachrichten → Aktivieren** – auf jedem Computer einmal.
+
+**Hinweis Firmen-PC:** Manche Firmen sperren das Installieren von Web-Apps oder Benachrichtigungen. Dann Mindora einfach als Lesezeichen im Browser nutzen – funktioniert genauso, nur im Browser-Tab.
+
 ## So benutzt du Mindora
 
 **Übersicht:** Oben die Schnelleingabe („Bank anrufen morgen 10 Uhr #hausbau“, „Müll rausbringen jeden Dienstag“). Darunter vier Kacheln (Heute, Überfällig, Jetzt starten, 7 Tage) – antippen zeigt die passenden Aufgaben. Dazu Wochenblick, Kosten und Projekte.
