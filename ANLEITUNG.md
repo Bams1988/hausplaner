@@ -14,6 +14,13 @@ Die Einrichtung hat fünf Stufen. Schon nach Stufe 1 kannst du die App benutzen.
 
 > **Du hattest schon den Hausplaner eingerichtet?** Dann lies zuerst den Abschnitt **„Umstieg vom Hausplaner“** ganz unten. Stufe 1–4 musst du nicht wiederholen.
 
+> **Update auf Version 13 (Zuständigkeit & Kalender)** – wenn MindSpace bei dir schon läuft:
+> 1. **GitHub → Add file → Upload files:** `app.js`, `store.js`, `i18n.js`, `styles.css`, `sw.js`, `firestore.rules`, `ANLEITUNG.md` an die gewohnte Stelle und `send-reminders.mjs` in den Ordner `scripts`. `config.js` nicht anfassen. → **Commit changes**.
+> 2. **Firebase → Firestore Database → Regeln:** alles löschen, Inhalt der neuen `firestore.rules` einfügen → **Veröffentlichen**. (Ohne diesen Schritt kann niemand den Kalender abonnieren.)
+> 3. **Postbote:** in script.google.com den gesamten Code löschen, Inhalt von `MindSpace-Postbote.gs` einfügen, speichern. Danach einmal **Bereitstellen → Neue Bereitstellung** wie in Stufe 6 beschrieben.
+> 4. Auf jedem Gerät **Mehr → App → Neueste Version laden** (bis dort **Version 13** steht).
+> 5. In der App **Mehr → Kalender → Einrichten** und die Web-App-Adresse einfügen. Danach wird jedes Mitglied gefragt.
+
 > **Update auf Version 10 (MindSpace)** – wenn MindSpace/Mindora bei dir schon läuft, reichen diese Schritte:
 > 1. **GitHub → Add file → Upload files:** `app.js`, `store.js`, `ai.js`, `i18n.js` (neu), `styles.css`, `sw.js`, `index.html`, `manifest.webmanifest`, `firestore.rules`, `ANLEITUNG.md` an die gewohnte Stelle, dazu den Ordner-Inhalt `icons/` (alle 5 Dateien, auch `logo.svg`) in den Ordner `icons` und `send-reminders.mjs` in den Ordner `scripts`. `config.js` nicht anfassen. → **Commit changes**.
 > 2. **Firebase → Firestore Database → Regeln:** alles löschen, Inhalt der neuen `firestore.rules` einfügen → **Veröffentlichen**. (Wichtig für das Einladen zu einzelnen Projekten.)
@@ -194,6 +201,33 @@ Falls du vorher `INBOX_USER` und `INBOX_PASSWORD` bei GitHub eingetragen hast: u
 
 ---
 
+## Stufe 6 – Aufgaben im Handy-Kalender (optional)
+
+Jedes Mitglied kann seine Aufgaben als eigenen Kalender **„MindSpace“** im iPhone-, Android-, Outlook- oder Google-Kalender sehen. Nichts wird automatisch eingetragen: Nach der Einrichtung fragt MindSpace **jedes Mitglied einzeln** (in der App und per Push), ob es das möchte – „alle Aufgaben“, „nur meine Aufgaben“ oder „nein“. Neue und geänderte Aufgaben kommen danach von selbst im Kalender an. Den Kalender liefert der Postbote aus Stufe 5.
+
+### 6.1 Postbote als Web-App bereitstellen
+1. Am Computer **script.google.com** öffnen (mit dem MindSpace-Gmail-Konto) → Projekt **MindSpace-Postbote**. Der Code muss Version 13 sein (siehe Update-Kasten oben).
+2. Oben rechts **Bereitstellen → Neue Bereitstellung**. Beim Zahnrad neben „Typ auswählen“ **Web-App** wählen.
+3. Beschreibung: `Kalender` · Ausführen als: **Ich** · Wer hat Zugriff: **Jeder** → **Bereitstellen**. Fragt Google nach Berechtigungen → **Zugriff erlauben**.
+4. Die **Web-App-URL** kopieren (beginnt mit `https://script.google.com/macros/s/` und endet auf `/exec`).
+
+> „Jeder“ heißt nur: Kalender-Apps dürfen den Link ohne Google-Anmeldung abrufen. Ohne den persönlichen geheimen Schlüssel eines Mitglieds liefert die Adresse keine einzige Aufgabe. Ein Mitglied mit eingeschränktem Zugriff sieht auch im Kalender nur seine freigegebenen Projekte.
+
+### 6.2 In MindSpace eintragen
+**Mehr → Kalender → Einrichten** → URL einfügen → **Prüfen & speichern**. Ab jetzt wird jedes Mitglied beim nächsten Öffnen gefragt.
+
+### 6.3 Was jedes Mitglied tut
+1. Bei der Frage „Aufgaben in deinen Kalender?“ **Ja, alle Aufgaben** oder **Ja, nur meine Aufgaben** wählen.
+2. **Jetzt abonnieren** tippen → das iPhone fragt „Kalenderabonnement hinzufügen?“ → **Abonnieren** → **Hinzufügen**.
+3. Für schnelle Aktualisierung: iPhone-Einstellungen → (Apps →) Kalender → Accounts → **Datenabgleich** → „Alle 15 Minuten“.
+4. Am Computer (Outlook, Google Kalender): **Mehr → Kalender → Adresse kopieren** und dort „Kalender aus dem Internet abonnieren“ bzw. „Per URL hinzufügen“.
+
+Ändern oder beenden: **Mehr → Kalender**. Beim Beenden wird der Link sofort ungültig; den Kalender „MindSpace“ dann noch im Handy löschen (Kalender-App → Kalender → ⓘ → Kalender löschen).
+
+> **Hinweis:** Das Abo ist eine Ansicht – Termine, die du im Handy-Kalender verschiebst, ändern die Aufgabe in MindSpace nicht. Erledigte Aufgaben erscheinen mit ✅, überfällige mit 🔴. Ohne Abo gibt es in jeder Aufgabe den Knopf **📅 In Kalender** für einen einmaligen Eintrag (am besten am Computer).
+
+---
+
 ## MindSpace am Computer
 
 MindSpace läuft auch auf Windows-PC und Mac als eigenes Programm – mit eigenem Fenster und Symbol in Taskleiste oder Dock. Es ist dieselbe App wie auf dem iPhone, alle Daten sind sofort überall gleich. Eine Installation mit Admin-Rechten ist nicht nötig.
@@ -272,6 +306,9 @@ Du prüfst alles und tippst auf **Übernehmen**. Ohne KI-Assistent arbeitet die 
 **Sicherung:** Unter **Mehr → Sicherung speichern** alle paar Wochen eine Datei in iCloud ablegen.
 
 ---
+
+### Zuständigkeit übergeben
+In einer Aufgabe unter **Weitere Angaben → Zuständig** eine Person wählen. Sie bekommt sofort eine Push-Nachricht („📌 Neue Aufgabe für dich“) und sieht die Aufgabe auf der Übersicht unter **Für dich**. Mit **Übernehmen** bestätigt sie (alle sehen im Verlauf „👍 Übernommen“), mit **Zurückgeben** geht die Aufgabe mit kurzem Grund an dich zurück. Solange nicht bestätigt ist, hat das Namenskürzel in der Liste einen orangen Ring.
 
 ## Warum keine direkte Verbindung zur Allkauf-App?
 

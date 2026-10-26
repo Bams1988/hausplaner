@@ -17,6 +17,13 @@ service cloud.firestore {
       allow read, write: if signedIn() && request.auth.uid == uid;
     }
 
+    // Kalender-Abo: je Mitglied ein geheimer Schlüssel; nur der Besitzer darf ihn anlegen, ändern oder löschen
+    match /calFeeds/{token} {
+      allow get, delete: if signedIn() && resource.data.uid == request.auth.uid;
+      allow create: if signedIn() && request.resource.data.uid == request.auth.uid && isMember(request.resource.data.pid);
+      allow update: if signedIn() && resource.data.uid == request.auth.uid && request.resource.data.uid == request.auth.uid && isMember(request.resource.data.pid);
+    }
+
     // Einladungscodes: nur einzeln abrufbar (kein Auflisten), 7 Tage gültig
     match /invites/{code} {
       allow get: if signedIn();

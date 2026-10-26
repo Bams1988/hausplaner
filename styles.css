@@ -752,3 +752,25 @@ body.is-locked { overflow: hidden; }
 .pin-input { font-size: 30px; letter-spacing: .5em; text-align: center; width: 100%; border: 1.5px solid var(--line); background: var(--surface); border-radius: 14px; padding: 14px; margin-bottom: 12px; }
 .lock-box .hint { margin: 10px 0 0; }
 .help-steps { margin: 4px 0 14px; padding-left: 20px; display: grid; gap: 8px; font-size: 15px; }
+
+/* ---------- v13: Zuständigkeit & Kalender ---------- */
+.who.wait { background: transparent; box-shadow: inset 0 0 0 2px var(--st-start, #EE8A2A); color: var(--ink); }
+.assign-card { border: 1.5px solid color-mix(in srgb, var(--brand) 35%, transparent); }
+.assign-row { display: flex; align-items: center; gap: 10px; padding: 10px 10px 10px 14px; border-radius: var(--r-md); background: var(--surface-2); box-shadow: inset 4px 0 0 var(--st, var(--brand)); margin-top: 8px; }
+.assign-open { text-align: left; background: none; border: 0; padding: 0; color: inherit; font: inherit; cursor: pointer; min-width: 0; }
+.assign-open strong { display: block; font-weight: 600; overflow: hidden; text-overflow: ellipsis; }
+.assign-open small { display: block; color: var(--ink-2); font-size: 12.5px; margin-top: 2px; }
+.assign-note .btn-row { margin-top: 10px; }
+.assign-wait { margin: -4px 0 12px; }
+.cal-hero { display: grid; place-items: center; margin: 4px 0 14px; }
+.cal-icon { width: 84px; height: 84px; border-radius: 20px; background: var(--surface); box-shadow: var(--shadow); overflow: hidden; display: grid; grid-template-rows: 26px 1fr; text-align: center; }
+.cal-icon span { background: #E2574C; color: #fff; font-size: 13px; font-weight: 700; line-height: 26px; text-transform: uppercase; letter-spacing: .04em; }
+.cal-icon b { font-size: 38px; font-weight: 700; line-height: 58px; color: var(--ink); }
+.cal-opts { display: grid; gap: 10px; margin-top: 14px; }
+.cal-opt { text-align: left; padding: 14px 16px; border-radius: var(--r-md); border: 1.5px solid var(--line); background: var(--surface); color: var(--ink); font: inherit; cursor: pointer; }
+.cal-opt strong { display: block; font-weight: 650; font-size: 16px; }
+.cal-opt small { display: block; color: var(--ink-2); font-size: 13px; margin-top: 2px; }
+.cal-opt:first-child { border-color: var(--brand); background: var(--brand-soft); }
+.cal-opt.on { box-shadow: 0 0 0 2px var(--brand) inset; }
+.cal-opt.ghosty { border-style: dashed; }
+.cal-opt:disabled { opacity: .55; }

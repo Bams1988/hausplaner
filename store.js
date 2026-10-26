@@ -134,6 +134,8 @@ class LocalStore {
   async getFileBlob(meta) { const b = await idbDo('readonly', (st) => st.get(meta.id)); if (!b) throw new Error('Datei nicht gefunden.'); return b; }
   async deleteFile(meta) { await idbDo('readwrite', (st) => st.delete(meta.id)).catch(() => {}); this.data.files = this.data.files.filter((f) => f.id !== meta.id); this.save(); }
   async setUserPref() {}
+  async setCalFeed() {}
+  async deleteCalFeed() {}
   exportLocal() { return this.data; }
 }
 
@@ -168,6 +170,7 @@ class CloudStore {
     this.h.onAuth(this.me);
     this.unsubs.push(onSnapshot(uref, (s) => {
       const d = s.data() || {};
+      this.h.onUserDoc?.(d);
       if (d.projectId !== this.projectId) this.watchProject(d.projectId || null);
     }, (e) => this.h.onError(e)));
     if (!udata.projectId) this.h.onProject(null);
@@ -239,6 +242,9 @@ class CloudStore {
     const { doc, updateDoc, arrayRemove, deleteField } = this.F;
     await updateDoc(doc(this.db, 'projects', this.projectId), { members: arrayRemove(uid), [`memberNames.${uid}`]: deleteField(), [`access.${uid}`]: deleteField() });
   }
+  // Kalender-Abo: geheimer Schlüssel je Mitglied (nur der Postbote liest ihn mit Dienstkonto)
+  setCalFeed(token, scope) { return this.F.setDoc(this.F.doc(this.db, 'calFeeds', token), { uid: this.me.uid, pid: this.projectId, scope, updatedAt: Date.now() }); }
+  deleteCalFeed(token) { return this.F.deleteDoc(this.F.doc(this.db, 'calFeeds', token)); }
   setUserPref(prefs) { return this.me ? this.F.setDoc(this.F.doc(this.db, 'users', this.me.uid), prefs, { merge: true }) : Promise.resolve(); }
   // Alte Einträge ohne Bereich nachtragen, damit eingeschränkte Mitglieder sie sehen können
   async backfillAreas({ tasks, costs, files, comments }, areaOfTask, defaultArea) {

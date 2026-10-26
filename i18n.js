@@ -359,6 +359,68 @@ PATTERNS.push(
   P(/^Aufgabe: (.+)$/, (m, t) => `Task: ${t}`),
 );
 
+
+Object.assign(EN, {
+  'MindSpace kann deine Aufgaben als eigenen Kalender': 'MindSpace can add your tasks as a separate calendar',
+  '„MindSpace“': '“MindSpace”',
+  'in den Kalender deines Handys oder Computers eintragen. Neue und geänderte Aufgaben kommen dort von selbst an.': 'to the calendar on your phone or computer. New and changed tasks arrive there by themselves.',
+  'Nur wenn du zustimmst – alle im Projekt entscheiden das für sich selbst. Ändern oder beenden kannst du es jederzeit unter Mehr → Kalender.': 'Only if you agree – everyone in the project decides for themselves. You can change or end it any time under More → Calendar.',
+  'Letzter Schritt: Tippe auf den Knopf. Das iPhone fragt „Kalenderabonnement hinzufügen?“ – tippe auf': 'Last step: tap the button. The iPhone asks “Add calendar subscription?” – tap',
+  'Abonnieren': 'Subscribe', 'und dann auf': 'and then', 'Hinzufügen': 'Add',
+  'Letzter Schritt: Tippe auf den Knopf. Dein Kalender-Programm fragt, ob du den Kalender abonnieren möchtest.': 'Last step: tap the button. Your calendar app asks whether you want to subscribe.',
+  'Die Aufgaben erscheinen im Kalender': 'The tasks appear in the calendar', '. Die Farbe kannst du im Kalender selbst ändern.': '. You can change its colour in the calendar app.',
+  'Damit Änderungen schnell ankommen: iPhone-Einstellungen → (Apps →) Kalender → Accounts →': 'So changes arrive quickly: iPhone Settings → (Apps →) Calendar → Accounts →',
+  'Datenabgleich': 'Fetch New Data', '→ „Alle 15 Minuten“.': '→ “Every 15 minutes”.',
+  'Outlook oder Google Kalender am Computer: Adresse kopieren und dort „Kalender aus dem Internet“ bzw. „Per URL hinzufügen“ wählen.': 'Outlook or Google Calendar on a computer: copy the address and choose “Subscribe from web” / “From URL”.',
+  'Erledigtes steht mit ✅ im Kalender, Überfälliges mit 🔴. Erinnerungen bekommst du weiter als Push von MindSpace.': 'Completed tasks show ✅, overdue ones 🔴. Reminders still come as MindSpace push notifications.',
+  'Das Kalender-Abo liefert der': 'The calendar subscription is provided by the', 'MindSpace-Postbote': 'MindSpace mail robot',
+  'im E-Mail-Konto (Google Apps Script). Einmal bereitstellen, danach wird jedes Mitglied gefragt, ob es seine Aufgaben im Kalender sehen möchte.': 'in the email account (Google Apps Script). Deploy it once, then every member is asked whether they want their tasks in their calendar.',
+  'Am Computer script.google.com öffnen (mit dem MindSpace-Gmail-Konto) → Projekt „MindSpace-Postbote“.': 'On a computer open script.google.com (with the MindSpace Gmail account) → project “MindSpace-Postbote”.',
+  'Den Code durch die neue Datei': 'Replace the code with the new file', 'ersetzen und speichern.': 'and save.',
+  'Oben rechts': 'Top right', 'Bereitstellen → Neue Bereitstellung': 'Deploy → New deployment', '→ Zahnrad →': '→ gear icon →', 'Web-App': 'Web app',
+  'Ausführen als:': 'Execute as:', 'Ich': 'Me', '· Zugriff:': '· Who has access:', 'Jeder': 'Anyone', '→ Bereitstellen → Zugriff erlauben.': '→ Deploy → Authorize access.',
+  'Die Web-App-URL (endet auf /exec) kopieren und hier einfügen.': 'Copy the web app URL (ends with /exec) and paste it here.',
+});
+
+// v13: Zuständigkeit & Kalender
+Object.assign(EN, {
+  'Für dich': 'For you', '📌 Für dich': '📌 For you', 'Übernehmen': 'Accept', 'Zurückgeben': 'Hand back', 'Diese Aufgabe wurde dir übergeben.': 'This task was handed to you.',
+  'Übernommen – die anderen sehen es': 'Accepted – the others can see it', 'Zurückgegeben – wieder für alle': 'Handed back – open to everyone again',
+  'Aufgabe zurückgeben – kurzer Grund (optional):': 'Hand back task – short reason (optional):',
+  'Wählst du jemand anderen aus, bekommt er eine Push-Nachricht und bestätigt die Übernahme.': 'If you pick someone else, they get a push notification and confirm they take it over.',
+  'bittet dich, diese Aufgabe zu übernehmen': 'asks you to take over this task', 'hat dir diese Aufgabe zurückgegeben': 'handed this task back to you',
+  '(du)': '(you)', '📅 In Kalender': '📅 Add to calendar', 'Kalender': 'Calendar', 'Aufgaben im Handy-Kalender': 'Tasks in your phone calendar',
+  'Einmal einrichten – danach wird jedes Mitglied gefragt': 'Set up once – then every member is asked', 'Einrichten': 'Set up',
+  'Noch nicht eingerichtet – das macht jemand mit vollem Zugriff': 'Not set up yet – someone with full access does this',
+  'Aufgaben im Kalender': 'Tasks in calendar', 'An · alle Aufgaben': 'On · all tasks', 'An · nur meine Aufgaben': 'On · only my tasks', 'Aus': 'Off',
+  'Kalender-Dienst': 'Calendar service', 'Verbunden mit dem MindSpace-Postboten': 'Connected to the MindSpace mail robot',
+  'Ein eigener Kalender „MindSpace“ auf deinem Handy oder Computer. Neue und geänderte Aufgaben kommen automatisch an.': 'A separate “MindSpace” calendar on your phone or computer. New and changed tasks arrive automatically.',
+  'Aufgaben in deinen Kalender?': 'Tasks in your calendar?', 'Später': 'Later',
+  'Ja, alle Aufgaben': 'Yes, all tasks', 'Alles, was du in MindSpace siehst': 'Everything you can see in MindSpace',
+  'Ja, nur meine Aufgaben': 'Yes, only my tasks', 'Wo du zuständig bist – plus gemeinsame': 'Where you are responsible – plus shared ones',
+  'Nein, danke': 'No, thanks', 'Du wirst nicht erneut gefragt': 'You won’t be asked again', 'Kalender-Abo beenden': 'End calendar subscription', 'Der Link wird sofort ungültig': 'The link stops working right away',
+  '📅 Erneut abonnieren': '📅 Subscribe again', 'Adresse kopieren': 'Copy address', 'Kalender-Adresse kopiert': 'Calendar address copied',
+  'Alles klar – kein Kalender': 'Alright – no calendar', 'Geändert – dein Kalender aktualisiert sich von selbst': 'Changed – your calendar updates by itself',
+  'Kalender-Abo beendet. Lösche den Kalender „MindSpace“ noch im Handy.': 'Calendar subscription ended. Also delete the “MindSpace” calendar on your phone.',
+  'Kalender abonnieren': 'Subscribe to calendar', 'Fertig': 'Done', '📅 Jetzt abonnieren': '📅 Subscribe now', 'Kalender einrichten': 'Set up calendar',
+  'Web-App-URL': 'Web app URL', 'Prüfen & speichern': 'Check & save', 'Prüfe …': 'Checking …', 'Kalender-Dienst trennen': 'Disconnect calendar service', 'Getrennt': 'Disconnected',
+  'Eingerichtet – alle Mitglieder werden jetzt gefragt': 'Set up – all members will now be asked',
+  'Das ist keine Web-App-URL. Sie beginnt mit https://script.google.com/macros/s/ und endet auf /exec.': 'That is not a web app URL. It starts with https://script.google.com/macros/s/ and ends with /exec.',
+  'Der Postbote antwortet nicht wie erwartet. Ist die neue Version bereitgestellt (Bereitstellen → Neue Bereitstellung)? Trotzdem speichern?': 'The mail robot does not answer as expected. Is the new version deployed (Deploy → New deployment)? Save anyway?',
+  'Kalender-Dienst trennen? Die Kalender-Abos aller Mitglieder bekommen dann keine Aktualisierungen mehr.': 'Disconnect the calendar service? Members’ calendar subscriptions will no longer receive updates.',
+  '„Jeder“ ist nötig, damit Kalender-Apps den Link abrufen können. Ohne den geheimen Schlüssel jedes Mitglieds liefert der Link keine Aufgaben.': '“Anyone” is needed so calendar apps can fetch the link. Without each member’s secret key the link returns no tasks.',
+});
+PATTERNS.push(
+  P(/^(\d+) Aufgaben wurden dir übergeben\.$/, (m, n) => `${n} tasks were handed to you.`),
+  P(/^Von (.+?)(?: · fällig (.+))?$/, (m, who, due) => `From ${who}${due ? ' · due ' + tr(due) : ''}`),
+  P(/^(.+) bekommt eine Nachricht$/, (m, n) => `${n} will be notified`),
+  P(/^Zurück an (.+)$/, (m, n) => `Back to ${n}`),
+  P(/^⏳ Wartet auf Bestätigung von (.+)\.$/, (m, n) => `⏳ Waiting for ${n} to confirm.`),
+  P(/^✓ (.+) hat die Aufgabe übernommen\.$/, (m, n) => `✓ ${n} has taken over the task.`),
+  P(/^(.+) hat keinen Zugriff auf diesen Bereich\. Gib ihn unter Mehr → Gemeinsam planen frei oder wähle jemand anderen\.$/, (m, n) => `${n} has no access to this area. Share it under More → Plan together or choose someone else.`),
+  P(/^(.+) – noch nicht bestätigt$/, (m, n) => `${n} – not confirmed yet`),
+);
+
 export function tr(s) {
   if (LANG === 'de' || s == null) return s;
   const str = String(s);
@@ -403,6 +465,9 @@ export function startTranslator() {
   if (LANG === 'de') return;
   const _confirm = window.confirm.bind(window);
   window.confirm = (m) => _confirm(tr(m));
+  const _alert = window.alert.bind(window), _prompt = window.prompt.bind(window);
+  window.alert = (m) => _alert(tr(m));
+  window.prompt = (m, d) => _prompt(tr(m), d);
   trWalk(document.body);
   new MutationObserver((muts) => {
     for (const m of muts) {

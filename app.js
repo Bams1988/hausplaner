@@ -5,7 +5,7 @@ import {
   extractFromText, draftEmail, assessTasks, testConnection, urgencyOf, aiKeyOf, searchWithAI,
   STATUS, MODELS, DEFAULT_MODEL, DEFAULT_AREAS, HOUSE_PHASES,
 } from './ai.js';
-const APP_VERSION = '12';
+const APP_VERSION = '13';
 
 // ================================================================== Zustand
 const REMINDERS = [
@@ -268,6 +268,7 @@ function viewHome() {
     <header class="hello"><button class="head-btn" data-action="open-search" aria-label="Suchen">${I.search}</button><p class="hello-date">${esc(new Date().toLocaleDateString(LOC(), { weekday: 'long', day: 'numeric', month: 'long' }))}</p><h1>${esc(greeting())}</h1></header>
     ${quickAdd()}
     ${banner}${gestureTip}
+    ${assignCard()}
     ${newOnes.length ? `<button class="inbox-hint" data-action="goto-new">${I.inbox}<span><strong>${newOnes.length} ${newOnes.length === 1 ? 'neue Aufgabe' : 'neue Aufgaben'}</strong> aus E-Mails – kurz prüfen</span>${I.chevron}</button>` : ''}
     <div class="home-grid"><div class="hg-a">
     <div class="tiles" role="tablist" aria-label="Filter">${tiles}</div>
@@ -495,7 +496,7 @@ function row(t, opt = {}) {
   if (nf) meta.push(`<span class="ico-n" aria-label="${nf} Dateien">📎 ${nf}</span>`);
   if (t.done && t.doneBy && members().length > 1) meta.push(`<span>✓ ${esc(whoName(t.doneBy))}</span>`);
   const why = opt.reason && u && u.status !== 'im_plan' && (u.next || u.reason) ? `<div class="row-why">${esc(u.next || u.reason)}</div>` : '';
-  const who = members().length > 1 && t.assignee && t.assignee !== 'all' ? `<span class="who" title="${esc(nameOf(t.assignee))}">${esc(initial(t.assignee))}</span>` : '';
+  const who = members().length > 1 && t.assignee && t.assignee !== 'all' ? `<span class="who ${t.assignAck === false ? 'wait' : ''}" title="${esc(nameOf(t.assignee))}${t.assignAck === false ? ' – noch nicht bestätigt' : ''}">${esc(initial(t.assignee))}</span>` : '';
   return `<div class="row st-${statusOf(t)} ${t.done ? 'done' : ''}" data-tid="${esc(t.id)}" style="--area:${esc(a.color)};--st:${ST_COLOR[statusOf(t)]}">
     <button class="check" data-action="toggle" data-id="${esc(t.id)}" aria-label="${t.done ? 'Wieder öffnen' : 'Als erledigt markieren'}: ${esc(t.title)}">${I.check}</button>
     <button class="row-main" data-action="edit" data-id="${esc(t.id)}">
@@ -952,6 +953,8 @@ function viewMore() {
       ${cloud && full ? `<button class="setting" data-action="join"><span class="grow">Mit Code beitreten</span>${I.chevron}</button>` : ''}
     </div>
 
+    ${cloud ? calSection(full) : ''}
+
     <h2 class="section-title">Erinnerungen</h2>
     <div class="settings">
       <button class="setting" data-action="push" ${ps.on ? 'disabled' : ''}><span class="status-dot ${ps.on ? 'on' : ''}"></span><span class="grow">Push-Nachrichten<small>${esc(ps.text)}</small></span>${ps.on ? '' : '<span class="end">Aktivieren</span>'}</button>
@@ -1087,17 +1090,20 @@ function taskSheet(task, preset = {}) {
   const t = task || { title: '', due: '', time: '', reminder: 'day1', areaId: defArea, phase: null, assignee: 'all', notes: '', leadDays: null, contactId: null, ...preset };
   const tArea = task ? areaOf(task).id : t.areaId;
   const memOpts = members().length > 1 ? `<label class="field"><span>Zuständig</span><select name="assignee">
-      <option value="all" ${!t.assignee || t.assignee === 'all' ? 'selected' : ''}>Beide</option>
-      ${members().map((u) => `<option value="${esc(u)}" ${t.assignee === u ? 'selected' : ''}>${esc(nameOf(u))}</option>`).join('')}</select></label>` : '';
+      <option value="all" ${!t.assignee || t.assignee === 'all' ? 'selected' : ''}>${members().length > 2 ? 'Alle' : 'Beide'}</option>
+      ${members().map((u) => `<option value="${esc(u)}" ${t.assignee === u ? 'selected' : ''}>${esc(nameOf(u))}${u === S.me?.uid ? ' (du)' : ''}</option>`).join('')}</select></label>
+      <p class="hint" style="margin-top:-6px">Wählst du jemand anderen aus, bekommt er eine Push-Nachricht und bestätigt die Übernahme.</p>` : '';
   const c = t.contactId ? contactById(t.contactId) : null;
   const pending = [];
   const sheet = openSheet(`
     <div class="sheet-head"><h2>${task ? 'Aufgabe' : 'Neue Aufgabe'}</h2><button class="btn ghost" data-dismiss>${task ? 'Schließen' : 'Abbrechen'}</button></div>
     ${task?.isNew && !task.done ? `<div class="note-card soft"><p>📬 Neu aus der E-Mail${task.mailSubject ? ` „${esc(task.mailSubject)}“` : ''}. Speichern bestätigt sie.</p></div>` : ''}
+    ${task ? assignNote(task) : ''}
     ${task && !task.done ? urgencyBox(task) : ''}
     ${task ? `<div class="btn-row" style="margin-bottom:14px">
       <button type="button" class="btn secondary small" data-act="mail">${I.envelope} ${c?.email ? `E-Mail an ${esc(c.name.split(' ').slice(-1)[0])}` : 'E-Mail schreiben'}</button>
       ${c && (c.mobile || c.phone) ? `<a class="btn secondary small" href="${esc(telHref(c.mobile || c.phone))}">${I.phone} Anrufen</a>` : ''}
+      ${task.due && !calCovers(task) ? `<button type="button" class="btn secondary small" data-act="ics">📅 In Kalender</button>` : ''}
     </div>` : ''}
     <form>
       <label class="field"><span>Was ist zu tun?</span><textarea name="title" rows="2" required style="min-height:64px" placeholder="z. B. Bank wegen Finanzierungsbestätigung anrufen">${esc(t.title)}</textarea></label>
@@ -1190,15 +1196,19 @@ function taskSheet(task, preset = {}) {
         else toast(`Zu „${twin.title}“ hinzugefügt`);
         return;
       }
+      if (!assignPatch(data, task)) return;
       if (task) await store.updateTask(task.id, { ...data, isNew: false }, S.tasks.find((x) => x.id === task.id) || task);
       else id = await store.addTask({ ...data, source: 'manual' });
       closeSheet();
       if (pending.length) await uploadFiles(pending.map((p) => p.file), { taskId: id, areaId: data.areaId });
-      else toast(task ? 'Gespeichert' : 'Aufgabe angelegt');
+      else toast(data.assignNotify ? `${nameOf(data.assignee)} bekommt eine Nachricht` : task ? 'Gespeichert' : 'Aufgabe angelegt');
     } catch (err) { toast(fail(err)); }
   };
   wireAttach(sheet, () => ({ taskId: task?.id, areaId: form.areaId.value }), pending);
   if (task) wireThread(sheet, task.id);
+  sheet.querySelector('[data-act="ics"]')?.addEventListener('click', () => downloadIcs({ ...task, ...formData(), id: task.id }));
+  sheet.querySelector('[data-act="assign-ok"]')?.addEventListener('click', () => { closeSheet(); assignAccept(task.id); });
+  sheet.querySelector('[data-act="assign-back"]')?.addEventListener('click', () => { closeSheet(); assignReturn(task.id); });
   sheet.querySelector('[data-act="mail"]')?.addEventListener('click', () => {
     const cur = { ...task, ...formData() };
     composeSheet({ task: cur, contact: cur.contactId ? contactById(cur.contactId) : null });
@@ -2832,6 +2842,9 @@ app.addEventListener('click', async (e) => {
       S.aiBusy = false; render(); break;
     }
     case 'invite': inviteSheet(); break;
+    case 'assign-ok': assignAccept(el.dataset.id); break;
+    case 'cal-settings': calAskSheet(true); break;
+    case 'cal-setup': calSetupSheet(); break;
     case 'member': memberSheet(el.dataset.id); break;
     case 'join': {
       const c = prompt('Einladungscode eingeben');
@@ -2994,6 +3007,231 @@ document.addEventListener('drop', (e) => {
   else if (S.view === 'docs') { e.preventDefault(); uploadFiles(files, { areaId: S.docsArea !== 'all' ? S.docsArea : null }); }
 });
 
+
+// ================================================================== Zuständigkeit (v13)
+// Wird jemand anderes als zuständig gewählt, bekommt er eine Push-Nachricht (Postbote/Hintergrunddienst)
+// und bestätigt in der App mit „Übernehmen“ – oder gibt die Aufgabe zurück.
+const canSee = (uid, areaId) => { const a = S.project?.access?.[uid]; return !Array.isArray(a) || a.includes(areaId); };
+const forMe = () => S.tasks.filter((t) => !t.done && t.assignee && t.assignee === S.me?.uid && t.assignAck === false);
+function assignPatch(data, task) {
+  const prev = task?.assignee || 'all';
+  const to = data.assignee || 'all';
+  if (to === prev) return true;
+  if (to !== 'all' && !canSee(to, data.areaId)) {
+    alert(`${nameOf(to)} hat keinen Zugriff auf diesen Bereich. Gib ihn unter Mehr → Gemeinsam planen frei oder wähle jemand anderen.`);
+    return false;
+  }
+  if (to !== 'all' && to !== S.me?.uid) Object.assign(data, { assignNotify: true, assignAck: false, assignBy: S.me?.uid || null, assignByName: S.me?.name || null, assignAt: Date.now(), assignReturned: false });
+  else Object.assign(data, { assignNotify: false, assignAck: null });
+  return true;
+}
+function assignNote(t) {
+  if (t.done || !t.assignee || t.assignee === 'all' || store.mode !== 'cloud') return '';
+  const from = whoName(t.assignBy, t.assignByName);
+  if (t.assignee === S.me?.uid && t.assignAck === false) return `<div class="note-card assign-note"><p>📌 <strong>${esc(from)}</strong> ${t.assignReturned ? 'hat dir diese Aufgabe zurückgegeben' : 'bittet dich, diese Aufgabe zu übernehmen'}.</p>
+    <div class="btn-row"><button type="button" class="btn small" data-act="assign-ok">Übernehmen</button><button type="button" class="btn small ghost" data-act="assign-back">Zurückgeben</button></div></div>`;
+  if (t.assignee !== S.me?.uid && t.assignAck === false) return `<p class="hint assign-wait">⏳ Wartet auf Bestätigung von ${esc(nameOf(t.assignee))}.</p>`;
+  if (t.assignee !== S.me?.uid && t.assignAck === true) return `<p class="hint assign-wait">✓ ${esc(nameOf(t.assignee))} hat die Aufgabe übernommen.</p>`;
+  return '';
+}
+function assignCard() {
+  if (store.mode !== 'cloud') return '';
+  const list = forMe();
+  if (!list.length) return '';
+  return `<section class="card assign-card"><div class="card-head"><h2>📌 Für dich</h2></div>
+    <p class="hint" style="margin:-6px 0 8px">${list.length === 1 ? 'Diese Aufgabe wurde dir übergeben.' : `${list.length} Aufgaben wurden dir übergeben.`}</p>
+    ${list.slice(0, 5).map((t) => `<div class="assign-row st-${statusOf(t)}" style="--st:${ST_COLOR[statusOf(t)]}">
+      <button class="grow assign-open" data-action="edit" data-id="${esc(t.id)}"><strong translate="no">${esc(t.title)}</strong><small>Von ${esc(whoName(t.assignBy, t.assignByName))}${t.due ? ` · fällig ${esc(fmtDate(t.due))}` : ''}</small></button>
+      <button class="btn small" data-action="assign-ok" data-id="${esc(t.id)}">Übernehmen</button></div>`).join('')}
+  </section>`;
+}
+async function assignAccept(id) {
+  const t = S.tasks.find((x) => x.id === id); if (!t) return;
+  try {
+    await store.updateTask(id, { assignAck: true, assignNotify: false }, t);
+    await store.addComment({ taskId: id, areaId: areaOf(t).id, text: '👍 Übernommen' }).catch(() => {});
+    toast('Übernommen – die anderen sehen es');
+  } catch (e) { toast(fail(e)); }
+}
+async function assignReturn(id) {
+  const t = S.tasks.find((x) => x.id === id); if (!t) return;
+  const why = prompt('Aufgabe zurückgeben – kurzer Grund (optional):', '');
+  if (why === null) return;
+  const back = t.assignBy && t.assignBy !== S.me?.uid && members().includes(t.assignBy) ? t.assignBy : 'all';
+  const patch = back === 'all'
+    ? { assignee: 'all', assignAck: null, assignNotify: false }
+    : { assignee: back, assignAck: false, assignNotify: true, assignBy: S.me?.uid, assignByName: S.me?.name, assignAt: Date.now(), assignReturned: true };
+  try {
+    await store.updateTask(id, patch, t);
+    await store.addComment({ taskId: id, areaId: areaOf(t).id, text: `↩️ Zurückgegeben${why.trim() ? ': ' + why.trim() : ''}` }).catch(() => {});
+    toast(back === 'all' ? 'Zurückgegeben – wieder für alle' : `Zurück an ${nameOf(back)}`);
+  } catch (e) { toast(fail(e)); }
+}
+
+// ================================================================== Kalender (v13)
+// Jedes Mitglied wird einmal gefragt, ob es seine Aufgaben als Kalender-Abo „MindSpace“ im Handy-
+// oder Computer-Kalender sehen möchte. Nichts wird ohne Zustimmung eingetragen. Das Abo liefert der
+// MindSpace-Postbote (Google Apps Script, als Web-App bereitgestellt); jedes Mitglied hat einen
+// eigenen geheimen Link, der nur Aufgaben aus seinen freigegebenen Bereichen enthält.
+const calLaterKey = () => `ms-cal-later-${S.me?.uid || ''}`;
+const calInfo = () => S.userDoc?.cal || null;
+const calOn = () => ['all', 'mine'].includes(calInfo()?.choice) && !!calInfo()?.token;
+const calCovers = (t) => calOn() && !!S.project?.calUrl && (calInfo().choice === 'all' || !t.assignee || t.assignee === 'all' || t.assignee === S.me?.uid);
+function feedUrl(tok = calInfo()?.token, webcal = false) {
+  const u = S.project?.calUrl;
+  if (!u || !tok) return '';
+  const https = `${u}${u.includes('?') ? '&' : '?'}k=${tok}`;
+  return webcal ? https.replace(/^https:/, 'webcal:') : https;
+}
+function newCalToken() {
+  const b = crypto.getRandomValues(new Uint8Array(24));
+  return btoa(String.fromCharCode(...b)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+async function calChoose(choice) {
+  const cur = calInfo();
+  if (choice === 'no') {
+    if (cur?.token) await store.deleteCalFeed(cur.token).catch(() => {});
+    await store.setUserPref({ cal: { choice: 'no', token: null, at: Date.now() } });
+    return null;
+  }
+  const tok = cur?.token || newCalToken();
+  await store.setCalFeed(tok, choice);
+  await store.setUserPref({ cal: { choice, token: tok, at: Date.now() } });
+  return tok;
+}
+function maybeAskCal() {
+  if (store.mode !== 'cloud' || !S.project?.calUrl || !S.userDoc || calInfo() || S.calAsked) return;
+  try { if (Number(localStorage.getItem(calLaterKey()) || 0) > Date.now()) return; } catch {}
+  S.calAsked = true;
+  const tryOpen = (n) => {
+    if (document.getElementById('lock') || sheetRoot.innerHTML.trim()) { if (n < 20) setTimeout(() => tryOpen(n + 1), 3000); return; }
+    calAskSheet(false);
+  };
+  setTimeout(() => tryOpen(0), 1800);
+}
+function calSection(full) {
+  const p = S.project || {};
+  if (!p.calUrl) {
+    return `<h2 class="section-title">Kalender</h2><div class="settings">
+      ${full ? `<button class="setting" data-action="cal-setup"><span class="area-dot" style="--area:#E2574C">📅</span><span class="grow">Aufgaben im Handy-Kalender<small>Einmal einrichten – danach wird jedes Mitglied gefragt</small></span><span class="end">Einrichten</span></button>`
+        : `<div class="setting"><span class="area-dot" style="--area:#E2574C">📅</span><span class="grow">Aufgaben im Handy-Kalender<small>Noch nicht eingerichtet – das macht jemand mit vollem Zugriff</small></span></div>`}
+    </div>`;
+  }
+  const c = calInfo();
+  const st = c?.choice === 'all' ? 'An · alle Aufgaben' : c?.choice === 'mine' ? 'An · nur meine Aufgaben' : 'Aus';
+  return `<h2 class="section-title">Kalender</h2><div class="settings">
+    <button class="setting" data-action="cal-settings"><span class="status-dot ${calOn() ? 'on' : ''}"></span><span class="grow">Aufgaben im Kalender<small>${st}</small></span>${I.chevron}</button>
+    ${full ? `<button class="setting" data-action="cal-setup"><span class="grow">Kalender-Dienst<small>Verbunden mit dem MindSpace-Postboten</small></span>${I.chevron}</button>` : ''}
+  </div>
+  <p class="hint">Ein eigener Kalender „MindSpace“ auf deinem Handy oder Computer. Neue und geänderte Aufgaben kommen automatisch an.</p>`;
+}
+function calAskSheet(settings) {
+  const c = calInfo();
+  if (!settings) { try { localStorage.setItem(calLaterKey(), String(Date.now() + 3 * 864e5)); } catch {} }
+  const opt = (v, label, sub, cls = '') => `<button class="cal-opt ${cls} ${settings && (c?.choice || 'no') === v ? 'on' : ''}" data-cal="${v}"><strong>${label}</strong><small>${sub}</small></button>`;
+  const sheet = openSheet(`
+    <div class="sheet-head"><h2>${settings ? 'Aufgaben im Kalender' : 'Aufgaben in deinen Kalender?'}</h2><button class="btn ghost" data-dismiss>${settings ? 'Schließen' : 'Später'}</button></div>
+    ${settings ? '' : `<div class="cal-hero">${calIcon()}</div>`}
+    <p>MindSpace kann deine Aufgaben als eigenen Kalender <strong>„MindSpace“</strong> in den Kalender deines Handys oder Computers eintragen. Neue und geänderte Aufgaben kommen dort von selbst an.</p>
+    <p class="hint">Nur wenn du zustimmst – alle im Projekt entscheiden das für sich selbst. Ändern oder beenden kannst du es jederzeit unter Mehr → Kalender.</p>
+    <div class="cal-opts">
+      ${opt('all', 'Ja, alle Aufgaben', 'Alles, was du in MindSpace siehst')}
+      ${opt('mine', 'Ja, nur meine Aufgaben', 'Wo du zuständig bist – plus gemeinsame')}
+      ${opt('no', settings && calOn() ? 'Kalender-Abo beenden' : 'Nein, danke', settings && calOn() ? 'Der Link wird sofort ungültig' : 'Du wirst nicht erneut gefragt', 'ghosty')}
+    </div>
+    ${settings && calOn() ? `<div class="btn-row" style="margin-top:14px"><a class="btn secondary small" href="${esc(feedUrl(undefined, true))}">📅 Erneut abonnieren</a><button class="btn secondary small" data-copy>Adresse kopieren</button></div>` : ''}`);
+  sheet.querySelector('[data-copy]')?.addEventListener('click', () => copyText(feedUrl(), 'Kalender-Adresse kopiert'));
+  sheet.querySelectorAll('[data-cal]').forEach((b) => b.addEventListener('click', async () => {
+    const v = b.dataset.cal, was = calOn();
+    sheet.querySelectorAll('[data-cal]').forEach((x) => (x.disabled = true));
+    try {
+      const tok = await calChoose(v);
+      try { localStorage.removeItem(calLaterKey()); } catch {}
+      if (v === 'no') { closeSheet(); toast(was ? 'Kalender-Abo beendet. Lösche den Kalender „MindSpace“ noch im Handy.' : 'Alles klar – kein Kalender'); return; }
+      if (was) { closeSheet(); toast('Geändert – dein Kalender aktualisiert sich von selbst'); return; }
+      calSubscribeSheet(tok);
+    } catch (e) { toast(fail(e)); sheet.querySelectorAll('[data-cal]').forEach((x) => (x.disabled = false)); }
+  }));
+}
+function calIcon() {
+  const d = new Date();
+  return `<div class="cal-icon"><span>${esc(d.toLocaleDateString(LOC(), { weekday: 'short' }))}</span><b>${d.getDate()}</b></div>`;
+}
+function calSubscribeSheet(tok) {
+  const sheet = openSheet(`
+    <div class="sheet-head"><h2>Kalender abonnieren</h2><button class="btn ghost" data-dismiss>Fertig</button></div>
+    <p>Letzter Schritt: Tippe auf den Knopf. ${isIOS ? 'Das iPhone fragt „Kalenderabonnement hinzufügen?“ – tippe auf <strong>Abonnieren</strong> und dann auf <strong>Hinzufügen</strong>.' : 'Dein Kalender-Programm fragt, ob du den Kalender abonnieren möchtest.'}</p>
+    <a class="btn block" href="${esc(feedUrl(tok, true))}" data-sub>📅 Jetzt abonnieren</a>
+    <button class="btn block secondary" style="margin-top:10px" data-copy>Adresse kopieren</button>
+    <ol class="help-steps">
+      <li>Die Aufgaben erscheinen im Kalender <strong>„MindSpace“</strong>. Die Farbe kannst du im Kalender selbst ändern.</li>
+      <li>Damit Änderungen schnell ankommen: iPhone-Einstellungen → (Apps →) Kalender → Accounts → <strong>Datenabgleich</strong> → „Alle 15 Minuten“.</li>
+      <li>Outlook oder Google Kalender am Computer: Adresse kopieren und dort „Kalender aus dem Internet“ bzw. „Per URL hinzufügen“ wählen.</li>
+      <li>Erledigtes steht mit ✅ im Kalender, Überfälliges mit 🔴. Erinnerungen bekommst du weiter als Push von MindSpace.</li>
+    </ol>`);
+  sheet.querySelector('[data-copy]').addEventListener('click', () => copyText(feedUrl(tok), 'Kalender-Adresse kopiert'));
+}
+function calSetupSheet() {
+  const cur = S.project?.calUrl || '';
+  const sheet = openSheet(`
+    <div class="sheet-head"><h2>Kalender einrichten</h2><button class="btn ghost" data-dismiss>Abbrechen</button></div>
+    <p>Das Kalender-Abo liefert der <strong>MindSpace-Postbote</strong> im E-Mail-Konto (Google Apps Script). Einmal bereitstellen, danach wird jedes Mitglied gefragt, ob es seine Aufgaben im Kalender sehen möchte.</p>
+    <ol class="help-steps">
+      <li>Am Computer script.google.com öffnen (mit dem MindSpace-Gmail-Konto) → Projekt „MindSpace-Postbote“.</li>
+      <li>Den Code durch die neue Datei <strong>MindSpace-Postbote.gs</strong> ersetzen und speichern.</li>
+      <li>Oben rechts <strong>Bereitstellen → Neue Bereitstellung</strong> → Zahnrad → <strong>Web-App</strong>.</li>
+      <li>Ausführen als: <strong>Ich</strong> · Zugriff: <strong>Jeder</strong> → Bereitstellen → Zugriff erlauben.</li>
+      <li>Die Web-App-URL (endet auf /exec) kopieren und hier einfügen.</li>
+    </ol>
+    <p class="hint">„Jeder“ ist nötig, damit Kalender-Apps den Link abrufen können. Ohne den geheimen Schlüssel jedes Mitglieds liefert der Link keine Aufgaben.</p>
+    <form><label class="field"><span>Web-App-URL</span><input class="input" name="url" type="url" inputmode="url" placeholder="https://script.google.com/macros/s/…/exec" value="${esc(cur)}" required></label>
+      <button class="btn block" type="submit">Prüfen & speichern</button>
+      ${cur ? '<button class="btn block ghost danger-text" type="button" data-off style="margin-top:8px">Kalender-Dienst trennen</button>' : ''}</form>`);
+  const form = sheet.querySelector('form');
+  form.onsubmit = async (e) => {
+    e.preventDefault();
+    const url = form.url.value.trim().replace(/\?.*$/, '');
+    if (!/^https:\/\/script\.google\.com\/(a\/[^/]+\/)?macros\/s\/[\w-]+\/exec$/.test(url)) { alert('Das ist keine Web-App-URL. Sie beginnt mit https://script.google.com/macros/s/ und endet auf /exec.'); return; }
+    const btn = form.querySelector('[type="submit"]'); btn.disabled = true; btn.textContent = 'Prüfe …';
+    let ok = null;
+    try { const r = await fetch(url + '?ping=1', { redirect: 'follow' }); ok = /MindSpace-Kalender/.test(await r.text()); } catch { ok = null; }
+    if (ok === false && !confirm('Der Postbote antwortet nicht wie erwartet. Ist die neue Version bereitgestellt (Bereitstellen → Neue Bereitstellung)? Trotzdem speichern?')) { btn.disabled = false; btn.textContent = 'Prüfen & speichern'; return; }
+    try {
+      await store.updateProject({ calUrl: url, calAskSent: false, calSince: Date.now() });
+      closeSheet();
+      toast(cur ? 'Gespeichert' : 'Eingerichtet – alle Mitglieder werden jetzt gefragt');
+    } catch (err) { toast(fail(err)); btn.disabled = false; btn.textContent = 'Prüfen & speichern'; }
+  };
+  sheet.querySelector('[data-off]')?.addEventListener('click', async () => {
+    if (!confirm('Kalender-Dienst trennen? Die Kalender-Abos aller Mitglieder bekommen dann keine Aktualisierungen mehr.')) return;
+    try { await store.updateProject({ calUrl: null }); closeSheet(); toast('Getrennt'); } catch (err) { toast(fail(err)); }
+  });
+}
+// Einzelne Aufgabe als .ics-Datei (ohne Abo, z. B. am Computer für Outlook)
+const icsEsc = (s) => String(s || '').replace(/\\/g, '\\\\').replace(/;/g, '\;').replace(/,/g, '\\,').replace(/\r?\n/g, '\\n');
+function icsFold(line) {
+  const enc = new TextEncoder();
+  let out = '', cur = '', n = 0;
+  for (const ch of line) { const b = enc.encode(ch).length; if (n + b > 73) { out += cur + '\r\n '; cur = ''; n = 1; } cur += ch; n += b; }
+  return out + cur;
+}
+const icsUtc = (d) => d.toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '');
+function downloadIcs(t) {
+  if (!t.due) return;
+  const ymd = t.due.replace(/-/g, '');
+  const L = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//MindSpace//DE', 'METHOD:PUBLISH', 'BEGIN:VEVENT', `UID:${t.id || Date.now()}@mindspace`, `DTSTAMP:${icsUtc(new Date())}`];
+  if (t.time) { const s = new Date(`${t.due}T${t.time}`); L.push(`DTSTART:${icsUtc(s)}`, `DTEND:${icsUtc(new Date(s.getTime() + 3600e3))}`); }
+  else L.push(`DTSTART;VALUE=DATE:${ymd}`, `DTEND;VALUE=DATE:${addDays(t.due, 1).replace(/-/g, '')}`);
+  const link = location.origin + location.pathname + (t.id ? `?aufgabe=${t.id}` : '');
+  L.push(`SUMMARY:${icsEsc(t.title)}`, `DESCRIPTION:${icsEsc([areaOf(t).name, t.notes, 'MindSpace: ' + link].filter(Boolean).join('\n'))}`, `URL:${link}`, 'TRANSP:TRANSPARENT', 'END:VEVENT', 'END:VCALENDAR');
+  const blob = new Blob([L.map(icsFold).join('\r\n') + '\r\n'], { type: 'text/calendar;charset=utf-8' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = (t.title || 'Aufgabe').replace(/[\\/:*?"<>|]+/g, ' ').slice(0, 60).trim() + '.ics';
+  document.body.appendChild(a); a.click();
+  setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 5000);
+}
+
 // ================================================================== Start
 applyTheme();
 window.matchMedia('(prefers-color-scheme: dark)').addEventListener?.('change', () => applyTheme());
@@ -3005,11 +3243,16 @@ store.init({
     if (me && store.mode === 'cloud' && changed) { S.projectState = 'loading'; store.resumePush(); store.setUserPref({ lang: LANG }).catch(() => {}); }
     render();
   },
+  onUserDoc(d) { S.userDoc = d; render(); maybeAskCal(); },
   onProject(p) {
-    S.project = p; S.projectState = p ? 'ready' : 'none'; render();
+    S.project = p; S.projectState = p ? 'ready' : 'none'; render(); maybeAskCal();
     if (p && Object.values(p.access || {}).some(Array.isArray)) setTimeout(() => { if (S.tasks.length || S.files.length) runBackfill(); }, 4000);
   },
-  onTasks(list) { S.tasks = list; render(); if (S.openNewOnReady) { S.openNewOnReady = false; setTimeout(() => taskSheet(null), 300); } },
+  onTasks(list) {
+    S.tasks = list; render();
+    if (S.openNewOnReady) { S.openNewOnReady = false; setTimeout(() => taskSheet(null), 300); }
+    if (S.openTaskOnReady) { const t = list.find((x) => x.id === S.openTaskOnReady); if (t) { S.openTaskOnReady = null; setTimeout(() => taskSheet(t), 300); } }
+  },
   onInfos(list) { S.infos = list; render(); },
   onContacts(list) { S.contacts = list; render(); },
   onAreas(list) { S.areas = list; render(); },
@@ -3027,7 +3270,8 @@ store.init({
   const v = q.get('ansicht');
   if (v && ['home', 'tasks', 'plan', 'inbox', 'more', 'costs', 'docs'].includes(v)) S.view = v;
   if (q.get('neu')) S.openNewOnReady = true;
-  if (v || q.get('neu')) history.replaceState(null, '', location.pathname);
+  if (q.get('aufgabe')) S.openTaskOnReady = q.get('aufgabe');
+  if (v || q.get('neu') || q.get('aufgabe')) history.replaceState(null, '', location.pathname);
 }
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch((e) => console.warn('Service Worker:', e));
 document.addEventListener('visibilitychange', () => { if (!document.hidden) render(); });
