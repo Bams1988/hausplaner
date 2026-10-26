@@ -182,6 +182,38 @@ for (const p of projects.docs) {
     }
   } catch (e) { console.warn('Kommentare:', e.message); }
 
+  // 3c) Neue Zuständigkeit melden – normalerweise erledigt das der Postbote binnen einer Minute;
+  //     hier nur als Ersatz, falls er nicht läuft (älter als 3 Minuten)
+  try {
+    const neu = (await p.ref.collection('tasks').where('assignNotify', '==', true).get()).docs;
+    for (const d of neu) {
+      const t = d.data();
+      if (t.assignAt && t.assignAt > now - 3 * 60e3) continue;
+      await d.ref.update({ assignNotify: false, assignNotifiedAt: now });
+      if (!t.assignee || t.assignee === 'all' || t.done) continue;
+      const von = (l) => t.assignByName || T(l, 'Jemand', 'Someone');
+      const due = (l) => (t.due ? T(l, ' – fällig ', ' – due ') + fmtDue(t, l) : '');
+      sent += await send(forArea(t.areaId, all.filter((x) => x.uid === t.assignee)),
+        (l) => (t.assignReturned ? T(l, '↩️ Aufgabe zurückgegeben', '↩️ Task handed back') : T(l, '📌 Neue Aufgabe für dich', '📌 New task for you')),
+        (l) => (t.assignReturned ? T(l, `${von(l)} hat „${t.title}“ an dich zurückgegeben.`, `${von(l)} handed “${t.title}” back to you.`)
+          : T(l, `${von(l)} bittet dich, „${t.title}“ zu übernehmen${due(l)}.`, `${von(l)} asks you to take over “${t.title}”${due(l)}.`)).replace(/\.\.$/, '.').slice(0, 220),
+        'assign-' + d.id);
+    }
+  } catch (e) { console.warn('Zuständigkeit:', e.message); }
+
+  // 3d) Kalender-Abo neu eingerichtet: jedes Mitglied einmal fragen (die Entscheidung trifft jeder in der App)
+  if (p.get('calUrl') && !p.get('calAskSent')) {
+    try {
+      for (const uid of members) {
+        const u = (await db.doc(`users/${uid}`).get()).data() || {};
+        if (u.cal) continue;
+        sent += await send(all.filter((x) => x.uid === uid), (l) => T(l, '📅 Aufgaben im Kalender?', '📅 Tasks in your calendar?'),
+          (l) => T(l, 'MindSpace kann deine Aufgaben in deinen Handy-Kalender eintragen – nur wenn du möchtest. Öffne MindSpace, um zu entscheiden.', 'MindSpace can add your tasks to your phone calendar – only if you want. Open MindSpace to decide.'), 'cal-ask');
+      }
+      await p.ref.update({ calAskSent: true });
+    } catch (e) { console.warn('Kalender-Frage:', e.message); }
+  }
+
   // 3b) Zahlungen: 3 Tage vorher und am Fälligkeitstag erinnern (ab 7 Uhr)
   if (hour >= DIGEST_HOUR) {
     try {
