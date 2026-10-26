@@ -167,7 +167,7 @@ function extractTool(areas) {
           type: 'array',
           description: 'Je Anhang eine kurze Beschreibung für die spätere Suche.',
           items: {
-            type: 'object', required: ['nr', 'beschreibung'],
+            type: 'object', required: ['nr', 'beschreibung', 'bereich_id'],
             properties: {
               nr: { type: 'integer' },
               beschreibung: { type: 'string', description: 'Was das Dokument ist und die wichtigsten Angaben (Art, Absender, Datum, Beträge, Nummern), max. 200 Zeichen. Z. B. „Bauvertrag allkauf, unterschrieben 12.03.2026, Festpreis 382.000 €“.' },

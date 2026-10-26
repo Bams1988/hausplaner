@@ -321,6 +321,10 @@ Object.assign(EN, {
   'Biometrische Sperre ausschalten?': 'Turn off biometric lock?', 'MindSpace beim Öffnen biometrisch entsperren': 'Unlock MindSpace biometrically when opening',
   'An – MindSpace sperrt sich nach 2 Minuten im Hintergrund': 'On – MindSpace locks after 2 minutes in the background', 'Fingerabdruck / Gesichtserkennung': 'Fingerprint / face recognition',
   'Wochenblick': 'Week at a glance',
+  'Auf jedem Gerät einmal selbst einschalten': 'Turn on once on every device',
+  'Nicht eingeschaltet. Prüfe in den iPhone-Einstellungen unter „Face ID & Code“, dass Face ID bzw. ein Code eingerichtet ist, und versuch es noch einmal.': 'Not turned on. In iPhone Settings → “Face ID & Passcode”, check that Face ID or a passcode is set up, then try again.',
+  'Nicht eingeschaltet – abgebrochen oder auf diesem Gerät ist keine Entsperrung per Fingerabdruck/Gesicht eingerichtet.': 'Not turned on – cancelled, or no fingerprint/face unlock is set up on this device.',
+  'Dieses Gerät oder dieser Browser unterstützt die biometrische Sperre nicht.': 'This device or browser does not support the biometric lock.',
 });
 PATTERNS.push(
   P(/^(\d{1,2}:\d{2}) Uhr$/, (m, t) => t),

@@ -5,7 +5,7 @@ import {
   extractFromText, draftEmail, assessTasks, testConnection, urgencyOf, aiKeyOf, searchWithAI,
   STATUS, MODELS, DEFAULT_MODEL, DEFAULT_AREAS, HOUSE_PHASES,
 } from './ai.js';
-const APP_VERSION = '10';
+const APP_VERSION = '11';
 
 // ================================================================== Zustand
 const REMINDERS = [
@@ -741,6 +741,7 @@ function inboxArchive() {
       <button class="info-toggle" data-action="info-open" data-id="${esc(x.id)}" aria-expanded="${open}">
         <div class="info-head"><span class="info-title">${x.kind === 'mail-auto' ? '📬 ' : ''}${esc(x.title || 'Ohne Betreff')}</span><span class="info-date">${esc(x.date ? fmtDate(x.date, { day: 'numeric', month: 'short', year: '2-digit' }) : new Date(x.createdAt).toLocaleDateString(LOC(), { day: 'numeric', month: 'short' }))}</span></div>
         ${x.from ? `<div class="info-from">${esc(x.from)}</div>` : ''}
+        ${x.attachments?.length ? `<div class="info-att">📎 ${x.attachments.map((f) => `<span class="${f.read ? 'ok' : ''}" translate="no">${esc(f.name)}</span>`).join('')}</div>` : ''}
         <div class="info-text">${esc(x.text)}</div>
       </button>
       ${open ? `<div class="btn-row" style="margin-top:12px">
@@ -967,9 +968,9 @@ function viewMore() {
         <select class="set-select" data-action="set-theme" aria-label="Design">${[['auto', 'Automatisch'], ['light', 'Hell'], ['dark', 'Dunkel']].map(([v, l]) => `<option value="${v}" ${themePref() === v ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
     </div>
 
-    ${bioAvailable || lockCfg() ? `<h2 class="section-title">Sicherheit</h2>
+    ${window.PublicKeyCredential || lockCfg() ? `<h2 class="section-title">Sicherheit</h2>
     <div class="settings">
-      <button class="setting" data-action="${lockCfg() ? 'lock-off' : 'lock-on'}"><span class="status-dot ${lockCfg() ? 'on' : ''}"></span><span class="grow">Mit ${esc(bioName())} entsperren<small>${lockCfg() ? 'An – MindSpace sperrt sich nach 2 Minuten im Hintergrund' : 'MindSpace beim Öffnen biometrisch entsperren'}</small></span><span class="end">${lockCfg() ? 'Ausschalten' : 'Einschalten'}</span></button>
+      <button class="setting" data-action="${lockCfg() ? 'lock-off' : 'lock-on'}"><span class="status-dot ${lockCfg() ? 'on' : ''}"></span><span class="grow">Mit ${esc(bioName())} entsperren<small>${lockCfg() ? 'An – MindSpace sperrt sich nach 2 Minuten im Hintergrund' : bioAvailable ? 'MindSpace beim Öffnen biometrisch entsperren' : 'Auf jedem Gerät einmal selbst einschalten'}</small></span><span class="end">${lockCfg() ? 'Ausschalten' : 'Einschalten'}</span></button>
     </div>` : ''}
 
     <h2 class="section-title">App</h2>
@@ -2601,7 +2602,12 @@ async function enableLock() {
     localStorage.setItem(LOCK_KEY, JSON.stringify({ id: b64u(cred.rawId), uid: S.me?.uid || 'local', at: Date.now() }));
     toast(`Entsperren mit ${bioName()} ist an 🔒`);
     render();
-  } catch (e) { if (e.name !== 'NotAllowedError' && e.name !== 'AbortError') toast(fail(e)); }
+  } catch (e) {
+    if (e.name === 'AbortError') return;
+    toast(e.name === 'NotAllowedError'
+      ? (isIOS ? 'Nicht eingeschaltet. Prüfe in den iPhone-Einstellungen unter „Face ID & Code“, dass Face ID bzw. ein Code eingerichtet ist, und versuch es noch einmal.' : 'Nicht eingeschaltet – abgebrochen oder auf diesem Gerät ist keine Entsperrung per Fingerabdruck/Gesicht eingerichtet.')
+      : e.name === 'NotSupportedError' || e.name === 'SecurityError' ? 'Dieses Gerät oder dieser Browser unterstützt die biometrische Sperre nicht.' : fail(e));
+  }
 }
 function disableLock() { localStorage.removeItem(LOCK_KEY); toast('Sperre ausgeschaltet'); render(); }
 let lockedSince = null;

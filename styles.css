@@ -730,3 +730,6 @@ body.file-over .sheet [data-att-wrap] .att, body.file-over .view { outline: 3px 
 .lock-box .btn svg { width: 20px; height: 20px; }
 body.is-locked { overflow: hidden; }
 .v-meta { display: flex; flex-wrap: wrap; gap: 4px 12px; }
+.info-att { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 6px; font-size: 13px; color: var(--ink-2); }
+.info-att span { background: var(--surface-2); border-radius: 8px; padding: 2px 8px; font-weight: 500; }
+.info-att span.ok::after { content: ' ✓'; color: var(--brand); font-weight: 700; }
