@@ -5,7 +5,7 @@ import {
   extractFromText, draftEmail, assessTasks, testConnection, urgencyOf, aiKeyOf, searchWithAI,
   STATUS, MODELS, DEFAULT_MODEL, DEFAULT_AREAS, HOUSE_PHASES,
 } from './ai.js';
-const APP_VERSION = '11';
+const APP_VERSION = '12';
 
 // ================================================================== Zustand
 const REMINDERS = [
@@ -84,6 +84,19 @@ const byDue = (a, b) => (a.due || '9999').localeCompare(b.due || '9999') || (a.t
 const urgRank = (t) => { const u = urgencyOf(t); return u ? STATUS[u.status].rank : -1; };
 const byUrgency = (a, b) => urgRank(b) - urgRank(a) || ((a.startBy || a.due || '9999').localeCompare(b.startBy || b.due || '9999')) || byDue(a, b);
 const badge = (u) => (u && u.status !== 'im_plan' ? `<span class="badge s-${u.status}">${esc(STATUS[u.status].label)}</span>` : '');
+// Ampel-Farben je Aufgabe: erledigt grün, heute gelb, überfällig rot, jetzt starten orange, im Plan blau, ohne Datum grau
+function statusOf(t) {
+  if (t.done) return 'done';
+  if (!t.due) return 'none';
+  const d = dayDiff(t.due);
+  if (d < 0) return 'late';
+  if (d === 0) return 'today';
+  return urgRank(t) >= 2 ? 'start' : 'ok';
+}
+const ST_COLOR = { done: 'var(--st-done)', today: 'var(--st-today)', late: 'var(--st-late)', start: 'var(--st-start)', ok: 'var(--st-ok)', none: 'var(--st-none)' };
+function legend() {
+  return `<div class="legend" role="note" aria-label="Farblegende">${[['late', 'Überfällig'], ['today', 'Heute fällig'], ['start', 'Jetzt starten'], ['ok', 'Im Plan'], ['done', 'Erledigt']].map(([k, l]) => `<span><i style="background:${ST_COLOR[k]}"></i>${l}</span>`).join('')}</div>`;
+}
 const weekStart = () => { const d = new Date(); d.setHours(0, 0, 0, 0); d.setDate(d.getDate() - ((d.getDay() + 6) % 7)); return d; };
 
 // ================================================================== Symbole
@@ -258,6 +271,7 @@ function viewHome() {
     ${newOnes.length ? `<button class="inbox-hint" data-action="goto-new">${I.inbox}<span><strong>${newOnes.length} ${newOnes.length === 1 ? 'neue Aufgabe' : 'neue Aufgaben'}</strong> aus E-Mails – kurz prüfen</span>${I.chevron}</button>` : ''}
     <div class="home-grid"><div class="hg-a">
     <div class="tiles" role="tablist" aria-label="Filter">${tiles}</div>
+    ${legend()}
     <section class="card">
       <div class="card-head"><h2>${esc(cur.label === '7 Tage' ? 'Die nächsten 7 Tage' : cur.label)}</h2>
         ${S.homeSet === 'nachholen' && list.length ? `<button class="btn small secondary" data-action="all-today">Alle auf heute</button>` : ''}</div>
@@ -386,7 +400,7 @@ function weekChart() {
   const cols = per.map((p) => {
     const dt = parseISO(p.d);
     const n = p.open.length + p.done.length;
-    const segs = [...p.done.map(() => 'var(--brand)'), ...p.open.map((t) => areaOf(t).color)];
+    const segs = [...p.done.map(() => ST_COLOR.done), ...p.open.map((t) => ST_COLOR[statusOf(t)])];
     return `<button class="wk-col ${p.d === today ? 'is-today' : ''} ${p.d === S.dayPick ? 'is-sel' : ''}" data-action="day" data-d="${p.d}" data-drop-day="${p.d}" aria-label="${esc(fmtDate(p.d, { weekday: 'long', day: 'numeric', month: 'long' }))}: ${p.open.length} offen, ${p.done.length} erledigt">
       <span class="wk-bar">${segs.map((c) => `<i style="background:${c};height:${100 / max}%"></i>`).join('')}</span>
       <span class="wk-n">${n || ''}</span>
@@ -429,6 +443,7 @@ function viewTasks() {
     </div>
     ${S.tasks.length > 8 ? `<input class="input" type="search" data-input="task-q" value="${esc(S.taskQuery || '')}" placeholder="Aufgaben durchsuchen" style="margin-bottom:10px" aria-label="Aufgaben durchsuchen">` : ''}
     ${areaChips(S.area, 'area', true)}
+    ${S.tasks.length ? legend() : ''}
     ${body}</main>`;
 }
 
@@ -481,7 +496,7 @@ function row(t, opt = {}) {
   if (t.done && t.doneBy && members().length > 1) meta.push(`<span>✓ ${esc(whoName(t.doneBy))}</span>`);
   const why = opt.reason && u && u.status !== 'im_plan' && (u.next || u.reason) ? `<div class="row-why">${esc(u.next || u.reason)}</div>` : '';
   const who = members().length > 1 && t.assignee && t.assignee !== 'all' ? `<span class="who" title="${esc(nameOf(t.assignee))}">${esc(initial(t.assignee))}</span>` : '';
-  return `<div class="row ${t.done ? 'done' : ''}" data-tid="${esc(t.id)}" style="--area:${esc(a.color)}">
+  return `<div class="row st-${statusOf(t)} ${t.done ? 'done' : ''}" data-tid="${esc(t.id)}" style="--area:${esc(a.color)};--st:${ST_COLOR[statusOf(t)]}">
     <button class="check" data-action="toggle" data-id="${esc(t.id)}" aria-label="${t.done ? 'Wieder öffnen' : 'Als erledigt markieren'}: ${esc(t.title)}">${I.check}</button>
     <button class="row-main" data-action="edit" data-id="${esc(t.id)}">
       <div class="row-title" translate="no">${t.isNew && !t.done ? '<b class="new-dot" title="Neu aus E-Mail"></b>' : ''}${esc(t.title)}</div>
@@ -502,7 +517,7 @@ function viewPlan() {
   const body = mode === 'monat' ? planMonth() : mode === 'projekte' ? planProjects() : planWeek();
   return `<main class="view">
     <header class="page-head with-btn"><h1>Planer</h1><button class="head-btn" data-action="open-search" aria-label="Suchen">${I.search}</button></header>
-    ${seg}${body}</main>`;
+    ${seg}${mode !== 'projekte' ? legend() : ''}${body}</main>`;
 }
 
 // ---------- Woche
@@ -516,7 +531,7 @@ function planWeek() {
   const strip = days.map((d) => {
     const dt = parseISO(d);
     const items = S.tasks.filter((t) => t.due === d);
-    const dots = items.filter((t) => !t.done).slice(0, 3).map((t) => `<i style="background:${esc(areaOf(t).color)}"></i>`).join('');
+    const dots = items.filter((t) => !t.done).slice(0, 3).map((t) => `<i style="background:${ST_COLOR[statusOf(t)]}"></i>`).join('');
     return `<button class="ws-day ${d === today ? 'is-today' : ''}" data-action="goto-day" data-d="${d}" data-drop-day="${d}" aria-label="${esc(fmtDate(d, { weekday: 'long', day: 'numeric', month: 'long' }))}, ${items.length} Aufgaben">
       <span>${esc(dt.toLocaleDateString(LOC(), { weekday: 'short' }).replace('.', ''))}</span><b>${dt.getDate()}</b><em>${dots}</em></button>`;
   }).join('');
@@ -559,10 +574,10 @@ function planMonth() {
     const items = S.tasks.filter((t) => t.due === iso);
     const openI = items.filter((t) => !t.done);
     const late = openI.some((t) => iso < today);
-    const dots = openI.slice(0, 4).map((t) => `<i style="background:${esc(areaOf(t).color)}"></i>`).join('') + (openI.length > 4 ? '<i class="more"></i>' : '');
+    const dots = openI.slice(0, 4).map((t) => `<i style="background:${ST_COLOR[statusOf(t)]}"></i>`).join('') + (openI.length > 4 ? '<i class="more"></i>' : '');
     cells.push(`<button class="mc ${iso === today ? 'is-today' : ''} ${iso === S.monthPick ? 'is-sel' : ''} ${late ? 'is-late' : ''} ${items.length && !openI.length ? 'all-done' : ''}" data-action="month-day" data-d="${iso}" data-drop-day="${iso}" aria-label="${esc(fmtDate(iso, { weekday: 'long', day: 'numeric', month: 'long' }))}, ${openI.length} offen">
       <b>${d}</b><em>${dots}</em>
-      <span class="mc-t">${openI.sort(byDue).slice(0, 3).map((t) => `<i style="--area:${esc(areaOf(t).color)}">${esc(t.title)}</i>`).join('')}${openI.length > 3 ? `<i class="more">+${openI.length - 3} weitere</i>` : ''}</span></button>`);
+      <span class="mc-t">${openI.sort(byDue).slice(0, 3).map((t) => `<i style="--area:${ST_COLOR[statusOf(t)]}">${esc(t.title)}</i>`).join('')}${openI.length > 3 ? `<i class="more">+${openI.length - 3} weitere</i>` : ''}</span></button>`);
   }
   const sel = S.tasks.filter((t) => t.due === S.monthPick).sort((a, b) => (a.done - b.done) || byDue(a, b));
   const monthOpen = S.tasks.filter((t) => !t.done && t.due && t.due.startsWith(`${y}-${String(m + 1).padStart(2, '0')}`)).length;
@@ -970,7 +985,7 @@ function viewMore() {
 
     ${window.PublicKeyCredential || lockCfg() ? `<h2 class="section-title">Sicherheit</h2>
     <div class="settings">
-      <button class="setting" data-action="${lockCfg() ? 'lock-off' : 'lock-on'}"><span class="status-dot ${lockCfg() ? 'on' : ''}"></span><span class="grow">Mit ${esc(bioName())} entsperren<small>${lockCfg() ? 'An – MindSpace sperrt sich nach 2 Minuten im Hintergrund' : bioAvailable ? 'MindSpace beim Öffnen biometrisch entsperren' : 'Auf jedem Gerät einmal selbst einschalten'}</small></span><span class="end">${lockCfg() ? 'Ausschalten' : 'Einschalten'}</span></button>
+      <button class="setting" data-action="${lockCfg() ? 'lock-off' : 'lock-on'}"><span class="status-dot ${lockCfg() ? 'on' : ''}"></span><span class="grow">${lockCfg()?.type === 'pin' ? 'App-Sperre mit PIN' : `Mit ${esc(bioName())} entsperren`}<small>${lockCfg() ? 'An – MindSpace sperrt sich nach 2 Minuten im Hintergrund' : 'Face ID, Touch ID oder PIN – auf jedem Gerät einmal einschalten'}</small></span><span class="end">${lockCfg() ? 'Ausschalten' : 'Einschalten'}</span></button>
     </div>` : ''}
 
     <h2 class="section-title">App</h2>
@@ -2588,39 +2603,99 @@ const lockCfg = () => { try { return JSON.parse(localStorage.getItem(LOCK_KEY) |
 let bioAvailable = false;
 (async () => { try { bioAvailable = !!(window.PublicKeyCredential && await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable()); } catch {} if (bioAvailable && S.view === 'more') render(); })();
 const bioName = () => (isIOS ? 'Face ID / Touch ID' : /Windows/.test(navigator.userAgent) ? 'Windows Hello' : /Mac/.test(navigator.userAgent) ? 'Touch ID' : 'Fingerabdruck / Gesichtserkennung');
-async function enableLock() {
+// Einrichten: zuerst erklären, dann Face ID / Touch ID – oder eine PIN, wenn das Gerät keinen Passkey anlegen kann
+function lockSetupSheet() {
+  const sheet = openSheet(`<div class="sheet-head"><h2>App-Sperre</h2><button class="btn ghost" data-dismiss>Abbrechen</button></div>
+    <p class="hint" style="margin-top:-4px">MindSpace sperrt sich beim Öffnen und nach 2 Minuten im Hintergrund. Die Sperre gilt nur für dieses Gerät.</p>
+    <div data-step>
+      <p>${isIOS ? 'Gleich fragt dein iPhone: <strong>„Passkey für MindSpace sichern?“</strong> – bestätige mit Face ID bzw. Touch ID.' : 'Gleich fragt dein Gerät nach Fingerabdruck, Gesicht oder Windows Hello – einmal bestätigen.'}</p>
+      <button class="btn block" data-bio style="margin-top:12px">${I.lock} ${esc(bioName())} einrichten</button>
+      <button class="btn block secondary" data-pin style="margin-top:10px">Stattdessen PIN-Code verwenden</button>
+    </div>`);
+  const step = sheet.querySelector('[data-step]');
+  const pinForm = () => {
+    step.innerHTML = `<form><label class="field"><span>PIN (4–8 Ziffern)</span><input class="pin-input" name="p1" type="password" inputmode="numeric" pattern="[0-9]*" minlength="4" maxlength="8" autocomplete="new-password" required></label>
+      <label class="field"><span>PIN wiederholen</span><input class="pin-input" name="p2" type="password" inputmode="numeric" pattern="[0-9]*" minlength="4" maxlength="8" autocomplete="new-password" required></label>
+      <button class="btn block" type="submit">PIN speichern</button></form>`;
+    const f = step.querySelector('form'); setTimeout(() => f.p1.focus(), 100);
+    f.onsubmit = async (e) => {
+      e.preventDefault();
+      const a = f.p1.value.trim(), b = f.p2.value.trim();
+      if (!/^\d{4,8}$/.test(a)) { toast('Bitte 4 bis 8 Ziffern eingeben.'); return; }
+      if (a !== b) { toast('Die beiden PINs stimmen nicht überein.'); return; }
+      const salt = b64u(crypto.getRandomValues(new Uint8Array(16)));
+      localStorage.setItem(LOCK_KEY, JSON.stringify({ type: 'pin', salt, hash: await pinHash(a, salt), at: Date.now() }));
+      closeSheet(); toast('PIN-Sperre ist an 🔒'); render();
+    };
+  };
+  sheet.querySelector('[data-pin]').onclick = pinForm;
+  sheet.querySelector('[data-bio]').onclick = async () => {
+    const r = await enableBio();
+    if (r === true) { closeSheet(); toast(`Entsperren mit ${bioName()} ist an 🔒`); render(); return; }
+    if (r === 'abort') return;
+    step.innerHTML = `<div class="note-card warn"><p><strong>Das hat nicht geklappt.</strong> ${isIOS ? 'Auf dem iPhone braucht die Face-ID-Sperre den iCloud-Schlüsselbund – eine eigene Face-ID-Einstellung für MindSpace gibt es nicht.' : esc(r)}</p></div>
+      ${isIOS ? `<ol class="help-steps">
+        <li><strong>Einstellungen → [dein Name] → iCloud → Passwörter</strong> (bzw. „Passwörter und Schlüsselbund“) einschalten.</li>
+        <li><strong>Einstellungen → Allgemein → Automatisch ausfüllen & Passwörter</strong>: „Passwörter und Passkeys automatisch ausfüllen“ einschalten.</li>
+        <li>iOS 16 oder neuer und Face ID / Code eingerichtet.</li>
+        <li>Beim Hinweis „Passkey sichern?“ auf <strong>Fortfahren</strong> tippen.</li></ol>` : ''}
+      <button class="btn block" data-retry>Noch einmal versuchen</button>
+      <button class="btn block secondary" data-pin2 style="margin-top:10px">Stattdessen PIN-Code verwenden</button>`;
+    step.querySelector('[data-retry]').onclick = () => { closeSheet(); lockSetupSheet(); };
+    step.querySelector('[data-pin2]').onclick = pinForm;
+  };
+}
+async function pinHash(pin, salt) {
+  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(`${salt}:${pin}:mindspace`));
+  return b64u(buf);
+}
+// true = eingerichtet, 'abort' = abgebrochen, sonst Fehlermeldung
+async function enableBio() {
   try {
+    if (!window.PublicKeyCredential) return 'Dieses Gerät oder dieser Browser unterstützt die biometrische Sperre nicht.';
     const cred = await navigator.credentials.create({ publicKey: {
       challenge: crypto.getRandomValues(new Uint8Array(32)),
       rp: { name: 'MindSpace' },
       user: { id: crypto.getRandomValues(new Uint8Array(16)), name: S.me?.email || 'mindspace', displayName: S.me?.name || 'MindSpace' },
       pubKeyCredParams: [{ type: 'public-key', alg: -7 }, { type: 'public-key', alg: -257 }],
-      authenticatorSelection: { authenticatorAttachment: 'platform', userVerification: 'required', residentKey: 'discouraged' },
+      authenticatorSelection: { authenticatorAttachment: 'platform', userVerification: 'required', residentKey: 'preferred' },
       timeout: 60000, attestation: 'none',
     } });
-    if (!cred) return;
-    localStorage.setItem(LOCK_KEY, JSON.stringify({ id: b64u(cred.rawId), uid: S.me?.uid || 'local', at: Date.now() }));
-    toast(`Entsperren mit ${bioName()} ist an 🔒`);
-    render();
+    if (!cred) return 'Kein Schlüssel erhalten.';
+    localStorage.setItem(LOCK_KEY, JSON.stringify({ type: 'bio', id: b64u(cred.rawId), uid: S.me?.uid || 'local', at: Date.now() }));
+    return true;
   } catch (e) {
-    if (e.name === 'AbortError') return;
-    toast(e.name === 'NotAllowedError'
-      ? (isIOS ? 'Nicht eingeschaltet. Prüfe in den iPhone-Einstellungen unter „Face ID & Code“, dass Face ID bzw. ein Code eingerichtet ist, und versuch es noch einmal.' : 'Nicht eingeschaltet – abgebrochen oder auf diesem Gerät ist keine Entsperrung per Fingerabdruck/Gesicht eingerichtet.')
-      : e.name === 'NotSupportedError' || e.name === 'SecurityError' ? 'Dieses Gerät oder dieser Browser unterstützt die biometrische Sperre nicht.' : fail(e));
+    if (e.name === 'AbortError') return 'abort';
+    return e.name === 'NotAllowedError' ? 'Abgebrochen oder auf diesem Gerät nicht erlaubt.' : e.name === 'NotSupportedError' || e.name === 'SecurityError' ? 'Dieses Gerät oder dieser Browser unterstützt die biometrische Sperre nicht.' : fail(e);
   }
 }
 function disableLock() { localStorage.removeItem(LOCK_KEY); toast('Sperre ausgeschaltet'); render(); }
 let lockedSince = null;
+let pinTries = 0;
 function showLock() {
-  if (!lockCfg() || document.getElementById('lock')) return;
+  const cfg = lockCfg();
+  if (!cfg || document.getElementById('lock')) return;
+  const pin = cfg.type === 'pin';
   const el = document.createElement('div');
   el.id = 'lock'; el.setAttribute('role', 'dialog'); el.setAttribute('aria-modal', 'true');
   el.innerHTML = `<div class="lock-box"><img src="icons/logo.svg" alt="" class="lock-logo"><h1>MindSpace</h1><p>Gesperrt</p>
-    <button class="btn block" data-unlock>${I.lock} Mit ${esc(bioName())} entsperren</button>
+    ${pin ? `<form data-pinform><input class="pin-input" name="pin" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="8" autocomplete="off" aria-label="PIN"><button class="btn block" type="submit">${I.lock} Entsperren</button></form>`
+      : `<button class="btn block" data-unlock>${I.lock} Mit ${esc(bioName())} entsperren</button>`}
     ${store.mode === 'cloud' ? '<button class="link center" data-pw>Stattdessen mit Passwort anmelden</button>' : '<button class="link center" data-off>Sperre auf diesem Gerät aufheben</button>'}</div>`;
   document.body.appendChild(el);
   document.body.classList.add('is-locked');
-  el.querySelector('[data-unlock]').onclick = unlock;
+  el.querySelector('[data-unlock]')?.addEventListener('click', unlock);
+  const pf = el.querySelector('[data-pinform]');
+  if (pf) {
+    setTimeout(() => pf.pin.focus(), 150);
+    pf.onsubmit = async (e) => {
+      e.preventDefault();
+      if (await pinHash(pf.pin.value.trim(), cfg.salt) === cfg.hash) { pinTries = 0; hideLock(); return; }
+      pinTries++; pf.pin.value = '';
+      toast(pinTries >= 5 ? 'Zu oft falsch – bitte mit Passwort anmelden.' : 'PIN stimmt nicht.');
+      if (pinTries >= 5 && store.mode === 'cloud') { hideLock(); localStorage.removeItem(LOCK_KEY); await store.signOut(); }
+    };
+  }
   el.querySelector('[data-pw]')?.addEventListener('click', async () => { hideLock(); await store.signOut(); });
   el.querySelector('[data-off]')?.addEventListener('click', () => { if (confirm('Sperre aufheben?')) { localStorage.removeItem(LOCK_KEY); hideLock(); } });
 }
@@ -2628,7 +2703,7 @@ function hideLock() { document.getElementById('lock')?.remove(); document.body.c
 async function unlock() {
   const cfg = lockCfg(); if (!cfg) { hideLock(); return; }
   try {
-    const ok = await navigator.credentials.get({ publicKey: { challenge: crypto.getRandomValues(new Uint8Array(32)), allowCredentials: [{ type: 'public-key', id: unb64u(cfg.id), transports: ['internal'] }], userVerification: 'required', timeout: 60000 } });
+    const ok = await navigator.credentials.get({ publicKey: { challenge: crypto.getRandomValues(new Uint8Array(32)), allowCredentials: [{ type: 'public-key', id: unb64u(cfg.id), transports: ['internal', 'hybrid'] }], userVerification: 'required', timeout: 60000 } });
     if (ok) hideLock();
   } catch (e) { if (e.name !== 'NotAllowedError' && e.name !== 'AbortError') toast(fail(e)); }
 }
@@ -2781,7 +2856,7 @@ app.addEventListener('click', async (e) => {
     case 'export': exportData(); break;
     case 'logout': if (confirm('Abmelden?')) store.signOut(); break;
     case 'hard-reload': hardReload(); break;
-    case 'lock-on': enableLock(); break;
+    case 'lock-on': lockSetupSheet(); break;
     case 'lock-off': if (confirm('Biometrische Sperre ausschalten?')) disableLock(); break;
     case 'voice': voiceSheet(); break;
     case 'open-search': if (S.view !== 'search') S.prevView = S.view; S.view = 'search'; render(); window.scrollTo(0, 0); setTimeout(() => app.querySelector('[data-input="search"]')?.focus(), 60); break;
