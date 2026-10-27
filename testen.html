@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>MindSpace testen</title>
+<meta name="description" content="So installierst du die Testversion von MindSpace auf iPhone, Android oder Computer.">
+<link rel="icon" type="image/svg+xml" href="icons/logo.svg">
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400..800&display=swap" rel="stylesheet">
+<style>
+:root { --bg:#F3F7F4; --surface:#fff; --surface-2:#EAF1EC; --ink:#1C2A25; --ink-2:#566760; --line:#DCE6E0; --brand:#2F9E77; --brand-soft:#DAF1E5; --sun:#FFC857; }
+@media (prefers-color-scheme: dark) { :root { --bg:#0F1513; --surface:#18211E; --surface-2:#202B27; --ink:#EEF4F0; --ink-2:#A4B1AB; --line:#2A3632; --brand:#55C69C; --brand-soft:#1E3A30; } }
+* { box-sizing: border-box; }
+body { margin:0; background:var(--bg); color:var(--ink); font:16px/1.55 Inter, system-ui, -apple-system, sans-serif; }
+main { max-width: 860px; margin: 0 auto; padding: 28px 16px 64px; }
+.hero { display:flex; gap:18px; align-items:center; margin: 8px 0 22px; }
+.hero img { width:72px; height:72px; border-radius:18px; box-shadow:0 18px 40px -18px rgba(23,97,79,.6); }
+h1 { font-size: clamp(28px, 6vw, 40px); letter-spacing:-.03em; margin:0; line-height:1.1; }
+.sub { color:var(--ink-2); margin:4px 0 0; }
+.card { background:var(--surface); border:1.5px solid var(--line); border-radius:20px; padding:20px; margin:14px 0; }
+.card h2 { margin:0 0 10px; font-size:20px; letter-spacing:-.01em; display:flex; gap:10px; align-items:center; }
+ol { margin:0; padding-left:22px; display:grid; gap:8px; }
+.btn { display:inline-flex; align-items:center; justify-content:center; gap:8px; background:var(--brand); color:#fff; text-decoration:none; font-weight:700; padding:14px 22px; border-radius:14px; font-size:17px; }
+.tabs { display:grid; grid-template-columns:repeat(3,1fr); gap:4px; padding:4px; background:var(--surface-2); border-radius:14px; margin: 18px 0 4px; }
+.tabs button { border:0; background:transparent; padding:10px 6px; border-radius:11px; font:inherit; font-weight:650; color:var(--ink-2); cursor:pointer; }
+.tabs button[aria-selected="true"] { background:var(--surface); color:var(--ink); box-shadow:0 1px 4px rgba(0,0,0,.08); }
+[hidden] { display:none !important; }
+.grid { display:grid; grid-template-columns: 1fr; gap:14px; }
+@media (min-width: 760px) { .grid { grid-template-columns: 1.4fr 1fr; } }
+.qr { display:grid; justify-items:center; gap:8px; text-align:center; }
+.qr svg { width: 190px; height: 190px; background:#fff; padding:10px; border-radius:14px; }
+.note { background:var(--brand-soft); border-radius:14px; padding:12px 14px; font-size:14.5px; }
+.check { list-style:none; padding:0; display:grid; gap:8px; margin:0; }
+.check li { padding-left:28px; position:relative; }
+.check li::before { content:'☐'; position:absolute; left:2px; color:var(--brand); font-weight:800; }
+kbd { background:var(--surface-2); border-radius:6px; padding:1px 6px; font:inherit; font-weight:650; }
+small, .muted { color: var(--ink-2); }
+</style>
+</head>
+<body>
+<main>
+  <div class="hero">
+    <img src="icons/icon-192.png" alt="">
+    <div><h1>MindSpace testen</h1><p class="sub">Danke, dass du mittestest! In 2 Minuten ist die App auf deinem Handy.</p></div>
+  </div>
+
+  <div class="grid">
+    <section class="card">
+      <h2>1 · Installieren</h2>
+      <div class="tabs" role="tablist">
+        <button role="tab" data-tab="ios">iPhone</button><button role="tab" data-tab="android">Android</button><button role="tab" data-tab="pc">Computer</button>
+      </div>
+      <div data-panel="ios">
+        <ol>
+          <li>Diese Seite in <strong>Safari</strong> öffnen und auf <strong>„MindSpace öffnen“</strong> tippen.</li>
+          <li>Unten auf <strong>Teilen</strong> tippen (Quadrat mit Pfeil nach oben).</li>
+          <li>Nach unten scrollen → <strong>„Zum Home-Bildschirm“</strong> → <strong>Hinzufügen</strong>.</li>
+          <li>MindSpace ab jetzt immer über das neue Symbol auf dem Home-Bildschirm öffnen – nur dann klappen Push-Nachrichten.</li>
+        </ol>
+      </div>
+      <div data-panel="android" hidden>
+        <ol>
+          <li>Diese Seite in <strong>Chrome</strong> öffnen und auf <strong>„MindSpace öffnen“</strong> tippen.</li>
+          <li>Oben rechts <strong>⋮</strong> → <strong>„App installieren“</strong> (oder „Zum Startbildschirm hinzufügen“).</li>
+          <li>MindSpace über das neue Symbol öffnen.</li>
+        </ol>
+      </div>
+      <div data-panel="pc" hidden>
+        <ol>
+          <li>In <strong>Edge</strong> oder <strong>Chrome</strong> auf <strong>„MindSpace öffnen“</strong> klicken.</li>
+          <li>In der Adresszeile auf das Symbol <strong>„App installieren“</strong> klicken – MindSpace läuft dann wie ein Programm.</li>
+          <li>Oder den QR-Code mit dem Handy scannen.</li>
+        </ol>
+      </div>
+      <p style="margin:18px 0 0"><a class="btn" href="./" data-app>MindSpace öffnen</a></p>
+    </section>
+
+    <section class="card qr" data-qrbox>
+      <h2 style="justify-content:center">Mit dem Handy scannen</h2>
+      <div data-qr></div>
+      <small data-url></small>
+    </section>
+  </div>
+
+  <section class="card">
+    <h2>2 · Einrichten</h2>
+    <ol>
+      <li><strong>Konto erstellen</strong> mit Name, E-Mail und Passwort, dann <strong>„Loslegen“</strong> – du bekommst deinen eigenen, privaten Bereich.</li>
+      <li><strong>Mehr → Push-Nachrichten → Aktivieren</strong> – für Erinnerungen.</li>
+      <li><strong>Mehr → Sicherheit</strong> – Sperre mit Face ID, Fingerabdruck oder PIN.</li>
+      <li><strong>Mehr → Upgrade → Testphase:</strong> Mit deinem <strong>Test-Code</strong> kannst du Free, Daily Driver und Pro kostenlos ausprobieren und jederzeit wechseln.</li>
+      <li>Wer mit Partner/in testen will: <strong>Mehr → Jemanden einladen</strong>, Code weitergeben.</li>
+    </ol>
+    <p class="note" style="margin:14px 0 0">🔑 Den Test-Code bekommst du persönlich mit der Einladung – bitte nicht öffentlich teilen.</p>
+  </section>
+
+  <section class="card">
+    <h2>3 · Was du ausprobieren kannst</h2>
+    <ul class="check">
+      <li>Aufgaben schreiben oder einsprechen (Mikrofon) – z. B. „Zahnarzt Dienstag 9 Uhr“.</li>
+      <li>Wischen: nach rechts = erledigt, nach links = verschieben; gedrückt halten und auf einen Tag ziehen.</li>
+      <li>Farben in der Übersicht: Rot überfällig, Gelb heute, Orange jetzt starten, Blau im Plan, Grün erledigt.</li>
+      <li>Eine E-Mail unter <strong>Eingang → Einfügen</strong> hineinkopieren und von der KI auswerten lassen.</li>
+      <li>Fotos und PDFs an eine Aufgabe hängen und danach suchen („Wo ist die Rechnung?“).</li>
+      <li>Kosten und Raten unter <strong>Mehr → Kosten & Zahlungen</strong>.</li>
+      <li>Aufgaben im Handy-Kalender: <strong>Mehr → Kalender</strong>.</li>
+      <li>Was passiert, wenn das KI-Kontingent der Free-Stufe aufgebraucht ist?</li>
+    </ul>
+  </section>
+
+  <section class="card">
+    <h2>4 · Feedback geben</h2>
+    <p style="margin:0">In der App unter <strong>Mehr → Feedback zur Testversion</strong> – Fehler, Ideen, alles ist willkommen. Je genauer („Was hast du getippt, was ist passiert?“), desto besser.</p>
+    <p class="muted" style="margin:10px 0 0;font-size:14px">Hinweis: Es ist eine Testversion. Bitte keine besonders sensiblen Unterlagen hochladen; Testdaten können zum offiziellen Start gelöscht werden.</p>
+  </section>
+</main>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcode-generator/1.4.4/qrcode.min.js"></script>
+<script>
+(function () {
+  var appUrl = new URL('./', location.href).href;
+  document.querySelector('[data-app]').href = appUrl;
+  // Passenden Reiter vorauswählen
+  var ua = navigator.userAgent, tab = /iphone|ipad|ipod/i.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1) ? 'ios' : /android/i.test(ua) ? 'android' : 'pc';
+  function show(t) {
+    document.querySelectorAll('[data-tab]').forEach(function (b) { b.setAttribute('aria-selected', String(b.dataset.tab === t)); });
+    document.querySelectorAll('[data-panel]').forEach(function (p) { p.hidden = p.dataset.panel !== t; });
+  }
+  document.querySelectorAll('[data-tab]').forEach(function (b) { b.onclick = function () { show(b.dataset.tab); }; });
+  show(tab);
+  // QR-Code nur am Computer zeigen
+  var box = document.querySelector('[data-qrbox]');
+  if (tab !== 'pc') { box.hidden = true; return; }
+  document.querySelector('[data-url]').textContent = appUrl.replace(/^https?:\/\//, '');
+  try { var qr = qrcode(0, 'M'); qr.addData(new URL('testen.html', appUrl).href); qr.make(); document.querySelector('[data-qr]').innerHTML = qr.createSvgTag(6, 0); }
+  catch (e) { box.hidden = true; }
+})();
+</script>
+</body>
+</html>

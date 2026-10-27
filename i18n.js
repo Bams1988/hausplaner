@@ -421,6 +421,76 @@ PATTERNS.push(
   P(/^(.+) – noch nicht bestätigt$/, (m, n) => `${n} – not confirmed yet`),
 );
 
+
+// v14: Abo, native App
+Object.assign(EN, {
+  'Dein Abo': 'Your plan', 'Upgrade': 'Upgrade', 'Details': 'Details', 'Alles ausprobieren': 'Try everything', 'Für den Alltag der ganzen Familie': 'For the whole family’s everyday life',
+  'Für sehr viel Planung, Bau und Verträge': 'For heavy planning, building and contracts', 'KI-Aktionen': 'AI actions', 'E-Mails auslesen': 'Emails read', 'Speicher': 'Storage', 'Personen': 'People',
+  'Eigene Projekte': 'Own projects', 'Zähler starten am 1. jedes Monats neu.': 'Counters reset on the 1st of every month.', 'Abo verwalten': 'Manage subscription',
+  'MindSpace-Abo': 'MindSpace plan', 'Monatlich': 'Monthly', 'Jährlich': 'Yearly', 'Beliebt': 'Popular', 'Monat': 'month', 'Jahr': 'year', '/ Monat': '/ month', '/ Jahr': '/ year',
+  'Tägliche KI-Fristenprüfung': 'Daily AI deadline check', 'Gründlich-Modus mit dem stärksten KI-Modell': 'Thorough mode with the strongest AI model',
+  'Face ID, Kalender, Push und Teilen inklusive': 'Face ID, calendar, push and sharing included', 'Unbegrenzt viele eigene Projekte': 'Unlimited own projects',
+  'Käufe wiederherstellen': 'Restore purchases', 'Ein Abo gilt für alle Personen in eurem gemeinsamen Bereich.': 'A plan covers everyone in your shared space.',
+  'Abos schließt du in der MindSpace-App auf deinem iPhone oder Android-Handy ab – sie gelten dann auch hier.': 'Subscribe in the MindSpace app on your iPhone or Android phone – it then applies here too.',
+  'Die KI-Aktionen für diesen Monat sind aufgebraucht.': 'This month’s AI actions are used up.', 'Das E-Mail-Kontingent für diesen Monat ist aufgebraucht.': 'This month’s email quota is used up.',
+  'Der Speicher für Fotos & Dokumente ist voll.': 'Storage for photos & documents is full.', 'Mit deinem Abo können nicht mehr Personen mitplanen.': 'Your plan doesn’t allow more people.',
+  'Mit deinem Abo kannst du keine weiteren eigenen Projekte anlegen.': 'Your plan doesn’t allow more own projects.', 'Der Gründlich-Modus gehört zu Pro.': 'Thorough mode is part of Pro.',
+  'Einen Moment …': 'One moment …', 'Käufe werden geprüft …': 'Checking purchases …', 'Kein aktives Abo gefunden': 'No active subscription found',
+  'Abos schließt du in der MindSpace-App auf deinem Handy ab.': 'Subscribe in the MindSpace app on your phone.',
+  'Verwalte dein Abo in den Abo-Einstellungen deines Handys (App Store bzw. Google Play).': 'Manage your plan in your phone’s subscription settings (App Store or Google Play).',
+  'Im Abo enthalten': 'Included in your plan', 'Gründlich-Modus': 'Thorough mode', 'Stärkstes KI-Modell für E-Mails und Entwürfe – zählt doppelt': 'Strongest AI model for emails and drafts – counts double',
+  'Passiert sonst jeden Morgen automatisch': 'Otherwise happens automatically every morning', 'Noch keine Adresse': 'No address yet', 'Eigene Weiterleitungs-Adresse anlegen': 'Create your own forwarding address',
+  'Eigene Adresse anlegen': 'Create own address', 'Adresse anlegen': 'Create address', 'Adresse ist bereit': 'Address is ready',
+  'Noch keine Adresse. Tippe auf „Adresse anlegen“ – danach leitest du E-Mails einfach dorthin weiter.': 'No address yet. Tap “Create address” – then simply forward emails there.',
+  'Konto löschen': 'Delete account', 'Konto endgültig löschen': 'Delete account permanently', 'Zum Bestätigen LÖSCHEN eingeben': 'Type LÖSCHEN (or DELETE) to confirm', 'Bitte LÖSCHEN eingeben.': 'Please type DELETE.',
+  'Wird gelöscht …': 'Deleting …', 'Dein Konto wurde gelöscht.': 'Your account was deleted.', 'Datenschutz': 'Privacy', 'Nutzungsbedingungen': 'Terms of use', 'Impressum': 'Legal notice',
+  'App-Sperre': 'App lock', 'PIN-Code verwenden': 'Use PIN code', 'PIN-Code': 'PIN code',
+  'Nicht erlaubt. Ändern in den Einstellungen deines Handys → Mitteilungen → MindSpace.': 'Not allowed. Change in your phone’s settings → Notifications → MindSpace.',
+  'Push-Anmeldung fehlgeschlagen. Versuch es gleich noch einmal.': 'Push registration failed. Please try again.',
+  'Updates kommen über den App Store': 'Updates come via the App Store', 'Updates kommen über den Play Store': 'Updates come via the Play Store',
+  'Kommt sofort an': 'Arrives instantly',
+  'Bezahlt wird über deinen Apple-Account. Abos verlängern sich automatisch um die gewählte Laufzeit, wenn du sie nicht spätestens 24 Stunden vor Ablauf in den Einstellungen deines Apple-Accounts kündigst.': 'Payment is charged to your Apple Account. Subscriptions renew automatically for the chosen period unless cancelled at least 24 hours before the end of the current period in your Apple Account settings.',
+  'Bezahlt wird über deinen Google-Play-Account. Abos verlängern sich automatisch um die gewählte Laufzeit, wenn du sie nicht vor Ablauf in den Play-Store-Abos kündigst.': 'Payment is charged to your Google Play account. Subscriptions renew automatically for the chosen period unless cancelled before the end of the period in your Play Store subscriptions.',
+  'E-Mails weiterleiten:': 'Forward emails:',
+  'MindSpace gibt euch eine eigene Adresse. Alles, was ihr dorthin weiterleitet, liest die KI – samt Anhängen – und legt Aufgaben, Zahlungen und Kontakte an.': 'MindSpace gives you your own address. Everything you forward there is read by the AI – including attachments – and turned into tasks, payments and contacts.',
+});
+PATTERNS.push(
+  P(/^(\d+) eigenes? Projekte? zusätzlich$/, (m, n) => `${n} extra own project${n === '1' ? '' : 's'}`),
+  P(/^Bis zu (\d+) Personen$/, (m, n) => `Up to ${n} people`),
+  P(/^(\d+) KI-Aktionen pro Monat$/, (m, n) => `${n} AI actions per month`),
+  P(/^(\d+) E-Mails pro Monat auslesen \(je bis zu (\d+) (Anhang|Anhänge)\)$/, (m, n, a) => `Read ${n} emails per month (up to ${a} attachment${a === '1' ? '' : 's'} each)`),
+  P(/^(.+) für Fotos & Dokumente$/, (m, x) => `${x} for photos & documents`),
+  P(/^entspricht (.+) \/ Monat$/, (m, x) => `equals ${x} / month`),
+  P(/^(.+) wählen$/, (m, x) => `Choose ${x}`),
+  P(/^Willkommen bei (.+) 🎉$/, (m, x) => `Welcome to ${x} 🎉`),
+  P(/^(.+) ist wieder aktiv$/, (m, x) => `${x} is active again`),
+  P(/^über (.+) – gilt für alle hier$/, (m, x) => `via ${x} – applies to everyone here`),
+  P(/^(\d+) von (\S+) KI-Aktionen diesen Monat · Spracheingabe, Suche, Entwürfe, Auswerten$/, (m, a, b) => `${a} of ${b} AI actions this month · voice, search, drafts, analysis`),
+  P(/^(\d+) von (\S+) E-Mails diesen Monat · Absender verwalten$/, (m, a, b) => `${a} of ${b} emails this month · manage senders`),
+  P(/^· (\d+) von (\S+) E-Mails diesen Monat$/, (m, a, b) => `· ${a} of ${b} emails this month`),
+  P(/^Kommt sofort an · (\d+) von (\S+) E-Mails diesen Monat$/, (m, a, b) => `Arrives instantly · ${a} of ${b} emails this month`),
+  P(/^(.+) Mit einem größeren Abo geht es sofort weiter\.$/, (m, x) => `${tr(x)} A bigger plan lets you continue right away.`),
+  P(/^(.+): (\S+) E-Mails pro Monat, davon (\d+) genutzt\. Die KI liest je Mail bis zu (\d+) (Anhang|Anhänge) mit\.$/, (m, p, a, b, c) => `${p}: ${a} emails per month, ${b} used. The AI reads up to ${c} attachment${c === '1' ? '' : 's'} per email.`),
+  P(/^(.+) einschalten$/, (m, x) => `Turn on ${x}`),
+  P(/^Version (\d+)$/, (m, v) => `Version ${v}`),
+);
+
+
+// v15: Entwürfe, Testphase
+Object.assign(EN, {
+  'Nicht gespeicherte Eingaben wiederhergestellt': 'Unsaved input restored', 'Änderungen gespeichert': 'Changes saved', 'Entwurf verworfen': 'Draft discarded', 'Wiederherstellen': 'Restore',
+  '🧪 Testphase': '🧪 Test phase', 'Probiere jede Stufe kostenlos aus – du brauchst nur den Test-Code, den du mit der Einladung bekommen hast.': 'Try every tier for free – all you need is the test code from your invitation.',
+  'Test-Code eingeben (steht in deiner Einladung):': 'Enter test code (from your invitation):', 'Der Test-Code stimmt nicht.': 'The test code is not correct.', 'Die Testphase ist beendet.': 'The test phase has ended.',
+  'Feedback': 'Feedback', 'Feedback zur Testversion': 'Feedback on the test version', 'Fehler, Ideen, Wünsche – direkt an das MindSpace-Team': 'Bugs, ideas, wishes – straight to the MindSpace team',
+  'Was ist dir aufgefallen? Jede Rückmeldung hilft – auch Kleinigkeiten.': 'What did you notice? Every bit of feedback helps – even small things.',
+  '🐞 Fehler': '🐞 Bug', '💡 Idee': '💡 Idea', '💬 Sonstiges': '💬 Other', 'Deine Nachricht': 'Your message', 'Senden': 'Send',
+  'Mitgeschickt werden nur App-Version, Gerätetyp und die gerade offene Ansicht.': 'Only the app version, device type and the current view are sent along.',
+  'Danke! Dein Feedback ist angekommen 🙏': 'Thanks! Your feedback has arrived 🙏', 'Dein Abo · Testphase': 'Your plan · test phase',
+});
+PATTERNS.push(
+  P(/^Testphase: (.+) ist aktiv$/, (m, x) => `Test phase: ${x} is active`),
+);
+
 export function tr(s) {
   if (LANG === 'de' || s == null) return s;
   const str = String(s);

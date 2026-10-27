@@ -14,6 +14,19 @@ Die Einrichtung hat fünf Stufen. Schon nach Stufe 1 kannst du die App benutzen.
 
 > **Du hattest schon den Hausplaner eingerichtet?** Dann lies zuerst den Abschnitt **„Umstieg vom Hausplaner“** ganz unten. Stufe 1–4 musst du nicht wiederholen.
 
+> **Update auf Version 15 (Schutz vor verlorenen Eingaben + Testphase)**
+> 1. **GitHub → Add file → Upload files:** `app.js`, `store.js`, `i18n.js`, `styles.css`, `sw.js`, `firestore.rules`, `config.beispiel.js`, `testen.html` (neu), `TESTVERSION.md` (neu) und `ANLEITUNG.md`; aus dem Ordner `functions` die Dateien `index.js` und `.env.beispiel`. `config.js` nicht anfassen.
+> 2. **Firebase → Firestore → Regeln:** Inhalt der neuen `firestore.rules` einfügen → **Veröffentlichen**.
+> 3. Auf jedem Gerät **Mehr → Neueste Version laden** (Version 15).
+> 4. Bekannte testen lassen: siehe **TESTVERSION.md**.
+
+> **Update auf Version 14 (vorbereitet für App Store, Google Play und Abos)** – für euren bisherigen Betrieb ändert sich nichts, bis du die Server-Dienste einschaltest:
+> 1. **GitHub → Add file → Upload files:** `app.js`, `store.js`, `ai.js`, `i18n.js`, `plans.js` (neu), `native.js` (neu), `styles.css`, `sw.js`, `firestore.rules`, `storage.rules` (neu), `storage-cors.json` (neu), `firebase.json` (neu), `config.beispiel.js` (neu), `reminders-core.js` (neu), `ANLEITUNG.md`, `VEROEFFENTLICHUNG.md` (neu) an die gewohnte Stelle; `send-reminders.mjs` in `scripts`; die Ordner `functions`, `native`, `mail-worker` und `rechtliches` komplett; `reminders.yml`, `app-ios.yml` und `app-android.yml` in `.github/workflows`. `config.js` nicht anfassen.
+> 2. **Firebase → Firestore → Regeln:** Inhalt der neuen `firestore.rules` einfügen → **Veröffentlichen**.
+> 3. **Postbote:** Code durch die neue `MindSpace-Postbote.gs` ersetzen (kleine Korrektur im Kalender-Abo).
+> 4. Auf jedem Gerät **Mehr → Neueste Version laden** (Version 14).
+> 5. Alles Weitere – Server-Dienste, Abos, Store-Veröffentlichung – steht Schritt für Schritt in **VEROEFFENTLICHUNG.md**.
+
 > **Update auf Version 13 (Zuständigkeit & Kalender)** – wenn MindSpace bei dir schon läuft:
 > 1. **GitHub → Add file → Upload files:** `app.js`, `store.js`, `i18n.js`, `styles.css`, `sw.js`, `firestore.rules`, `ANLEITUNG.md` an die gewohnte Stelle und `send-reminders.mjs` in den Ordner `scripts`. `config.js` nicht anfassen. → **Commit changes**.
 > 2. **Firebase → Firestore Database → Regeln:** alles löschen, Inhalt der neuen `firestore.rules` einfügen → **Veröffentlichen**. (Ohne diesen Schritt kann niemand den Kalender abonnieren.)

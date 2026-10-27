@@ -5,7 +5,10 @@ import {
   extractFromText, draftEmail, assessTasks, testConnection, urgencyOf, aiKeyOf, searchWithAI,
   STATUS, MODELS, DEFAULT_MODEL, DEFAULT_AREAS, HOUSE_PHASES,
 } from './ai.js';
-const APP_VERSION = '13';
+import { PLANS, PLAN_ORDER, planOf, fmtLimit, storageLabel } from './plans.js';
+import * as native from './native.js';
+const APP_VERSION = '15';
+const CFG = self.HAUS_CONFIG || {};
 
 // ================================================================== Zustand
 const REMINDERS = [
@@ -19,7 +22,7 @@ const S = {
   me: null, authReady: false, project: null, projectState: 'loading',
   tasks: [], infos: [], contacts: [], areas: [], costs: [], comments: [], files: [], ai: null, aiBusy: false, costArea: 'all', docsArea: 'all', prevView: null,
   pasteText: '', parsed: null, saveInfo: true, openInfo: null, infoQuery: '', contactQuery: '', authTab: 'login', authError: '',
-  pendingRender: false,
+  pendingRender: false, usage: {},
 };
 const store = createStore();
 const app = document.getElementById('app');
@@ -33,7 +36,7 @@ const addDays = (s, n) => { const d = parseISO(s); d.setDate(d.getDate() + n); r
 const dayDiff = (s, from = todayISO()) => Math.round((parseISO(s) - parseISO(from)) / 864e5);
 const fmtDate = (s, o = { weekday: 'short', day: 'numeric', month: 'short' }) => parseISO(s).toLocaleDateString(LOC(), o).replace(/\.$/, '');
 const isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
-const standalone = window.matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+const standalone = native.isNative() || window.matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
 const isDesktop = () => window.matchMedia('(min-width: 900px) and (hover: hover)').matches;
 let installPrompt = null;
 window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); installPrompt = e; render(); });
@@ -43,7 +46,12 @@ const members = () => S.project?.members || [];
 const nameOf = (uid) => (S.project?.memberNames || {})[uid] || 'Unbekannt';
 const initial = (uid) => nameOf(uid).trim().charAt(0).toUpperCase() || '?';
 const myName = () => (S.me?.name && S.me.name !== 'Ich' ? S.me.name : '');
-const aiCfg = () => (S.ai ? { apiKey: S.ai.apiKey, model: S.ai.model || DEFAULT_MODEL } : null);
+const aiCfg = () => {
+  if (!S.ai) return null;
+  // Mit Abo: KI läuft über den MindSpace-Server; ist das Kontingent aufgebraucht, erscheint die Abo-Auswahl
+  if (S.ai.managed) return { proxy: (body, kind) => store.aiProxy(body, kind, !!S.project?.aiDeep).catch((e) => { if (e.code === 'quota') setTimeout(() => paywallSheet('ai'), 250); throw e; }) };
+  return { apiKey: S.ai.apiKey, model: S.ai.model || DEFAULT_MODEL };
+};
 const contactById = (id) => S.contacts.find((c) => c.id === id) || null;
 const norm = (s) => String(s || '').toLowerCase().replace(/\b(herr|frau|dr\.?|dipl\.?-?\w*)\s+/g, '').replace(/[^a-zäöüß]/g, '');
 const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
@@ -51,6 +59,11 @@ const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
 // --- Lebensbereiche
 const DEF_AREAS = DEFAULT_AREAS.map((a) => ({ ...a, name: tr(a.name), phases: (a.phases || []).map(tr) }));
 const fullAccess = () => store.mode !== 'cloud' || !Array.isArray(S.project?.access?.[S.me?.uid]);
+// Abo: nur mit Server-Diensten (backend.enabled) – im bisherigen Betrieb gibt es keine Limits
+const billing = () => store.mode === 'cloud' && !!store.backend;
+const curPlan = () => (billing() ? (S.project?.plan || 'free') : null);
+const lim = (k) => (billing() ? planOf(curPlan()).limits[k] : Infinity);
+const ownProjects = () => S.areas.filter((a) => !DEFAULT_AREAS.some((d) => d.id === a.id)).length;
 const scopeLabel = (sc) => (!Array.isArray(sc) ? 'Alle Projekte' : sc.map((id) => S.areas.find((a) => a.id === id)?.name || DEF_AREAS.find((a) => a.id === id)?.name || id).join(', ') || 'Keine Projekte');
 const areas = () => (!fullAccess() ? [...S.areas].sort((a, b) => (a.order ?? 99) - (b.order ?? 99)) : S.areas.length ? [...S.areas].sort((a, b) => (a.order ?? 99) - (b.order ?? 99) || a.name.localeCompare(b.name, LANG)) : DEF_AREAS);
 const areaById = (id) => areas().find((a) => a.id === id) || null;
@@ -717,17 +730,18 @@ function viewInbox() {
 }
 function inboxAddressCard() {
   const p = S.project || {};
-  const addr = p.inboxAddress;
+  const addr = inboxAddr();
+  if (billing() && !addr) return fullAccess() && CFG.backend?.mailDomain ? `<div class="note-card"><p><strong>E-Mails weiterleiten:</strong> MindSpace gibt euch eine eigene Adresse. Alles, was ihr dorthin weiterleitet, liest die KI – samt Anhängen – und legt Aufgaben, Zahlungen und Kontakte an.</p><button class="btn small" data-action="inbox-create" style="margin-top:10px">Adresse anlegen</button></div>` : '';
   if (store.mode !== 'cloud') return `<div class="note-card"><p><strong>E-Mails weiterleiten</strong> geht, sobald die Cloud eingerichtet ist (Anleitung, Stufe 2 und 5). Bis dahin: Text unter „Einfügen“ hineinkopieren.</p></div>`;
   if (!addr) return `<div class="note-card"><p><strong>Tipp:</strong> Mit einem eigenen MindSpace-Postfach leitest du E-Mails einfach weiter – die KI legt die Aufgaben dann von selbst an. Einrichtung: Anleitung, Stufe 5.</p></div>`;
-  const fast = p.inboxSource === 'gmail-script';
+  const fast = billing() || p.inboxSource === 'gmail-script';
   const last = p.inboxCheckedAt ? Math.round((Date.now() - p.inboxCheckedAt) / 60000) : null;
   const stale = last != null && last > (fast ? 20 : 90);
   const ign = p.inboxLastIgnored && Date.now() - p.inboxLastIgnored.at < 3 * 864e5 && !(p.inboxAllowed || []).includes(p.inboxLastIgnored.from) ? p.inboxLastIgnored : null;
   return `<div class="address-card">
     <p>Leite E-Mails weiter an</p>
     <button class="address" data-action="copy-address">${esc(addr)} ${I.copy}</button>
-    <small>${stale ? 'Längere Zeit nicht abgerufen – siehe Anleitung, falls das so bleibt.' : last == null ? (fast ? 'Wird jede Minute abgerufen.' : 'Wird alle 15 Minuten abgerufen.') : last < 2 ? 'Gerade eben abgerufen' + (fast ? ' – jede Minute aktuell.' : '.') : `Zuletzt vor ${last} Min. abgerufen.`}</small>
+    <small>${billing() ? `Kommt sofort an · ${S.usage?.mails || 0} von ${fmtLimit(lim('mails'))} E-Mails diesen Monat` : stale ? 'Längere Zeit nicht abgerufen – siehe Anleitung, falls das so bleibt.' : last == null ? (fast ? 'Wird jede Minute abgerufen.' : 'Wird alle 15 Minuten abgerufen.') : last < 2 ? 'Gerade eben abgerufen' + (fast ? ' – jede Minute aktuell.' : '.') : `Zuletzt vor ${last} Min. abgerufen.`}</small>
   </div>
   ${ign ? `<div class="note-card"><p><strong>Nicht gelesen:</strong> „${esc(ign.subject)}“ von ${esc(ign.from)}. MindSpace liest nur Mails von euren eigenen Adressen und von erlaubten Absendern.</p>
     <div class="btn-row" style="margin-top:10px"><button class="btn small" data-action="allow-sender" data-from="${esc(ign.from)}">${esc(ign.from)} erlauben</button><button class="btn small ghost" data-action="allow-sender" data-from="@${esc(ign.from.split('@')[1] || '')}">Alle von @${esc(ign.from.split('@')[1] || '')}</button></div></div>` : ''}`;
@@ -897,6 +911,7 @@ function viewContacts() {
 // ================================================================== Mehr
 function pushState() {
   if (store.mode !== 'cloud') return { on: false, text: 'Braucht die Cloud-Einrichtung' };
+  if (native.isNative()) return localStorage.getItem('hausplaner-push-token') ? { on: true, text: 'Aktiv auf diesem Gerät' } : { on: false, text: 'Noch nicht aktiviert' };
   if (typeof Notification === 'undefined') return { on: false, text: isIOS && !standalone ? 'Erst zum Home-Bildschirm hinzufügen' : 'Auf diesem Gerät nicht verfügbar' };
   if (Notification.permission === 'denied') return { on: false, text: isIOS ? 'Abgelehnt – in den iPhone-Einstellungen erlauben' : 'Abgelehnt – im Browser beim Schloss-Symbol neben der Adresse erlauben' };
   if (Notification.permission === 'granted' && localStorage.getItem('hausplaner-push-token')) return { on: true, text: 'Aktiv auf diesem Gerät' };
@@ -928,9 +943,11 @@ function viewMore() {
     const inner = `<span class="who">${esc(initial(u))}</span><span class="grow">${esc(nameOf(u))}${u === S.me?.uid ? ' <span class="muted">(du)</span>' : ''}<small>${esc(scopeLabel(sc))}</small></span>`;
     return full && u !== S.me?.uid ? `<button class="setting" data-action="member" data-id="${esc(u)}">${inner}${I.chevron}</button>` : `<div class="setting">${inner}</div>`;
   }).join('');
-  const modelName = S.ai ? (MODELS.find((m) => m[0] === S.ai.model) || [0, S.ai.model])[1].split(' – ')[0] : '';
+  const modelName = S.ai?.model ? (MODELS.find((m) => m[0] === S.ai.model) || [0, String(S.ai.model)])[1].split(' – ')[0] : S.ai?.apiKey ? MODELS[0][1].split(' – ')[0] : '';
   return `<main class="view">
     <header class="page-head"><h1>Mehr</h1></header>
+    ${billing() ? planCard() : ''}
+    ${CFG.backend?.beta && store.mode === 'cloud' ? `<div class="settings" style="margin-bottom:14px"><button class="setting" data-action="feedback"><span class="area-dot" style="--area:#8E7CE0">🧪</span><span class="grow">Feedback zur Testversion<small>Fehler, Ideen, Wünsche – direkt an das MindSpace-Team</small></span>${I.chevron}</button></div>` : ''}
     ${cloud ? '' : `<div class="note-card"><p><strong>Lokaler Modus.</strong> Alles bleibt auf diesem Gerät. Für Teilen, Push-Nachrichten und den E-Mail-Eingang richte die Cloud ein (Anleitung, Stufe 2).</p></div>`}
 
     <div class="settings" style="margin-top:4px">
@@ -961,7 +978,17 @@ function viewMore() {
     </div>
     <p class="hint">Zur eingestellten Zeit jeder Aufgabe, morgens ab 7 Uhr eine kurze Übersicht und ein Hinweis, wenn etwas jetzt starten sollte. Jedes Gerät einmal selbst aktivieren.</p>
 
-    ${full ? `<h2 class="section-title">KI-Assistent</h2>
+    ${billing() ? `<h2 class="section-title">KI-Assistent</h2>
+    <div class="settings">
+      <div class="setting"><span class="status-dot on"></span><span class="grow">Im Abo enthalten<small>${S.usage?.ai || 0} von ${fmtLimit(lim('aiActions'))} KI-Aktionen diesen Monat · Spracheingabe, Suche, Entwürfe, Auswerten</small></span></div>
+      ${full ? `<button class="setting" data-action="ai-deep"><span class="status-dot ${S.project?.aiDeep && curPlan() === 'pro' ? 'on' : ''}"></span><span class="grow">Gründlich-Modus${curPlan() === 'pro' ? '' : ' <span class="plan-badge">Pro</span>'}<small>Stärkstes KI-Modell für E-Mails und Entwürfe – zählt doppelt</small></span><span class="end">${S.project?.aiDeep && curPlan() === 'pro' ? 'An' : 'Aus'}</span></button>` : ''}
+      ${full && planOf(curPlan()).features.dailyCheck ? `<button class="setting" data-action="assess-all" ${S.aiBusy ? 'disabled' : ''}><span class="grow">${S.aiBusy ? 'Fristen werden geprüft …' : 'Alle Fristen jetzt prüfen'}<small>Passiert sonst jeden Morgen automatisch</small></span></button>` : ''}
+    </div>
+    ${full ? `<h2 class="section-title">E-Mail-Eingang</h2>
+    <div class="settings">
+      <button class="setting" data-action="inbox-settings"><span class="status-dot ${inboxAddr() ? 'on' : ''}"></span><span class="grow">${inboxAddr() ? esc(inboxAddr()) : 'Noch keine Adresse'}<small>${inboxAddr() ? `${S.usage?.mails || 0} von ${fmtLimit(lim('mails'))} E-Mails diesen Monat · Absender verwalten` : 'Eigene Weiterleitungs-Adresse anlegen'}</small></span>${I.chevron}</button>
+    </div>` : ''}
+    ` : full ? `<h2 class="section-title">KI-Assistent</h2>
     <div class="settings">
       <button class="setting" data-action="ai-settings"><span class="status-dot ${S.ai ? 'on' : ''}"></span><span class="grow">Claude von Anthropic<small>${S.ai ? `Aktiv · ${esc(modelName)}` : 'Nicht eingerichtet'}</small></span><span class="end">${S.ai ? 'Ändern' : 'Einrichten'}</span></button>
       ${S.ai ? `<button class="setting" data-action="assess-all" ${S.aiBusy ? 'disabled' : ''}><span class="grow">${S.aiBusy ? 'Fristen werden geprüft …' : 'Alle Fristen jetzt prüfen'}<small>Was ist bis wann realistisch zu schaffen?</small></span></button>` : ''}
@@ -969,7 +996,7 @@ function viewMore() {
 
     <h2 class="section-title">E-Mail-Eingang</h2>
     <div class="settings">
-      <button class="setting" data-action="inbox-settings"><span class="status-dot ${S.project?.inboxAddress ? 'on' : ''}"></span><span class="grow">${S.project?.inboxAddress ? esc(S.project.inboxAddress) : 'Nicht eingerichtet'}<small>${S.project?.inboxAddress ? 'Erlaubte Absender verwalten' : 'Anleitung, Stufe 5'}</small></span>${I.chevron}</button>
+      <button class="setting" data-action="inbox-settings"><span class="status-dot ${inboxAddr() ? 'on' : ''}"></span><span class="grow">${inboxAddr() ? esc(inboxAddr()) : 'Nicht eingerichtet'}<small>${inboxAddr() ? 'Erlaubte Absender verwalten' : billing() ? 'Eigene Adresse anlegen' : 'Anleitung, Stufe 5'}</small></span>${I.chevron}</button>
     </div>
 
     ` : ''}
@@ -986,7 +1013,7 @@ function viewMore() {
         <select class="set-select" data-action="set-theme" aria-label="Design">${[['auto', 'Automatisch'], ['light', 'Hell'], ['dark', 'Dunkel']].map(([v, l]) => `<option value="${v}" ${themePref() === v ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
     </div>
 
-    ${window.PublicKeyCredential || lockCfg() ? `<h2 class="section-title">Sicherheit</h2>
+    ${native.isNative() || window.PublicKeyCredential || lockCfg() ? `<h2 class="section-title">Sicherheit</h2>
     <div class="settings">
       <button class="setting" data-action="${lockCfg() ? 'lock-off' : 'lock-on'}"><span class="status-dot ${lockCfg() ? 'on' : ''}"></span><span class="grow">${lockCfg()?.type === 'pin' ? 'App-Sperre mit PIN' : `Mit ${esc(bioName())} entsperren`}<small>${lockCfg() ? 'An – MindSpace sperrt sich nach 2 Minuten im Hintergrund' : 'Face ID, Touch ID oder PIN – auf jedem Gerät einmal einschalten'}</small></span><span class="end">${lockCfg() ? 'Ausschalten' : 'Einschalten'}</span></button>
     </div>` : ''}
@@ -997,7 +1024,9 @@ function viewMore() {
         ? `<button class="setting" data-action="install"><span class="area-dot" style="--area:var(--brand)">💻</span><span class="grow">Als Programm installieren<small>Eigenes Fenster und Symbol – auf diesem Computer oder Gerät</small></span><span class="end">Installieren</span></button>`
         : !isIOS ? `<div class="setting"><span class="area-dot" style="--area:var(--brand)">💻</span><span class="grow">Als Programm installieren<small>${esc(installHow())}</small></span></div>` : ''}
       ${isDesktop() ? `<div class="setting"><span class="area-dot" style="--area:#8E7CE0">⌨️</span><span class="grow">Tastenkürzel<small>N = neue Aufgabe · / = Schnelleingabe · 1–5 = Bereiche wechseln · Esc = schließen</small></span></div>` : ''}
-      <button class="setting" data-action="hard-reload"><span class="grow">Neueste Version laden<small>Version ${APP_VERSION} – Speicher leeren und neu starten</small></span></button>
+      ${native.isNative() ? `<div class="setting"><span class="grow">Version ${APP_VERSION}<small>Updates kommen über den ${native.platform() === 'ios' ? 'App Store' : 'Play Store'}</small></span></div>`
+        : `<button class="setting" data-action="hard-reload"><span class="grow">Neueste Version laden<small>Version ${APP_VERSION} – Speicher leeren und neu starten</small></span></button>`}
+      ${legalLinks()}
     </div>
 
     <h2 class="section-title">Daten</h2>
@@ -1010,6 +1039,7 @@ function viewMore() {
     <div class="settings">
       <div class="setting"><span class="grow">${esc(S.me?.name)}<small>${esc(S.me?.email)}</small></span></div>
       <button class="setting danger" data-action="logout">Abmelden</button>
+      ${billing() ? '<button class="setting danger" data-action="delete-account">Konto löschen</button>' : ''}
     </div>` : ''}
     <p class="hint center" style="margin-top:28px">MindSpace · Planung darf leicht sein.</p>
   </main>`;
@@ -1052,7 +1082,9 @@ function viewSetup() {
 }
 
 // ================================================================== Sheets
+let sheetGuard = null; // Aufräumen/Sichern, bevor ein Blatt geschlossen oder ersetzt wird
 function openSheet(html, onMount) {
+  if (sheetGuard) { const g = sheetGuard; sheetGuard = null; try { g(); } catch (e) { console.warn(e); } }
   sheetRoot.innerHTML = `<div class="backdrop" data-close></div><div class="sheet" role="dialog" aria-modal="true"><div class="sheet-grab"></div>${html}</div>`;
   const sheet = sheetRoot.querySelector('.sheet');
   sheetRoot.querySelector('[data-close]').onclick = closeSheet;
@@ -1060,7 +1092,11 @@ function openSheet(html, onMount) {
   onMount?.(sheet);
   return sheet;
 }
-function closeSheet() { sheetRoot.innerHTML = ''; if (S.pendingRender) render(); }
+function closeSheet(opts) {
+  const g = sheetGuard; sheetGuard = null;
+  if (g && !opts?.saved) { try { g(); } catch (e) { console.warn(e); } }
+  sheetRoot.innerHTML = ''; if (S.pendingRender) render();
+}
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && sheetRoot.innerHTML) closeSheet(); });
 
 function contactOptions(selected) {
@@ -1176,6 +1212,53 @@ function taskSheet(task, preset = {}) {
     else lh.textContent = f.due ? 'Vorlauf = wie viele Tage vorher du anfangen musst, z. B. weil die Bank Zeit braucht. MindSpace erinnert dich dann rechtzeitig.' : '';
   };
   form.addEventListener('input', upd); form.addEventListener('change', upd); upd();
+  // Ungespeicherte Eingaben schützen: Entwurf auf dem Gerät, bestehende Aufgaben automatisch speichern
+  const draftKey = task ? `task:${task.id}` : 'task:new';
+  const rawFields = () => Object.fromEntries(new FormData(form));
+  const cmtBox = () => sheet.querySelector('[data-cmt]');
+  let initial = JSON.stringify(rawFields());
+  const dirty = () => JSON.stringify(rawFields()) !== initial;
+  const keepDraft = () => {
+    const cmt = cmtBox()?.value || '';
+    if (dirty() || cmt.trim()) draftSave({ key: draftKey, fields: rawFields(), cmt, ts: Date.now() });
+    else draftClear(draftKey);
+  };
+  sheet.addEventListener('input', keepDraft);
+  sheet.addEventListener('change', keepDraft);
+  const saveSilently = async ({ quiet = false } = {}) => {
+    if (!task || !dirty()) return false;
+    const data = formData();
+    if (!data.title) return false;
+    if (data.repeat && !data.due) { data.due = firstRepeatDue(data.repeat); data.repeatDay = parseISO(data.due).getDate(); }
+    if ((data.assignee || 'all') !== (task.assignee || 'all') && data.assignee !== 'all' && !canSee(data.assignee, data.areaId)) return false;
+    assignPatch(data, task);
+    const before = S.tasks.find((x) => x.id === task.id) || task;
+    initial = JSON.stringify(rawFields());
+    await store.updateTask(task.id, { ...data, isNew: false }, before);
+    if (!cmtBox()?.value.trim()) draftClear(draftKey);
+    if (!quiet) toast('Änderungen gespeichert', { label: 'Rückgängig', fn: () => { const { id, ...rest } = before; store.updateTask(task.id, rest, S.tasks.find((x) => x.id === task.id) || before); } });
+    return true;
+  };
+  sheet._autosave = () => saveSilently({ quiet: true }).catch((e) => console.warn('Autospeichern:', e));
+  sheetGuard = () => {
+    if (task) { saveSilently().catch((e) => toast(fail(e))); return; }
+    const raw = rawFields();
+    if (dirty() && (raw.title?.trim() || raw.notes?.trim())) {
+      const d = draftLoad();
+      toast('Entwurf verworfen', { label: 'Wiederherstellen', fn: () => { if (d) restoreDraft(d); } });
+    }
+    draftClear(draftKey);
+  };
+  if (S.restoreDraft && S.restoreDraft.key === draftKey) {
+    const d = S.restoreDraft; S.restoreDraft = null;
+    for (const [k, v] of Object.entries(d.fields || {})) { const el = form.elements[k]; if (el && typeof el.value === 'string' && !(el instanceof RadioNodeList)) el.value = v; }
+    if (d.fields?.notes?.trim() || d.fields?.leadDays || d.fields?.time) form.querySelector('details.more-fields')?.setAttribute('open', '');
+    if (d.cmt && cmtBox()) cmtBox().value = d.cmt;
+    upd();
+    if (task) initial = ''; // wiederhergestellte Eingaben gelten als ungespeichert
+    keepDraft();
+    setTimeout(() => toast('Nicht gespeicherte Eingaben wiederhergestellt'), 350);
+  }
   const markChips = () => sheet.querySelectorAll('[data-setdue]').forEach((b) => b.classList.toggle('on', b.dataset.setdue === (form.due.value || '')));
   sheet.querySelectorAll('[data-setdue]').forEach((b) => b.addEventListener('click', () => { form.due.value = b.dataset.setdue; markChips(); upd(); }));
   form.due.addEventListener('change', markChips); markChips();
@@ -1191,7 +1274,7 @@ function taskSheet(task, preset = {}) {
       const twin = !task ? findSimilar(data.title, 0.8) : null;
       if (twin && confirm(`Es gibt schon eine ähnliche Aufgabe: „${twin.title}“. Zusammenführen statt doppelt anlegen?`)) {
         await bundleInto(twin, { text: `✍️ ${data.title}${data.notes ? ' – ' + data.notes : ''}`, due: data.due, time: data.time });
-        closeSheet();
+        draftClear(draftKey); closeSheet({ saved: true });
         if (pending.length) await uploadFiles(pending.map((p) => p.file), { taskId: twin.id, areaId: areaOf(twin).id });
         else toast(`Zu „${twin.title}“ hinzugefügt`);
         return;
@@ -1199,7 +1282,9 @@ function taskSheet(task, preset = {}) {
       if (!assignPatch(data, task)) return;
       if (task) await store.updateTask(task.id, { ...data, isNew: false }, S.tasks.find((x) => x.id === task.id) || task);
       else id = await store.addTask({ ...data, source: 'manual' });
-      closeSheet();
+      if (cmtBox()?.value.trim()) draftSave({ key: `task:${id}`, fields: {}, cmt: cmtBox().value, ts: Date.now() }); else draftClear(draftKey);
+      if (!task) draftClear('task:new');
+      closeSheet({ saved: true });
       if (pending.length) await uploadFiles(pending.map((p) => p.file), { taskId: id, areaId: data.areaId });
       else toast(data.assignNotify ? `${nameOf(data.assignee)} bekommt eine Nachricht` : task ? 'Gespeichert' : 'Aufgabe angelegt');
     } catch (err) { toast(fail(err)); }
@@ -1221,10 +1306,14 @@ function taskSheet(task, preset = {}) {
       sheet.querySelector('[data-urg]').outerHTML = urgencyBox(fresh);
     } catch (err) { toast(fail(err)); e.target.disabled = false; e.target.textContent = 'Mit KI neu einschätzen'; }
   });
-  sheet.querySelector('[data-act="done"]')?.addEventListener('click', (e) => { const r = e.target.getBoundingClientRect(); closeSheet(); toggleTask(task.id, r.left + 20, r.top + 10); });
+  sheet.querySelector('[data-act="done"]')?.addEventListener('click', async (e) => {
+    const r = e.target.getBoundingClientRect();
+    try { await saveSilently({ quiet: true }); } catch (err) { toast(fail(err)); return; }
+    draftClear(draftKey); closeSheet({ saved: true }); toggleTask(task.id, r.left + 20, r.top + 10);
+  });
   sheet.querySelector('[data-act="delete"]')?.addEventListener('click', async () => {
     if (!confirm('Aufgabe wirklich löschen?')) return;
-    closeSheet();
+    draftClear(draftKey); closeSheet({ saved: true });
     try { await store.deleteTask(task.id); toast('Gelöscht', { label: 'Rückgängig', fn: () => { const { id, ...rest } = task; store.addTask(rest); } }); } catch (err) { toast(fail(err)); }
   });
 }
@@ -1440,13 +1529,16 @@ function areaSheet(a) {
 }
 
 // --- E-Mail-Eingang
+const inboxAddr = () => (billing() ? (S.project?.inboxAlias && CFG.backend?.mailDomain ? `${S.project.inboxAlias}@${CFG.backend.mailDomain}` : '') : S.project?.inboxAddress || '');
 function inboxSheet() {
-  const addr = S.project?.inboxAddress;
+  const addr = inboxAddr();
   const allowed = (S.project?.inboxAllowed || []).join('\n');
   const sheet = openSheet(`
     <div class="sheet-head"><h2>E-Mail-Eingang</h2><button class="btn ghost" data-dismiss>Abbrechen</button></div>
     ${addr ? `<div class="address-card" style="margin-bottom:16px"><p>Weiterleiten an</p><button class="address" type="button" data-act="copy">${esc(addr)} ${I.copy}</button></div>`
+      : billing() ? `<div class="note-card"><p>Noch keine Adresse. Tippe auf „Adresse anlegen“ – danach leitest du E-Mails einfach dorthin weiter.</p><button class="btn small" type="button" data-action="inbox-create" style="margin-top:8px">Adresse anlegen</button></div>`
       : `<div class="note-card"><p>Noch kein Postfach verbunden. Die Einrichtung (ca. 15 Minuten) steht in der Anleitung, Stufe 5.</p></div>`}
+    ${billing() ? `<p class="hint">${esc(planOf(curPlan()).name)}: ${fmtLimit(lim('mails'))} E-Mails pro Monat, davon ${S.usage?.mails || 0} genutzt. Die KI liest je Mail bis zu ${lim('mailAttachments')} ${lim('mailAttachments') === 1 ? 'Anhang' : 'Anhänge'} mit.</p>` : ''}
     <form>
       <label class="field"><span>Erlaubte Absender (einer pro Zeile)</span><textarea name="allowed" rows="5" placeholder="z. B. @allkauf.de&#10;kita@beispiel.de">${esc(allowed)}</textarea></label>
       <p class="hint">Mails von euren eigenen Konto-Adressen${S.me?.email ? ` (z. B. ${esc(S.me.email)})` : ''} sind immer erlaubt – also alles, was ihr selbst weiterleitet. Ergänze hier Absender, die direkt an das Postfach schreiben oder automatisch weitergeleitet werden. Mit „@firma.de“ erlaubst du eine ganze Firma. Alles andere ignoriert MindSpace – so entstehen keine Aufgaben aus Werbung.</p>
@@ -1539,6 +1631,7 @@ async function inviteSheet() {
       <p class="hint">Die Anleitung erklärt die Einrichtung Schritt für Schritt (ca. 30 Minuten am Computer). Bisherige Aufgaben werden übernommen.</p>`);
     return;
   }
+  if (members().length >= lim('members')) { paywallSheet('members'); return; }
   const sheet = openSheet(`<div class="sheet-head"><h2>Einladen</h2><button class="btn ghost" data-dismiss>Abbrechen</button></div>
     <p class="hint" style="margin-top:-4px">Wozu soll die Person Zugriff bekommen?</p>
     <form>
@@ -2254,6 +2347,10 @@ async function prepareFile(file) {
 async function uploadFiles(files, link) {
   const l = { taskId: link.taskId || null, costId: link.costId || null, areaId: link.areaId || null };
   let ok = 0;
+  if (billing()) {
+    const need = files.reduce((n, f) => n + Math.min(f.size, MAX_FILE), 0);
+    if ((S.project?.storageBytes || 0) + need * 0.6 > lim('storageMB') * 1048576) { paywallSheet('storage'); return; }
+  }
   for (const [i, f] of files.entries()) {
     if (f.size > MAX_FILE) { toast(`„${f.name}“ ist zu groß (höchstens 15 MB).`); continue; }
     toast(files.length > 1 ? `Wird gespeichert … ${i + 1} von ${files.length}` : 'Wird gespeichert …');
@@ -2303,6 +2400,7 @@ async function openViewer(f) {
       close();
       try { await store.deleteFile(f); blobCache.delete(f.id); toast('Gelöscht'); } catch (err) { toast(fail(err)); }
     } else if (k === 'share' && blob) {
+      if (native.isNative()) { try { await native.shareFile(blob, f.name); } catch (err) { if (!/cancel/i.test(String(err?.message))) toast(fail(err)); } return; }
       const file = new File([blob], f.name, { type: f.type || blob.type });
       if (navigator.canShare?.({ files: [file] })) { try { await navigator.share({ files: [file], title: f.name }); return; } catch (err) { if (err.name === 'AbortError') return; } }
       const a = document.createElement('a'); a.href = url; a.download = f.name; a.target = '_blank'; a.rel = 'noopener'; document.body.appendChild(a); a.click(); a.remove();
@@ -2368,7 +2466,7 @@ function wireThread(sheet, taskId) {
   const send = async () => {
     const text = ta.value.trim(); if (!text) return;
     btn.disabled = true;
-    try { const tk = S.tasks.find((x) => x.id === taskId); await store.addComment({ taskId, areaId: tk ? areaOf(tk).id : null, text }); ta.value = ''; grow(); } catch (e) { toast(fail(e)); btn.disabled = false; }
+    try { const tk = S.tasks.find((x) => x.id === taskId); await store.addComment({ taskId, areaId: tk ? areaOf(tk).id : null, text }); ta.value = ''; grow(); ta.dispatchEvent(new Event('input', { bubbles: true })); } catch (e) { toast(fail(e)); btn.disabled = false; }
   };
   btn.addEventListener('click', send);
   ta.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); send(); } });
@@ -2611,10 +2709,15 @@ const b64u = (buf) => btoa(String.fromCharCode(...new Uint8Array(buf))).replace(
 const unb64u = (s) => Uint8Array.from(atob(s.replace(/-/g, '+').replace(/_/g, '/') + '==='.slice((s.length + 3) % 4)), (c) => c.charCodeAt(0));
 const lockCfg = () => { try { return JSON.parse(localStorage.getItem(LOCK_KEY) || 'null'); } catch { return null; } };
 let bioAvailable = false;
-(async () => { try { bioAvailable = !!(window.PublicKeyCredential && await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable()); } catch {} if (bioAvailable && S.view === 'more') render(); })();
-const bioName = () => (isIOS ? 'Face ID / Touch ID' : /Windows/.test(navigator.userAgent) ? 'Windows Hello' : /Mac/.test(navigator.userAgent) ? 'Touch ID' : 'Fingerabdruck / Gesichtserkennung');
+let nativeBio = null; // { available, name } in der App aus dem Store
+(async () => {
+  if (native.isNative()) { nativeBio = await native.bioInfo(); bioAvailable = !!nativeBio.available; if (S.view === 'more') render(); return; }
+  try { bioAvailable = !!(window.PublicKeyCredential && await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable()); } catch {} if (bioAvailable && S.view === 'more') render();
+})();
+const bioName = () => (nativeBio?.name ? nativeBio.name : isIOS ? 'Face ID / Touch ID' : /Windows/.test(navigator.userAgent) ? 'Windows Hello' : /Mac/.test(navigator.userAgent) ? 'Touch ID' : 'Fingerabdruck / Gesichtserkennung');
 // Einrichten: zuerst erklären, dann Face ID / Touch ID – oder eine PIN, wenn das Gerät keinen Passkey anlegen kann
 function lockSetupSheet() {
+  if (native.isNative()) return nativeLockSetup();
   const sheet = openSheet(`<div class="sheet-head"><h2>App-Sperre</h2><button class="btn ghost" data-dismiss>Abbrechen</button></div>
     <p class="hint" style="margin-top:-4px">MindSpace sperrt sich beim Öffnen und nach 2 Minuten im Hintergrund. Die Sperre gilt nur für dieses Gerät.</p>
     <div data-step>
@@ -2653,6 +2756,38 @@ function lockSetupSheet() {
       <button class="btn block secondary" data-pin2 style="margin-top:10px">Stattdessen PIN-Code verwenden</button>`;
     step.querySelector('[data-retry]').onclick = () => { closeSheet(); lockSetupSheet(); };
     step.querySelector('[data-pin2]').onclick = pinForm;
+  };
+}
+// In der App: echtes Face ID / Touch ID / Fingerabdruck über das Betriebssystem
+function nativeLockSetup() {
+  const ok = !!nativeBio?.available;
+  const sheet = openSheet(`<div class="sheet-head"><h2>App-Sperre</h2><button class="btn ghost" data-dismiss>Abbrechen</button></div>
+    <p class="hint" style="margin-top:-4px">MindSpace sperrt sich beim Öffnen und nach 2 Minuten im Hintergrund. Die Sperre gilt nur für dieses Gerät.</p>
+    ${ok ? `<button class="btn block" data-nbio>${I.lock} ${esc(bioName())} einschalten</button>`
+      : `<div class="note-card warn"><p>${esc(bioName())} ist auf diesem Gerät nicht eingerichtet${nativeBio?.reason ? ` (${esc(nativeBio.reason)})` : ''}. Richte es in den Einstellungen deines Handys ein – oder nutze eine PIN.</p></div>`}
+    <button class="btn block secondary" data-npin style="margin-top:10px">PIN-Code verwenden</button>`);
+  sheet.querySelector('[data-nbio]')?.addEventListener('click', async () => {
+    try {
+      if (await native.bioAuth('Sperre einschalten')) { localStorage.setItem(LOCK_KEY, JSON.stringify({ type: 'native', at: Date.now() })); closeSheet(); toast(`Entsperren mit ${bioName()} ist an 🔒`); render(); }
+    } catch (e) { toast(fail(e)); }
+  });
+  sheet.querySelector('[data-npin]').addEventListener('click', () => { closeSheet(); nativeBio = { ...(nativeBio || {}), available: false }; webLockSheetPin(); });
+}
+function webLockSheetPin() {
+  // PIN-Formular aus der Web-Einrichtung wiederverwenden
+  const sheet = openSheet(`<div class="sheet-head"><h2>PIN-Code</h2><button class="btn ghost" data-dismiss>Abbrechen</button></div>
+    <form><label class="field"><span>PIN (4–8 Ziffern)</span><input class="pin-input" name="p1" type="password" inputmode="numeric" pattern="[0-9]*" minlength="4" maxlength="8" autocomplete="new-password" required></label>
+      <label class="field"><span>PIN wiederholen</span><input class="pin-input" name="p2" type="password" inputmode="numeric" pattern="[0-9]*" minlength="4" maxlength="8" autocomplete="new-password" required></label>
+      <button class="btn block" type="submit">PIN speichern</button></form>`);
+  const f = sheet.querySelector('form'); setTimeout(() => f.p1.focus(), 100);
+  f.onsubmit = async (e) => {
+    e.preventDefault();
+    const a = f.p1.value.trim(), b = f.p2.value.trim();
+    if (!/^\d{4,8}$/.test(a)) { toast('Bitte 4 bis 8 Ziffern eingeben.'); return; }
+    if (a !== b) { toast('Die beiden PINs stimmen nicht überein.'); return; }
+    const salt = b64u(crypto.getRandomValues(new Uint8Array(16)));
+    localStorage.setItem(LOCK_KEY, JSON.stringify({ type: 'pin', salt, hash: await pinHash(a, salt), at: Date.now() }));
+    closeSheet(); toast('PIN-Sperre ist an 🔒'); render();
   };
 }
 async function pinHash(pin, salt) {
@@ -2695,6 +2830,7 @@ function showLock() {
   document.body.appendChild(el);
   document.body.classList.add('is-locked');
   el.querySelector('[data-unlock]')?.addEventListener('click', unlock);
+  if (cfg.type === 'native') setTimeout(unlock, 250); // Face ID gleich anbieten
   const pf = el.querySelector('[data-pinform]');
   if (pf) {
     setTimeout(() => pf.pin.focus(), 150);
@@ -2712,16 +2848,24 @@ function showLock() {
 function hideLock() { document.getElementById('lock')?.remove(); document.body.classList.remove('is-locked'); lockedSince = null; }
 async function unlock() {
   const cfg = lockCfg(); if (!cfg) { hideLock(); return; }
+  if (cfg.type === 'native') {
+    if (unlock.busy) return; unlock.busy = true;
+    try { if (await native.bioAuth('MindSpace entsperren')) hideLock(); } catch (e) { toast(fail(e)); } finally { unlock.busy = false; }
+    return;
+  }
   try {
     const ok = await navigator.credentials.get({ publicKey: { challenge: crypto.getRandomValues(new Uint8Array(32)), allowCredentials: [{ type: 'public-key', id: unb64u(cfg.id), transports: ['internal', 'hybrid'] }], userVerification: 'required', timeout: 60000 } });
     if (ok) hideLock();
   } catch (e) { if (e.name !== 'NotAllowedError' && e.name !== 'AbortError') toast(fail(e)); }
 }
-document.addEventListener('visibilitychange', () => {
+function onVisible(visible) {
   if (!lockCfg()) return;
-  if (document.hidden) lockedSince = Date.now();
+  if (!visible) { if (!lockedSince) lockedSince = Date.now(); }
   else if (lockedSince && Date.now() - lockedSince > LOCK_AFTER) showLock();
-});
+  else if (visible) lockedSince = document.getElementById('lock') ? lockedSince : null;
+}
+document.addEventListener('visibilitychange', () => onVisible(!document.hidden));
+native.onAppState((active) => onVisible(active));
 if (lockCfg()) showLock();
 
 // ================================================================== App aktualisieren
@@ -2736,6 +2880,7 @@ async function exportData() {
   const data = { app: 'mindspace', version: 3, exportedAt: new Date().toISOString(), project: S.project?.name, areas: S.areas, tasks: S.tasks, infos: S.infos, contacts: S.contacts, costs: S.costs, comments: S.comments };
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
   const name = `mindspace-sicherung-${todayISO()}.json`;
+  if (native.isNative()) { try { await native.shareFile(blob, name); } catch {} return; }
   const file = new File([blob], name, { type: 'application/json' });
   if (navigator.canShare?.({ files: [file] })) { try { await navigator.share({ files: [file], title: name }); return; } catch (e) { if (e.name === 'AbortError') return; } }
   const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name; a.click();
@@ -2804,7 +2949,7 @@ app.addEventListener('click', async (e) => {
     case 'accept-new': { const t = S.tasks.find((x) => x.id === el.dataset.id); if (t) store.updateTask(t.id, { isNew: false }, t).then(() => toast('Im Plan ✓')).catch((err) => toast(fail(err))); break; }
     case 'discard-new': { const t = S.tasks.find((x) => x.id === el.dataset.id); if (t) store.deleteTask(t.id).then(() => toast('Verworfen', { label: 'Rückgängig', fn: () => { const { id, ...rest } = t; store.addTask(rest); } })).catch((err) => toast(fail(err))); break; }
     case 'accept-all': for (const t of S.tasks.filter((x) => x.isNew && !x.done)) await store.updateTask(t.id, { isNew: false }, t).catch(() => {}); toast('Alles im Plan ✓'); break;
-    case 'copy-address': copyText(S.project?.inboxAddress || '', 'Adresse kopiert'); break;
+    case 'copy-address': copyText(inboxAddr(), 'Adresse kopiert'); break;
     case 'allow-sender': {
       const list = [...new Set([...(S.project?.inboxAllowed || []), el.dataset.from.toLowerCase()])];
       try { await store.updateProject({ inboxAllowed: list, inboxLastIgnored: null }); toast('Erlaubt ✓ Leite die Mail einfach noch einmal weiter.'); } catch (err) { toast(fail(err)); }
@@ -2833,7 +2978,15 @@ app.addEventListener('click', async (e) => {
     case 'compose-contact': composeSheet({ contact: contactById(el.dataset.id) }); break;
     case 'compose-task': { const t = S.tasks.find((x) => x.id === el.dataset.id); composeSheet({ task: t, contact: t?.contactId ? contactById(t.contactId) : null }); break; }
     case 'area-edit': areaSheet(areaById(el.dataset.id)); break;
-    case 'area-new': areaSheet(null); break;
+    case 'area-new': if (ownProjects() >= lim('ownProjects')) paywallSheet('projects'); else areaSheet(null); break;
+    case 'plan-open': paywallSheet(null); break;
+    case 'plan-manage': manageSubscription(); break;
+    case 'plan-restore': restorePurchases(); break;
+    case 'ai-deep': if (curPlan() === 'pro') { await store.updateProject({ aiDeep: !S.project?.aiDeep }).catch((err) => toast(fail(err))); } else paywallSheet('deep'); break;
+    case 'inbox-create': try { el.disabled = true; await store.inboxAddress(); toast('Adresse ist bereit'); } catch (err) { toast(fail(err)); el.disabled = false; } break;
+    case 'delete-account': deleteAccountSheet(); break;
+    case 'feedback': feedbackSheet(); break;
+    case 'legal': native.openExternal(el.dataset.url); break;
     case 'inbox-settings': inboxSheet(); break;
     case 'ai-settings': aiSheet(); break;
     case 'assess-all': {
@@ -2853,6 +3006,11 @@ app.addEventListener('click', async (e) => {
     }
     case 'push': {
       if (store.mode !== 'cloud') { inviteSheet(); break; }
+      if (native.isNative()) {
+        try { const r = await store.enablePush(); toast(r.ok ? 'Push-Nachrichten sind aktiv 🔔' : r.reason === 'denied' ? 'Nicht erlaubt. Ändern in den Einstellungen deines Handys → Mitteilungen → MindSpace.' : 'Push-Anmeldung fehlgeschlagen. Versuch es gleich noch einmal.'); }
+        catch (err) { toast(fail(err)); }
+        render(); break;
+      }
       if (isIOS && !standalone) { toast('Öffne MindSpace zuerst über das Symbol auf dem Home-Bildschirm.'); break; }
       if (typeof Notification === 'undefined') { toast('Dieses Gerät unterstützt keine Push-Nachrichten (iPhone: ab iOS 16.4, vom Home-Bildschirm geöffnet).'); break; }
       // iOS zeigt die Abfrage nur, wenn sie direkt beim Antippen startet – also vor jedem „await“.
@@ -3076,9 +3234,11 @@ async function assignReturn(id) {
 const calLaterKey = () => `ms-cal-later-${S.me?.uid || ''}`;
 const calInfo = () => S.userDoc?.cal || null;
 const calOn = () => ['all', 'mine'].includes(calInfo()?.choice) && !!calInfo()?.token;
-const calCovers = (t) => calOn() && !!S.project?.calUrl && (calInfo().choice === 'all' || !t.assignee || t.assignee === 'all' || t.assignee === S.me?.uid);
+// Kalender-Abo: mit Server-Diensten immer verfügbar (Funktion „calendar“), sonst über den Postboten (calUrl)
+const calBase = () => S.project?.calUrl || (billing() ? store.calendarBase() : '');
+const calCovers = (t) => calOn() && !!calBase() && (calInfo().choice === 'all' || !t.assignee || t.assignee === 'all' || t.assignee === S.me?.uid);
 function feedUrl(tok = calInfo()?.token, webcal = false) {
-  const u = S.project?.calUrl;
+  const u = calBase();
   if (!u || !tok) return '';
   const https = `${u}${u.includes('?') ? '&' : '?'}k=${tok}`;
   return webcal ? https.replace(/^https:/, 'webcal:') : https;
@@ -3100,7 +3260,7 @@ async function calChoose(choice) {
   return tok;
 }
 function maybeAskCal() {
-  if (store.mode !== 'cloud' || !S.project?.calUrl || !S.userDoc || calInfo() || S.calAsked) return;
+  if (store.mode !== 'cloud' || !calBase() || !S.userDoc || calInfo() || S.calAsked) return;
   try { if (Number(localStorage.getItem(calLaterKey()) || 0) > Date.now()) return; } catch {}
   S.calAsked = true;
   const tryOpen = (n) => {
@@ -3110,8 +3270,7 @@ function maybeAskCal() {
   setTimeout(() => tryOpen(0), 1800);
 }
 function calSection(full) {
-  const p = S.project || {};
-  if (!p.calUrl) {
+  if (!calBase()) {
     return `<h2 class="section-title">Kalender</h2><div class="settings">
       ${full ? `<button class="setting" data-action="cal-setup"><span class="area-dot" style="--area:#E2574C">📅</span><span class="grow">Aufgaben im Handy-Kalender<small>Einmal einrichten – danach wird jedes Mitglied gefragt</small></span><span class="end">Einrichten</span></button>`
         : `<div class="setting"><span class="area-dot" style="--area:#E2574C">📅</span><span class="grow">Aufgaben im Handy-Kalender<small>Noch nicht eingerichtet – das macht jemand mit vollem Zugriff</small></span></div>`}
@@ -3121,7 +3280,7 @@ function calSection(full) {
   const st = c?.choice === 'all' ? 'An · alle Aufgaben' : c?.choice === 'mine' ? 'An · nur meine Aufgaben' : 'Aus';
   return `<h2 class="section-title">Kalender</h2><div class="settings">
     <button class="setting" data-action="cal-settings"><span class="status-dot ${calOn() ? 'on' : ''}"></span><span class="grow">Aufgaben im Kalender<small>${st}</small></span>${I.chevron}</button>
-    ${full ? `<button class="setting" data-action="cal-setup"><span class="grow">Kalender-Dienst<small>Verbunden mit dem MindSpace-Postboten</small></span>${I.chevron}</button>` : ''}
+    ${full && !billing() ? `<button class="setting" data-action="cal-setup"><span class="grow">Kalender-Dienst<small>Verbunden mit dem MindSpace-Postboten</small></span>${I.chevron}</button>` : ''}
   </div>
   <p class="hint">Ein eigener Kalender „MindSpace“ auf deinem Handy oder Computer. Neue und geänderte Aufgaben kommen automatisch an.</p>`;
 }
@@ -3208,7 +3367,7 @@ function calSetupSheet() {
   });
 }
 // Einzelne Aufgabe als .ics-Datei (ohne Abo, z. B. am Computer für Outlook)
-const icsEsc = (s) => String(s || '').replace(/\\/g, '\\\\').replace(/;/g, '\;').replace(/,/g, '\\,').replace(/\r?\n/g, '\\n');
+const icsEsc = (s) => String(s || '').replace(/\\/g, '\\\\').replace(/;/g, '\\;').replace(/,/g, '\\,').replace(/\r?\n/g, '\\n');
 function icsFold(line) {
   const enc = new TextEncoder();
   let out = '', cur = '', n = 0;
@@ -3232,6 +3391,228 @@ function downloadIcs(t) {
   setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 5000);
 }
 
+
+// ================================================================== Abo (Free · Daily Driver · Pro) – v14
+// Gekauft wird in der App über App Store / Google Play (RevenueCat). Der Server trägt den Plan in den
+// gemeinsamen Bereich ein; das beste Abo eines Mitglieds gilt für alle.
+const STORE_URLS = { ios: 'https://apps.apple.com/account/subscriptions', android: 'https://play.google.com/store/account/subscriptions' };
+let offersCache = null;
+const eurFmt = (v) => (v == null ? '' : v.toLocaleString(LOC(), { style: 'currency', currency: 'EUR', minimumFractionDigits: v % 1 ? 2 : 0 }));
+function meter(label, used, limit, fmt = (x) => x) {
+  const inf = limit === Infinity;
+  const pct = inf ? 4 : Math.min(100, Math.round((used / Math.max(1, limit)) * 100));
+  return `<div class="meter ${pct >= 90 ? 'hot' : pct >= 70 ? 'warm' : ''}"><div class="meter-top"><span>${label}</span><span>${fmt(used)} / ${inf ? '∞' : fmt(limit)}</span></div><div class="meter-bar"><i style="width:${pct}%"></i></div></div>`;
+}
+function planCard() {
+  const id = curPlan(), plan = planOf(id), u = S.usage || {};
+  const by = S.project?.planBy && S.project.planBy !== S.me?.uid ? nameOf(S.project.planBy) : null;
+  const mb = (S.project?.storageBytes || 0) / 1048576;
+  return `<section class="plan-card plan-${id}">
+    <div class="plan-top"><div><span class="plan-kicker">Dein Abo${S.userDoc?.grantSource === 'beta' ? ' · Testphase' : ''}</span><h2>${esc(plan.name)}</h2>${by ? `<small>über ${esc(by)} – gilt für alle hier</small>` : `<small>${esc(plan.tagline)}</small>`}</div>
+      <button class="btn small ${id === 'pro' ? 'secondary' : ''}" data-action="plan-open">${id === 'pro' ? 'Details' : 'Upgrade'}</button></div>
+    ${meter('KI-Aktionen', u.ai || 0, plan.limits.aiActions)}
+    ${meter('E-Mails auslesen', u.mails || 0, plan.limits.mails)}
+    ${meter('Speicher', mb, plan.limits.storageMB, (x) => (x >= 1024 ? `${(x / 1024).toLocaleString(LOC(), { maximumFractionDigits: 1 })} GB` : `${Math.round(x)} MB`))}
+    ${meter('Personen', members().length, plan.limits.members)}
+    ${meter('Eigene Projekte', ownProjects(), plan.limits.ownProjects)}
+    <p class="hint" style="margin:8px 0 0">Zähler starten am 1. jedes Monats neu.${id !== 'free' && !by ? ' <button class="link" data-action="plan-manage">Abo verwalten</button>' : ''}</p>
+  </section>`;
+}
+const PAY_REASON = {
+  ai: 'Die KI-Aktionen für diesen Monat sind aufgebraucht.',
+  mails: 'Das E-Mail-Kontingent für diesen Monat ist aufgebraucht.',
+  storage: 'Der Speicher für Fotos & Dokumente ist voll.',
+  members: 'Mit deinem Abo können nicht mehr Personen mitplanen.',
+  projects: 'Mit deinem Abo kannst du keine weiteren eigenen Projekte anlegen.',
+  deep: 'Der Gründlich-Modus gehört zu Pro.',
+};
+function planFeatures(id) {
+  const p = planOf(id), L = p.limits;
+  const f = [
+    L.ownProjects === Infinity ? 'Unbegrenzt viele eigene Projekte' : `${L.ownProjects} eigene${L.ownProjects === 1 ? 's' : ''} Projekt${L.ownProjects === 1 ? '' : 'e'} zusätzlich`,
+    `Bis zu ${L.members} Personen`,
+    `${L.aiActions} KI-Aktionen pro Monat`,
+    `${L.mails} E-Mails pro Monat auslesen (je bis zu ${L.mailAttachments} ${L.mailAttachments === 1 ? 'Anhang' : 'Anhänge'})`,
+    `${storageLabel(L.storageMB)} für Fotos & Dokumente`,
+  ];
+  if (p.features.dailyCheck) f.push('Tägliche KI-Fristenprüfung');
+  if (p.features.bestModel) f.push('Gründlich-Modus mit dem stärksten KI-Modell');
+  if (id === 'free') f.push('Face ID, Kalender, Push und Teilen inklusive');
+  return f;
+}
+function paywallSheet(reason) {
+  if (!billing()) return;
+  let period = 'month';
+  const cur = curPlan();
+  const sheet = openSheet(`<div class="sheet-head"><h2>MindSpace-Abo</h2><button class="btn ghost" data-dismiss>Schließen</button></div>
+    ${reason && PAY_REASON[reason] ? `<div class="note-card soft"><p>${esc(PAY_REASON[reason])} Mit einem größeren Abo geht es sofort weiter.</p></div>` : ''}
+    <div class="period-toggle" role="tablist"><button data-per="month" class="on" role="tab">Monatlich</button><button data-per="year" role="tab">Jährlich <span class="save">−25 %</span></button></div>
+    <div class="plan-list" data-plans></div>
+    <p class="legal-small"><span>${native.isNative() ? (native.platform() === 'ios' ? 'Bezahlt wird über deinen Apple-Account. Abos verlängern sich automatisch um die gewählte Laufzeit, wenn du sie nicht spätestens 24 Stunden vor Ablauf in den Einstellungen deines Apple-Accounts kündigst.' : 'Bezahlt wird über deinen Google-Play-Account. Abos verlängern sich automatisch um die gewählte Laufzeit, wenn du sie nicht vor Ablauf in den Play-Store-Abos kündigst.') : 'Abos schließt du in der MindSpace-App auf deinem iPhone oder Android-Handy ab – sie gelten dann auch hier.'}</span>
+      <span>Ein Abo gilt für alle Personen in eurem gemeinsamen Bereich.</span></p>
+    <div class="legal-links">${legalLinks(true)}</div>
+    ${native.isNative() ? '<button class="link center" data-action="plan-restore" style="margin-top:6px">Käufe wiederherstellen</button>' : ''}
+    ${CFG.backend?.beta ? `<section class="beta-box"><h3>🧪 Testphase</h3><p>Probiere jede Stufe kostenlos aus – du brauchst nur den Test-Code, den du mit der Einladung bekommen hast.</p>
+      <div class="beta-btns">${PLAN_ORDER.map((id) => `<button class="btn small ${id === cur ? '' : 'secondary'}" data-beta="${id}">${esc(planOf(id).name)}${id === cur ? ' ✓' : ''}</button>`).join('')}</div></section>` : ''}`);
+  sheet.querySelectorAll('[data-beta]').forEach((b) => b.addEventListener('click', () => betaSwitch(b.dataset.beta, b)));
+  const priceOf = (id, per) => {
+    const o = offersCache?.[`${id}_${per === 'year' ? 'yearly' : 'monthly'}`];
+    return o?.price || eurFmt(planOf(id).price[per]);
+  };
+  const draw = () => {
+    sheet.querySelector('[data-plans]').innerHTML = PLAN_ORDER.map((id) => {
+      const p = planOf(id), isCur = id === cur, lower = PLAN_ORDER.indexOf(id) < PLAN_ORDER.indexOf(cur);
+      const price = id === 'free' ? eurFmt(0) : priceOf(id, period);
+      const perMonth = id !== 'free' && period === 'year' ? `<small>entspricht ${eurFmt(Math.floor((p.price.year / 12) * 100) / 100)} / Monat</small>` : '';
+      return `<article class="plan-tile ${isCur ? 'current' : ''} ${id === 'daily' ? 'featured' : ''}">
+        <header><div><h3>${esc(p.name)}</h3><p>${esc(p.tagline)}</p></div>${isCur ? '<span class="plan-badge">Dein Abo</span>' : id === 'daily' ? '<span class="plan-badge soft">Beliebt</span>' : ''}</header>
+        <div class="plan-price"><b>${esc(price)}</b>${id === 'free' ? '' : `<span>/ ${period === 'year' ? 'Jahr' : 'Monat'}</span>`}${perMonth}</div>
+        <ul>${planFeatures(id).map((x) => `<li>${esc(x)}</li>`).join('')}</ul>
+        ${id === 'free' || isCur || lower ? '' : `<button class="btn block" data-buy="${id}" ${native.isNative() ? '' : 'disabled'}>${esc(p.name)} wählen</button>`}
+      </article>`;
+    }).join('');
+    sheet.querySelectorAll('[data-buy]').forEach((b) => b.addEventListener('click', () => buyPlan(b.dataset.buy, period, b)));
+  };
+  sheet.querySelectorAll('[data-per]').forEach((b) => b.addEventListener('click', () => {
+    period = b.dataset.per;
+    sheet.querySelectorAll('[data-per]').forEach((x) => x.classList.toggle('on', x === b));
+    draw();
+  }));
+  draw();
+  if (native.isNative() && !offersCache) native.offerings().then((o) => { offersCache = o; if (sheet.isConnected) draw(); }).catch((e) => console.warn('Angebote:', e));
+}
+async function buyPlan(id, period, btn) {
+  if (!native.isNative()) { toast('Abos schließt du in der MindSpace-App auf deinem Handy ab.'); return; }
+  const label = btn.textContent;
+  btn.disabled = true; btn.textContent = 'Einen Moment …';
+  try {
+    const r = await native.buy(id, period);
+    if (!r.ok) { btn.disabled = false; btn.textContent = label; return; }
+    await store.refreshPlan().catch(() => {});
+    closeSheet();
+    celebrate(window.innerWidth / 2, window.innerHeight / 3);
+    toast(`Willkommen bei ${planOf(id).name} 🎉`);
+  } catch (e) { toast(fail(e)); btn.disabled = false; btn.textContent = label; }
+}
+async function betaSwitch(plan, btn) {
+  let code = '';
+  try { code = localStorage.getItem('ms-beta-code') || ''; } catch {}
+  if (!code) code = (prompt('Test-Code eingeben (steht in deiner Einladung):') || '').trim();
+  if (!code) return;
+  btn.disabled = true;
+  try {
+    await store.betaPlan(plan, code);
+    try { localStorage.setItem('ms-beta-code', code); } catch {}
+    closeSheet();
+    toast(`Testphase: ${planOf(plan).name} ist aktiv`);
+  } catch (e) {
+    if (e.code === 'beta-denied') { try { localStorage.removeItem('ms-beta-code'); } catch {} }
+    toast(e.message || fail(e)); btn.disabled = false;
+  }
+}
+// Feedback aus der Testphase
+function feedbackSheet() {
+  const sheet = openSheet(`<div class="sheet-head"><h2>Feedback</h2><button class="btn ghost" data-dismiss>Abbrechen</button></div>
+    <p class="hint" style="margin-top:-4px">Was ist dir aufgefallen? Jede Rückmeldung hilft – auch Kleinigkeiten.</p>
+    <form>
+      <div class="seg fb-kind" role="radiogroup">
+        <label><input type="radio" name="kind" value="bug" checked><span>🐞 Fehler</span></label>
+        <label><input type="radio" name="kind" value="idea"><span>💡 Idee</span></label>
+        <label><input type="radio" name="kind" value="other"><span>💬 Sonstiges</span></label>
+      </div>
+      <label class="field"><span>Deine Nachricht</span><textarea name="text" rows="6" maxlength="4000" required placeholder="z. B. „Beim Anlegen einer Aufgabe mit Uhrzeit springt das Datum auf morgen.“"></textarea></label>
+      <p class="hint">Mitgeschickt werden nur App-Version, Gerätetyp und die gerade offene Ansicht.</p>
+      <button class="btn block" type="submit">Senden</button>
+    </form>`);
+  const form = sheet.querySelector('form');
+  setTimeout(() => form.text.focus(), 250);
+  form.onsubmit = async (e) => {
+    e.preventDefault();
+    const text = form.text.value.trim(); if (!text) return;
+    const b = form.querySelector('[type="submit"]'); b.disabled = true;
+    try {
+      await store.sendFeedback({ text, kind: form.kind.value, view: S.view, version: APP_VERSION, device: `${native.platform()} · ${standalone ? 'App' : 'Browser'} · ${navigator.userAgent.slice(0, 160)}`, plan: curPlan() || 'legacy' });
+      closeSheet(); toast('Danke! Dein Feedback ist angekommen 🙏');
+    } catch (err) { toast(fail(err)); b.disabled = false; }
+  };
+}
+async function restorePurchases() {
+  try {
+    toast('Käufe werden geprüft …');
+    await native.restore();
+    const r = await store.refreshPlan();
+    toast(r?.userPlan && r.userPlan !== 'free' ? `${planOf(r.userPlan).name} ist wieder aktiv` : 'Kein aktives Abo gefunden');
+  } catch (e) { toast(fail(e)); }
+}
+async function manageSubscription() {
+  if (!native.isNative()) { toast('Verwalte dein Abo in den Abo-Einstellungen deines Handys (App Store bzw. Google Play).'); return; }
+  const url = (await native.manageUrl().catch(() => null)) || STORE_URLS[native.platform()];
+  native.openExternal(url);
+}
+function legalLinks(inline) {
+  const L = CFG.legal || {};
+  const items = [['privacy', 'Datenschutz'], ['terms', 'Nutzungsbedingungen'], ['imprint', 'Impressum']].filter(([k]) => L[k]);
+  if (inline) return items.map(([k, l]) => `<button class="link" data-action="legal" data-url="${esc(L[k])}">${l}</button>`).join(' · ');
+  return items.map(([k, l]) => `<button class="setting" data-action="legal" data-url="${esc(L[k])}"><span class="grow">${l}</span>${I.chevron}</button>`).join('');
+}
+function deleteAccountSheet() {
+  const last = members().length <= 1;
+  const sheet = openSheet(`<div class="sheet-head"><h2>Konto löschen</h2><button class="btn ghost" data-dismiss>Abbrechen</button></div>
+    <div class="note-card warn"><p>${last ? '<strong>Du bist die letzte Person in diesem Bereich.</strong> Alle Aufgaben, Kosten, Kontakte, Fotos und Dokumente werden endgültig gelöscht.' : 'Du wirst aus dem gemeinsamen Bereich entfernt. Die Daten bleiben für die anderen erhalten.'} Dein Konto und deine Einstellungen werden gelöscht. Das lässt sich nicht rückgängig machen.</p></div>
+    ${curPlan() !== 'free' && S.project?.planBy === S.me?.uid ? `<p class="hint">Dein laufendes Abo wird dadurch <strong>nicht</strong> beendet. Kündige es vorher im ${native.platform() === 'android' ? 'Play Store' : 'App Store'} – <button class="link" data-action="plan-manage">Abo verwalten</button>.</p>` : ''}
+    <form><label class="field"><span>Zum Bestätigen LÖSCHEN eingeben</span><input class="input" name="c" autocomplete="off" autocapitalize="characters"></label>
+      <button class="btn block danger" type="submit">Konto endgültig löschen</button></form>`);
+  sheet.querySelector('form').onsubmit = async (e) => {
+    e.preventDefault();
+    if (!/^(LÖSCHEN|LOESCHEN|DELETE)$/i.test(e.target.c.value.trim())) { toast('Bitte LÖSCHEN eingeben.'); return; }
+    const b = e.target.querySelector('button'); b.disabled = true; b.textContent = 'Wird gelöscht …';
+    try { await store.deleteAccount(); localStorage.removeItem(LOCK_KEY); closeSheet(); toast('Dein Konto wurde gelöscht.'); }
+    catch (err) { toast(fail(err)); b.disabled = false; b.textContent = 'Konto endgültig löschen'; }
+  };
+}
+// Links in der App: webcal:, mailto:, tel: und externe Seiten über das Betriebssystem öffnen
+document.addEventListener('click', (e) => {
+  if (!native.isNative()) return;
+  const a = e.target.closest?.('a[href]'); if (!a) return;
+  const href = a.getAttribute('href');
+  if (/^(webcal|mailto|tel|sms|maps):/i.test(href) || (/^https?:/i.test(href) && !href.startsWith(location.origin))) { e.preventDefault(); native.openExternal(href); }
+}, true);
+
+
+// ================================================================== Entwürfe (v15)
+// Schutz vor Datenverlust: iOS beendet Web-Apps im Hintergrund oft komplett (z. B. nach dem Sperren).
+// Eingaben in einer offenen Aufgabe werden darum laufend auf dem Gerät gesichert und beim nächsten
+// Öffnen wiederhergestellt; bestehende Aufgaben speichert MindSpace beim Wechsel in den Hintergrund.
+const DRAFT_KEY = 'ms-draft';
+function draftSave(d) { try { localStorage.setItem(DRAFT_KEY, JSON.stringify({ ...d, uid: S.me?.uid || 'local' })); } catch {} }
+function draftLoad() { try { return JSON.parse(localStorage.getItem(DRAFT_KEY) || 'null'); } catch { return null; } }
+function draftClear(key) { try { const d = draftLoad(); if (!key || d?.key === key) localStorage.removeItem(DRAFT_KEY); } catch {} }
+function restoreDraft(d) {
+  if (!d) return false;
+  if (d.key === 'task:new') { S.restoreDraft = d; taskSheet(null); return true; }
+  const t = S.tasks.find((x) => x.id === d.key.slice(5));
+  if (!t) return false;
+  S.restoreDraft = d; taskSheet(t); return true;
+}
+function maybeRestoreDraft() {
+  if (S.draftChecked) return;
+  const d = draftLoad();
+  if (!d) { S.draftChecked = true; return; }
+  if (d.uid && S.me?.uid && d.uid !== S.me.uid) { S.draftChecked = true; return; }
+  if (Date.now() - (d.ts || 0) > 7 * 864e5) { draftClear(); S.draftChecked = true; return; }
+  if (d.key !== 'task:new' && !S.tasks.length) return; // Aufgaben noch nicht geladen
+  S.draftChecked = true;
+  if (sheetRoot.innerHTML.trim()) return;
+  if (!restoreDraft(d)) draftClear();
+}
+function flushOpenSheet() {
+  const sheet = sheetRoot.querySelector('.sheet');
+  if (sheet?._autosave) sheet._autosave();
+}
+document.addEventListener('visibilitychange', () => { if (document.hidden) flushOpenSheet(); });
+window.addEventListener('pagehide', flushOpenSheet);
+native.onAppState((active) => { if (!active) flushOpenSheet(); });
+
 // ================================================================== Start
 applyTheme();
 window.matchMedia('(prefers-color-scheme: dark)').addEventListener?.('change', () => applyTheme());
@@ -3240,7 +3621,11 @@ store.init({
   onAuth(me) {
     const changed = S.me?.uid !== me?.uid;
     S.me = me; S.authReady = true;
-    if (me && store.mode === 'cloud' && changed) { S.projectState = 'loading'; store.resumePush(); store.setUserPref({ lang: LANG }).catch(() => {}); }
+    setTimeout(() => native.hideSplash(), 60);
+    if (me && store.mode === 'cloud' && changed) {
+      S.projectState = 'loading'; store.resumePush(); store.setUserPref({ lang: LANG }).catch(() => {});
+      if (store.backend && native.isNative()) native.purchasesInit(me.uid, CFG.backend?.revenuecat).then((ok) => ok && store.refreshPlan().catch(() => {}));
+    }
     render();
   },
   onUserDoc(d) { S.userDoc = d; render(); maybeAskCal(); },
@@ -3250,6 +3635,7 @@ store.init({
   },
   onTasks(list) {
     S.tasks = list; render();
+    setTimeout(maybeRestoreDraft, 400);
     if (S.openNewOnReady) { S.openNewOnReady = false; setTimeout(() => taskSheet(null), 300); }
     if (S.openTaskOnReady) { const t = list.find((x) => x.id === S.openTaskOnReady); if (t) { S.openTaskOnReady = null; setTimeout(() => taskSheet(t), 300); } }
   },
@@ -3261,7 +3647,12 @@ store.init({
   onFiles(list) { S.files = list; CNT = null; render(); refreshSheet(); },
   onAi(cfg) { S.ai = cfg; render(); },
   onError(e) { toast(fail(e)); },
-  onPush(n) { toast(`${n.title || 'Erinnerung'}${n.body ? ': ' + n.body : ''}`); },
+  onPush(n) {
+    const tid = n?.data?.taskId;
+    if (n?.tapped && tid) { const t = S.tasks.find((x) => x.id === tid); if (t) taskSheet(t); else S.openTaskOnReady = tid; return; }
+    toast(`${n.title || 'Erinnerung'}${n.body ? ': ' + n.body : ''}`);
+  },
+  onUsage(u) { S.usage = u; if (S.view === 'more' || S.view === 'inbox') render(); },
 }).catch((e) => { app.innerHTML = `<div class="boot">Start fehlgeschlagen: ${esc(fail(e))}<br><br>Prüfe die Internetverbindung und config.js.</div>`; });
 
 // Verknüpfungen aus dem Programm-Symbol (Rechtsklick in der Taskleiste): ?ansicht=plan, ?neu=1
@@ -3273,5 +3664,5 @@ store.init({
   if (q.get('aufgabe')) S.openTaskOnReady = q.get('aufgabe');
   if (v || q.get('neu') || q.get('aufgabe')) history.replaceState(null, '', location.pathname);
 }
-if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch((e) => console.warn('Service Worker:', e));
+if (!native.isNative() && 'serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch((e) => console.warn('Service Worker:', e));
 document.addEventListener('visibilitychange', () => { if (!document.hidden) render(); });

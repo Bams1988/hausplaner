@@ -1,8 +1,11 @@
 // Datenhaltung: „lokal“ (nur dieses Gerät) oder „cloud“ (Firebase, geteilt + Push).
 
-import { startByOf } from './ai.js';
+import { startByOf, AiError } from './ai.js';
+import { isNative, nativePushToken } from './native.js';
+import { monthKey } from './plans.js';
 
-const FB = 'https://www.gstatic.com/firebasejs/10.14.1/';
+// In der App aus dem Store liegt Firebase gebündelt bei (keine Programmteile aus dem Internet nachladen).
+const FB = isNative() ? './vendor/firebase/' : 'https://www.gstatic.com/firebasejs/10.14.1/';
 const AI_LOCAL = 'hausplaner-ai';
 const withTimeout = (p, ms, msg) => Promise.race([p, new Promise((_, no) => setTimeout(() => no(new Error(msg)), ms))]);
 const uid6 = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4);
@@ -134,6 +137,7 @@ class LocalStore {
   async getFileBlob(meta) { const b = await idbDo('readonly', (st) => st.get(meta.id)); if (!b) throw new Error('Datei nicht gefunden.'); return b; }
   async deleteFile(meta) { await idbDo('readwrite', (st) => st.delete(meta.id)).catch(() => {}); this.data.files = this.data.files.filter((f) => f.id !== meta.id); this.save(); }
   async setUserPref() {}
+  backend = false;
   async setCalFeed() {}
   async deleteCalFeed() {}
   exportLocal() { return this.data; }
@@ -141,16 +145,27 @@ class LocalStore {
 
 // ---------------------------------------------------------------- Firebase
 class CloudStore {
-  constructor(cfg) { this.mode = 'cloud'; this.cfg = cfg; this.unsubs = []; }
+  constructor(cfg) {
+    this.mode = 'cloud'; this.cfg = cfg; this.unsubs = [];
+    // Server-Dienste (Abos, KI über MindSpace, E-Mail-Eingang, Cloud Storage) – siehe VEROEFFENTLICHUNG.md
+    this.backend = !!cfg.backend?.enabled;
+  }
 
   async init(h) {
     this.h = h;
-    const [app, auth, fs] = await Promise.all([
+    const [app, auth, fs, fns, st] = await Promise.all([
       import(FB + 'firebase-app.js'), import(FB + 'firebase-auth.js'), import(FB + 'firebase-firestore.js'),
+      this.backend ? import(FB + 'firebase-functions.js') : null, this.backend ? import(FB + 'firebase-storage.js') : null,
     ]);
-    this.A = auth; this.F = fs;
+    this.A = auth; this.F = fs; this.S = st;
     this.app = app.initializeApp(this.cfg.firebase);
-    this.auth = auth.getAuth(this.app);
+    // In der App: Anmeldung dauerhaft in IndexedDB speichern (getAuth hängt sich im iOS-WebView sonst auf)
+    this.auth = isNative() ? auth.initializeAuth(this.app, { persistence: auth.indexedDBLocalPersistence }) : auth.getAuth(this.app);
+    if (this.backend) {
+      this.fns = fns.getFunctions(this.app, this.cfg.backend.region || 'europe-west3');
+      this.callable = (name, timeout = 70000) => fns.httpsCallable(this.fns, name, { timeout });
+      this.storage = st.getStorage(this.app);
+    }
     try {
       this.db = fs.initializeFirestore(this.app, { localCache: fs.persistentLocalCache({ tabManager: fs.persistentSingleTabManager() }) });
     } catch { this.db = fs.getFirestore(this.app); }
@@ -209,6 +224,10 @@ class CloudStore {
     const on = (ref, fn, e = err) => this.unsubD.push(onSnapshot(ref, fn, e));
     const sortC = (l) => l.sort((a, b) => (a.name || '').localeCompare(b.name || '', 'de'));
     on(collection(this.db, 'projects', pid, 'contacts'), (s) => this.h.onContacts(sortC(rows(s))));
+    if (this.backend) {
+      on(doc(this.db, 'projects', pid, 'usage', monthKey()), (s) => this.h.onUsage?.(s.exists() ? s.data() : {}), () => this.h.onUsage?.({}));
+      this.h.onAi({ managed: true }); // KI ist im Abo enthalten – für alle Mitglieder
+    }
     if (scope === 'all') {
       on(collection(this.db, 'projects', pid, 'tasks'), (s) => this.h.onTasks(rows(s)));
       on(collection(this.db, 'projects', pid, 'infos'), (s) => this.h.onInfos(rows(s).sort((a, b) => b.createdAt - a.createdAt)));
@@ -216,11 +235,11 @@ class CloudStore {
       on(collection(this.db, 'projects', pid, 'costs'), (s) => this.h.onCosts?.(rows(s)));
       on(collection(this.db, 'projects', pid, 'comments'), (s) => this.h.onComments?.(rows(s)));
       on(collection(this.db, 'projects', pid, 'files'), (s) => this.h.onFiles?.(rows(s)));
-      on(doc(this.db, 'projects', pid, 'private', 'ai'), (s) => this.h.onAi(s.exists() && s.data().apiKey ? s.data() : null), () => this.h.onAi(null));
+      if (!this.backend) on(doc(this.db, 'projects', pid, 'private', 'ai'), (s) => this.h.onAi(s.exists() && s.data().apiKey ? s.data() : null), () => this.h.onAi(null));
       return;
     }
     // Eingeschränkt: je freigegebenem Bereich eine Abfrage, Ergebnisse zusammenführen
-    this.h.onInfos([]); this.h.onAi(null);
+    this.h.onInfos([]); if (!this.backend) this.h.onAi(null);
     const merged = (name, cb) => {
       const parts = new Map();
       for (const areaId of scope) {
@@ -364,6 +383,13 @@ class CloudStore {
   async addFile(meta, blob) {
     const { doc, setDoc, Bytes } = this.F;
     const ref = doc(this.col('files'));
+    if (this.backend) {
+      const safe = String(meta.name || 'datei').replace(/[^\w.\-äöüÄÖÜß ]+/g, '_').slice(0, 80) || 'datei';
+      const path = `projects/${this.projectId}/files/${ref.id}/${safe}`;
+      await this.S.uploadBytes(this.S.ref(this.storage, path), blob, { contentType: meta.type || blob.type || 'application/octet-stream', customMetadata: { areaId: meta.areaId || '' } });
+      await setDoc(ref, { createdAt: Date.now(), createdBy: this.me.uid, ...clean(meta), size: blob.size, path });
+      return ref.id;
+    }
     const buf = new Uint8Array(await blob.arrayBuffer());
     const parts = Math.max(1, Math.ceil(buf.length / PART_SIZE));
     for (let i = 0; i < parts; i++) {
@@ -374,6 +400,7 @@ class CloudStore {
   }
   updateFile(id, patch) { return this.F.updateDoc(this.F.doc(this.col('files'), id), clean(patch)); }
   async getFileBlob(meta) {
+    if (meta.path && this.S) return this.S.getBlob(this.S.ref(this.storage, meta.path));
     const { doc, getDoc } = this.F;
     const chunks = [];
     for (let i = 0; i < (meta.parts || 1); i++) {
@@ -385,6 +412,7 @@ class CloudStore {
   }
   async deleteFile(meta) {
     const { doc, deleteDoc } = this.F;
+    if (meta.path && this.S) await this.S.deleteObject(this.S.ref(this.storage, meta.path)).catch(() => {});
     await deleteDoc(doc(this.col('files'), meta.id));
     for (let i = 0; i < (meta.parts || 1); i++) await deleteDoc(doc(this.col('fileParts'), `${meta.id}_${i}`)).catch(() => {});
   }
@@ -395,6 +423,13 @@ class CloudStore {
 
   // --- Push
   async enablePush(permP) {
+    if (isNative()) {
+      const r = await nativePushToken((n) => this.h.onPush?.(n));
+      if (!r.ok) return r;
+      await this.F.setDoc(this.F.doc(this.db, 'users', this.me.uid), { tokens: this.F.arrayUnion(r.token) }, { merge: true });
+      localStorage.setItem('hausplaner-push-token', r.token);
+      return { ok: true };
+    }
     const perm = await (permP || Notification.requestPermission());
     if (perm === 'denied') return { ok: false, reason: 'denied' };
     if (perm !== 'granted') return { ok: false, reason: 'dismissed' };
@@ -413,6 +448,7 @@ class CloudStore {
     return { ok: true };
   }
   async resumePush() {
+    if (isNative()) { if (localStorage.getItem('hausplaner-push-token')) await this.enablePush().catch((e) => console.warn(e)); return; }
     if (!localStorage.getItem('hausplaner-push-token') || typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
     try { await this.enablePush(); } catch (e) { console.warn(e); }
   }
@@ -421,4 +457,34 @@ class CloudStore {
     this.fgListening = true;
     m.onMessage(messaging, (p) => this.h.onPush?.(p.notification || p.data || {}));
   }
+
+  // --- Server-Dienste (nur mit backend.enabled)
+  // KI über MindSpace: die App schickt den Nachrichten-Body, der Server wählt Modell und zählt das Kontingent
+  async aiProxy(body, kind, deep = false) {
+    try {
+      const r = await this.callable('ai', 185000)({ body, kind, deep });
+      return r.data;
+    } catch (e) {
+      const d = e?.details || {};
+      if (e?.code === 'functions/resource-exhausted' || d.code === 'quota') { const err = new AiError(e.message || 'Monatskontingent erreicht.'); err.code = 'quota'; err.details = d; throw err; }
+      if (e?.code === 'functions/deadline-exceeded') throw new AiError('Die KI hat nicht rechtzeitig geantwortet. Versuch es noch einmal.');
+      if (e?.code === 'functions/unavailable' || e?.code === 'functions/internal') throw new AiError(e.message || 'Die KI ist gerade nicht erreichbar.');
+      throw new AiError(e?.message || 'KI-Fehler');
+    }
+  }
+  async refreshPlan() { return (await this.callable('refreshPlan')({})).data; }
+  // Testphase: Stufe kostenlos wählen (mit Test-Code)
+  async betaPlan(plan, code) {
+    try { return (await this.callable('betaPlan')({ plan, code })).data; }
+    catch (e) { const err = new Error(e?.message || 'Fehler'); err.code = e?.code === 'functions/permission-denied' ? 'beta-denied' : e?.code; throw err; }
+  }
+  sendFeedback(f) { return this.F.addDoc(this.F.collection(this.db, 'feedback'), { ...f, uid: this.me.uid, name: this.me.name || '', email: this.me.email || '', at: Date.now() }); }
+  async inboxAddress() { return (await this.callable('inboxAddress')({})).data.address; }
+  async deleteAccount() {
+    await this.callable('deleteMyAccount', 300000)({});
+    localStorage.removeItem('hausplaner-push-token');
+    await this.A.signOut(this.auth).catch(() => {});
+  }
+  // Adresse des Kalender-Abos (Funktion „calendar“)
+  calendarBase() { return this.backend ? `https://${this.cfg.backend.region || 'europe-west3'}-${this.cfg.firebase.projectId}.cloudfunctions.net/calendar` : ''; }
 }
