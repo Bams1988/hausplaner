@@ -1,0 +1,22 @@
+rules_version = '2';
+// Dateien (Fotos & Dokumente) liegen in Cloud Storage unter projects/{Bereich}/files/{Datei}/{Name}.
+// Lesen: Mitglieder, die den Bereich der Datei sehen dürfen. Hochladen: Mitglieder, solange das
+// Speicherlimit des Abos nicht erreicht ist (storageBytes/storageLimit pflegt der Server).
+service firebase.storage {
+  match /b/{bucket}/o {
+    match /projects/{pid}/files/{fileId}/{name} {
+      function proj() { return firestore.get(/databases/(default)/documents/projects/$(pid)).data; }
+      function member() { return request.auth != null && request.auth.uid in proj().members; }
+      function scope() { return proj().get('access', {}).get(request.auth.uid, 'all'); }
+      function canArea(a) { return member() && (scope() == 'all' || a in scope()); }
+      function fileArea() { return firestore.get(/databases/(default)/documents/projects/$(pid)/files/$(fileId)).data.get('areaId', 'hausbau'); }
+
+      allow read: if member() && (scope() == 'all' || canArea(fileArea()));
+      allow create: if member()
+        && request.resource.size < 25 * 1024 * 1024
+        && proj().get('storageBytes', 0) + request.resource.size <= proj().get('storageLimit', 262144000)
+        && (scope() == 'all' || canArea(request.resource.metadata.get('areaId', '')));
+      allow delete: if member() && (scope() == 'all' || canArea(fileArea()));
+    }
+  }
+}

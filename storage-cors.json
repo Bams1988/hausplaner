@@ -1,0 +1,7 @@
+[
+  {
+    "origin": ["https://bams1988.github.io", "capacitor://localhost", "https://localhost", "http://localhost"],
+    "method": ["GET"],
+    "maxAgeSeconds": 3600
+  }
+]

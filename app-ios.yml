@@ -1,0 +1,111 @@
+name: App iPhone (TestFlight)
+# Baut MindSpace als iPhone-App und lädt sie zu TestFlight hoch. Starten: Actions → „App iPhone“ → Run workflow.
+# Benötigte Secrets/Variablen: siehe VEROEFFENTLICHUNG.md, Schritt 8.
+
+on:
+  workflow_dispatch:
+    inputs:
+      upload:
+        description: 'Zu TestFlight hochladen'
+        type: boolean
+        default: true
+
+concurrency:
+  group: app-ios
+  cancel-in-progress: true
+
+jobs:
+  ios:
+    runs-on: macos-15
+    timeout-minutes: 75
+    env:
+      APP_ID: ${{ vars.APP_ID || 'de.mindspace.app' }}
+      APP_VERSION_NAME: ${{ vars.APP_VERSION_NAME || '1.0' }}
+      APP_BUILD: ${{ github.run_number }}
+      TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+      ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - name: Prüfen, ob alles hinterlegt ist
+        env:
+          A: ${{ secrets.APPLE_TEAM_ID }}
+          B: ${{ secrets.ASC_KEY_ID }}
+          C: ${{ secrets.ASC_ISSUER_ID }}
+          D: ${{ secrets.ASC_KEY_P8 }}
+          E: ${{ secrets.GOOGLE_SERVICE_INFO_PLIST }}
+          F: ${{ secrets.MINDSPACE_CONFIG }}
+        run: |
+          fehlt=""
+          [ -z "$A" ] && fehlt="$fehlt APPLE_TEAM_ID"; [ -z "$B" ] && fehlt="$fehlt ASC_KEY_ID"; [ -z "$C" ] && fehlt="$fehlt ASC_ISSUER_ID"
+          [ -z "$D" ] && fehlt="$fehlt ASC_KEY_P8"; [ -z "$E" ] && fehlt="$fehlt GOOGLE_SERVICE_INFO_PLIST"; [ -z "$F" ] && fehlt="$fehlt MINDSPACE_CONFIG"
+          if [ -n "$fehlt" ]; then echo "::error::Diese Secrets fehlen:$fehlt (Settings → Secrets and variables → Actions)."; exit 1; fi
+
+      - name: Pakete installieren
+        working-directory: native
+        run: npm install --no-audit --no-fund --legacy-peer-deps
+
+      - name: Web-App vorbereiten
+        working-directory: native
+        env:
+          MINDSPACE_CONFIG: ${{ secrets.MINDSPACE_CONFIG }}
+        run: node scripts/prepare-web.mjs
+
+      - name: iOS-Projekt erzeugen und anpassen
+        working-directory: native
+        env:
+          GOOGLE_SERVICE_INFO_PLIST: ${{ secrets.GOOGLE_SERVICE_INFO_PLIST }}
+        run: |
+          set -e
+          npx cap add ios --packagemanager CocoaPods
+          echo "$GOOGLE_SERVICE_INFO_PLIST" | base64 --decode > ios/App/App/GoogleService-Info.plist
+          python3 scripts/patch-ios.py
+          gem list -i xcodeproj >/dev/null || sudo gem install xcodeproj --no-document
+          ruby scripts/patch-ios.rb "$TEAM_ID" "$APP_ID"
+          npx capacitor-assets generate --ios --assetPath assets --iconBackgroundColor '#2FA37C' --splashBackgroundColor '#F3F7F4' --splashBackgroundColorDark '#0F1513'
+          npx cap sync ios
+
+      - name: App-Store-Connect-Schlüssel ablegen
+        env:
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+        run: |
+          mkdir -p ~/.appstoreconnect/private_keys
+          echo "$ASC_KEY_P8" | base64 --decode > ~/.appstoreconnect/private_keys/AuthKey_${ASC_KEY_ID}.p8
+
+      - name: Bauen und signieren
+        working-directory: native/ios/App
+        run: |
+          set -eo pipefail
+          KEY=~/.appstoreconnect/private_keys/AuthKey_${ASC_KEY_ID}.p8
+          AUTH="-allowProvisioningUpdates -authenticationKeyPath $KEY -authenticationKeyID $ASC_KEY_ID -authenticationKeyIssuerID $ASC_ISSUER_ID"
+          xcodebuild -workspace App.xcworkspace -scheme App -configuration Release -destination 'generic/platform=iOS' \
+            -archivePath "$RUNNER_TEMP/App.xcarchive" archive $AUTH DEVELOPMENT_TEAM="$TEAM_ID" | tail -n 40
+          cat > "$RUNNER_TEMP/export.plist" <<PLIST
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0"><dict>
+            <key>method</key><string>app-store-connect</string>
+            <key>teamID</key><string>${TEAM_ID}</string>
+            <key>signingStyle</key><string>automatic</string>
+            <key>uploadSymbols</key><true/>
+          </dict></plist>
+          PLIST
+          xcodebuild -exportArchive -archivePath "$RUNNER_TEMP/App.xcarchive" -exportPath "$RUNNER_TEMP/export" -exportOptionsPlist "$RUNNER_TEMP/export.plist" $AUTH
+          ls -la "$RUNNER_TEMP/export"
+
+      - name: Zu TestFlight hochladen
+        if: ${{ inputs.upload }}
+        run: xcrun altool --upload-app -f "$RUNNER_TEMP/export/App.ipa" -t ios --apiKey "$ASC_KEY_ID" --apiIssuer "$ASC_ISSUER_ID"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MindSpace-iOS-${{ github.run_number }}
+          path: ${{ runner.temp }}/export/App.ipa
+          retention-days: 7

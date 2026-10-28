@@ -1,4 +1,4 @@
-// E-Mail-Eingang: liest neue Mails aus dem Mindora-Postfach (z. B. Gmail),
+// E-Mail-Eingang: liest neue Mails aus dem MindSpace-Postfach (z. B. Gmail),
 // lässt sie von der KI auswerten und legt Aufgaben, Kontakte und Ablage-Einträge an.
 import crypto from 'node:crypto';
 import { ImapFlow } from 'imapflow';

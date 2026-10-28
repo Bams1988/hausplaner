@@ -1,6 +1,8 @@
 // KI-Assistent (Claude API von Anthropic).
-// Wird in der App UND im täglichen Erinnerungs-Programm (GitHub Actions) verwendet –
+// Wird in der App, in den Server-Diensten (functions/) und im Postboten verwendet –
 // deshalb nichts Browser-Spezifisches hier verwenden.
+// Zwei Wege: direkt mit eigenem API-Schlüssel (cfg.apiKey) oder über den MindSpace-Server
+// (cfg.proxy = Funktion(body, kind) → Antwort). Beim Server-Weg bestimmt das Abo das Modell.
 
 export const MODELS = [
   ['claude-sonnet-5-5', 'Claude Sonnet 5.5 – empfohlen'],
@@ -81,12 +83,13 @@ function jsonFromText(content) {
 // Ruft Claude auf und erwartet das Ergebnis als Aufruf des Werkzeugs `tool`.
 // Neuere Modelle erlauben kein erzwungenes Werkzeug – deshalb „auto“ mit klarer Anweisung
 // und notfalls eine Nachfrage.
-async function call({ apiKey, model }, { system, user, tool, maxTokens = 4096, timeoutMs = 90000 }) {
-  if (!apiKey) throw new AiError('Kein API-Schlüssel hinterlegt (Mehr → KI-Assistent).');
+async function call({ apiKey, model, proxy }, { system, user, tool, maxTokens = 4096, timeoutMs = 90000, kind = 'parse' }) {
+  if (!apiKey && !proxy) throw new AiError('Kein API-Schlüssel hinterlegt (Mehr → KI-Assistent).');
   const sys = `${system}\n\nGib dein Ergebnis ausschließlich über einen einzigen Aufruf des Werkzeugs „${tool.name}“ zurück – ohne Text davor oder danach.`;
   const messages = [{ role: 'user', content: user }];
   for (let attempt = 0; attempt < 2; attempt++) {
-    const data = await post(apiKey, { model: model || DEFAULT_MODEL, max_tokens: maxTokens, system: sys, tools: [tool], messages }, timeoutMs);
+    const body = { model: model || DEFAULT_MODEL, max_tokens: maxTokens, system: sys, tools: [tool], messages };
+    const data = proxy ? await proxy(body, kind) : await post(apiKey, body, timeoutMs);
     const block = (data.content || []).find((b) => b.type === 'tool_use' && b.name === tool.name);
     if (block) return block.input;
     const parsed = jsonFromText(data.content);
@@ -101,7 +104,7 @@ async function call({ apiKey, model }, { system, user, tool, maxTokens = 4096, t
 // Kurzer Verbindungstest (kostet weniger als 0,1 Cent)
 export async function testConnection(cfg) {
   await call(cfg, {
-    system: 'Antworte knapp.', user: 'Bestätige die Verbindung.', maxTokens: 1024, timeoutMs: 45000,
+    kind: 'test', system: 'Antworte knapp.', user: 'Bestätige die Verbindung.', maxTokens: 1024, timeoutMs: 45000,
     tool: { name: 'bestaetigen', description: 'Bestätigt die Verbindung.', input_schema: { type: 'object', required: ['ok'], properties: { ok: { type: 'boolean' } } } },
   });
   return true;
@@ -233,7 +236,7 @@ Regeln:
       : { type: 'image', source: { type: 'base64', media_type: a.mediaType, data: a.data } })),
     { type: 'text', text: userText },
   ] : userText;
-  const r = await call(cfg, { system, user, tool: extractTool(areas), maxTokens: 16000, timeoutMs: 180000 });
+  const r = await call(cfg, { system, user, tool: extractTool(areas), maxTokens: 16000, timeoutMs: 180000, kind: source === 'voice' || (!attachments.length && text.length < 1500) ? 'parse' : 'extract' });
   const openIds = new Set(openTasks.map((t) => t.id));
   const attIdx = (n) => (Number.isInteger(n) && n >= 1 && n <= att.length ? n - 1 : null);
   const ids = new Set(areas.map((a) => a.id));
@@ -308,7 +311,7 @@ Schreibe auf ${lang === 'en' ? 'Englisch (außer der Empfänger ist erkennbar de
     task ? `Anlass (Aufgabe): ${task.title}${task.due ? `\nFrist: ${task.due}` : ''}${task.notes ? `\nHintergrund:\n${task.notes.slice(0, 2500)}` : ''}` : '',
     instruction ? `Wunsch des Absenders: ${instruction}` : (task ? 'Ziel: die Aufgabe voranbringen – z. B. Unterlagen senden, Termin abstimmen, nachfragen oder um Fristverlängerung bitten, je nachdem was passt.' : 'Ziel: kurze, freundliche Kontaktaufnahme.'),
   ].filter(Boolean).join('\n');
-  const r = await call(cfg, { system, user: parts, tool: DRAFT_TOOL, maxTokens: 3000, timeoutMs: 60000 });
+  const r = await call(cfg, { system, user: parts, tool: DRAFT_TOOL, maxTokens: 3000, timeoutMs: 60000, kind: 'draft' });
   return { subject: r.betreff || '', body: r.text || '' };
 }
 
@@ -344,7 +347,7 @@ Berücksichtige Wartezeiten auf Dritte (Bank, Notar, Behörden, Ärzte, Handwerk
     vorlauf_tage_geschaetzt: t.leadDays ?? null, angelegt_am: t.createdAt ? iso(new Date(t.createdAt)) : null,
     notizen: (t.notes || '').slice(0, 600),
   }));
-  const r = await call(cfg, { system, user: `Offene Aufgaben:\n${JSON.stringify(list, null, 1)}`, tool: ASSESS_TOOL, maxTokens: 12000, timeoutMs: 150000 });
+  const r = await call(cfg, { system, user: `Offene Aufgaben:\n${JSON.stringify(list, null, 1)}`, tool: ASSESS_TOOL, maxTokens: 12000, timeoutMs: 150000, kind: 'assess' });
   const byId = new Map(tasks.map((t) => [t.id, t]));
   return (r.bewertungen || []).filter((b) => byId.has(b.id) && STATUS[b.status]).map((b) => ({
     id: b.id, status: b.status, startBy: validDate(b.starten_bis), reason: b.grund || '', next: b.naechster_schritt || '',
@@ -369,7 +372,7 @@ const SEARCH_TOOL = {
 export async function searchWithAI(cfg, query, index, { now = new Date(), lang = 'de' } = {}) {
   const system = `Du bist die Suche von MindSpace. Der Nutzer sucht etwas in seinen Aufgaben, Dateien, Kosten, Kontakten und E-Mails – oft umgangssprachlich oder gesprochen („wo ist nochmal der Bauvertrag“, „was hat die Bank wegen der Zinsen geschrieben“). Finde die passenden Einträge im Verzeichnis, auch über Synonyme und Zusammenhänge (Rechnung ↔ Abschlag, Vertrag ↔ Bauvertrag, Grundriss ↔ Plan). ${todayLine(now)}
 Antworte nur mit IDs aus dem Verzeichnis. Dateien (f:) sind besonders wichtig, wenn nach Dokumenten gefragt wird – nenne dann in der Antwort, an welcher Aufgabe und in welchem Bereich sie liegen.${langLine(lang)}`;
-  const r = await call(cfg, { system, user: `Suche: ${query}\n\nVerzeichnis (eine Zeile je Eintrag):\n${index}`, tool: SEARCH_TOOL, maxTokens: 2000, timeoutMs: 60000 });
+  const r = await call(cfg, { system, user: `Suche: ${query}\n\nVerzeichnis (eine Zeile je Eintrag):\n${index}`, tool: SEARCH_TOOL, maxTokens: 2000, timeoutMs: 60000, kind: 'search' });
   return { answer: r.antwort || '', hits: (Array.isArray(r.treffer) ? r.treffer : []).filter((h) => h && h.id).map((h) => ({ id: String(h.id), why: h.grund || '' })) };
 }
 

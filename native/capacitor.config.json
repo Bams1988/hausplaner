@@ -1,0 +1,12 @@
+{
+  "appId": "de.mindspace.app",
+  "appName": "MindSpace",
+  "webDir": "www",
+  "backgroundColor": "#F3F7F4",
+  "ios": { "contentInset": "never", "backgroundColor": "#F3F7F4" },
+  "android": { "backgroundColor": "#F3F7F4" },
+  "plugins": {
+    "SplashScreen": { "launchAutoHide": false, "launchShowDuration": 3000, "backgroundColor": "#F3F7F4", "showSpinner": false },
+    "FirebaseMessaging": { "presentationOptions": ["alert", "badge", "sound"] }
+  }
+}

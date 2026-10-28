@@ -1,0 +1,104 @@
+name: App Android (Google Play)
+# Baut MindSpace als Android-App (.aab) und lädt sie in den internen Test von Google Play.
+# Starten: Actions → „App Android“ → Run workflow. Secrets: siehe VEROEFFENTLICHUNG.md, Schritt 9.
+
+on:
+  workflow_dispatch:
+    inputs:
+      upload:
+        description: 'Zu Google Play (interner Test) hochladen'
+        type: boolean
+        default: true
+
+concurrency:
+  group: app-android
+  cancel-in-progress: true
+
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      APP_ID: ${{ vars.APP_ID || 'de.mindspace.app' }}
+      APP_VERSION_NAME: ${{ vars.APP_VERSION_NAME || '1.0' }}
+      APP_BUILD: ${{ github.run_number }}
+      HAS_PLAY: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON != '' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Prüfen, ob alles hinterlegt ist
+        env:
+          A: ${{ secrets.ANDROID_KEYSTORE }}
+          B: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          C: ${{ secrets.ANDROID_KEY_ALIAS }}
+          D: ${{ secrets.GOOGLE_SERVICES_JSON }}
+          E: ${{ secrets.MINDSPACE_CONFIG }}
+        run: |
+          fehlt=""
+          [ -z "$A" ] && fehlt="$fehlt ANDROID_KEYSTORE"; [ -z "$B" ] && fehlt="$fehlt ANDROID_KEYSTORE_PASSWORD"; [ -z "$C" ] && fehlt="$fehlt ANDROID_KEY_ALIAS"
+          [ -z "$D" ] && fehlt="$fehlt GOOGLE_SERVICES_JSON"; [ -z "$E" ] && fehlt="$fehlt MINDSPACE_CONFIG"
+          if [ -n "$fehlt" ]; then echo "::error::Diese Secrets fehlen:$fehlt (Settings → Secrets and variables → Actions)."; exit 1; fi
+
+      - name: Pakete installieren
+        working-directory: native
+        run: npm install --no-audit --no-fund --legacy-peer-deps
+
+      - name: Web-App vorbereiten
+        working-directory: native
+        env:
+          MINDSPACE_CONFIG: ${{ secrets.MINDSPACE_CONFIG }}
+        run: node scripts/prepare-web.mjs
+
+      - name: Android-Projekt erzeugen und anpassen
+        working-directory: native
+        env:
+          GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
+        run: |
+          set -e
+          npx cap add android
+          echo "$GOOGLE_SERVICES_JSON" | base64 --decode > google-services.json
+          node scripts/patch-android.mjs
+          npx capacitor-assets generate --android --assetPath assets --iconBackgroundColor '#2FA37C' --splashBackgroundColor '#F3F7F4' --splashBackgroundColorDark '#0F1513'
+          npx cap sync android
+
+      - name: Bauen (.aab)
+        working-directory: native/android
+        run: |
+          chmod +x gradlew
+          ./gradlew bundleRelease --no-daemon --stacktrace
+
+      - name: Signieren
+        working-directory: native/android
+        env:
+          ANDROID_KEYSTORE: ${{ secrets.ANDROID_KEYSTORE }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+        run: |
+          set -e
+          echo "$ANDROID_KEYSTORE" | base64 --decode > "$RUNNER_TEMP/upload.jks"
+          AAB=app/build/outputs/bundle/release/app-release.aab
+          jarsigner -sigalg SHA256withRSA -digestalg SHA-256 -keystore "$RUNNER_TEMP/upload.jks" -storepass "$ANDROID_KEYSTORE_PASSWORD" "$AAB" "$ANDROID_KEY_ALIAS"
+          mkdir -p "$RUNNER_TEMP/out" && cp "$AAB" "$RUNNER_TEMP/out/MindSpace-${{ github.run_number }}.aab"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MindSpace-Android-${{ github.run_number }}
+          path: ${{ runner.temp }}/out/*.aab
+          retention-days: 7
+
+      - name: Zu Google Play hochladen (interner Test)
+        if: ${{ inputs.upload && env.HAS_PLAY == 'true' }}
+        uses: r0adkll/upload-google-play@v1
+        with:
+          serviceAccountJsonPlainText: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
+          packageName: ${{ env.APP_ID }}
+          releaseFiles: ${{ runner.temp }}/out/*.aab
+          track: internal
+          status: completed

@@ -1,8 +1,8 @@
-name: Mindora
+name: MindSpace
 
 on:
   schedule:
-    - cron: '*/15 * * * *'   # alle 15 Minuten (GitHub startet manchmal etwas später)
+    - cron: '*/5 * * * *'   # alle 5 Minuten (GitHub startet manchmal etwas später)
   workflow_dispatch:
     inputs:
       test:
@@ -30,9 +30,9 @@ jobs:
       - name: Programm zusammenstellen
         run: |
           set -e
-          finde() { find . -name "$1" -not -path './_run/*' -not -path '*/node_modules/*' -not -path './.git/*' | head -1; }
+          finde() { find . -name "$1" -not -path './_run/*' -not -path '*/node_modules/*' -not -path './.git/*' -not -path '*/shared/*' -not -path './native/*' | head -1; }
           fehlt=""
-          for f in send-reminders.mjs inbox.mjs ai.js parser.js store.js; do
+          for f in send-reminders.mjs inbox.mjs ai.js parser.js store.js reminders-core.js push.js; do
             [ -z "$(finde $f)" ] && fehlt="$fehlt $f"
           done
           if [ -n "$fehlt" ]; then
@@ -42,6 +42,9 @@ jobs:
           mkdir -p _run/scripts
           cp "$(finde send-reminders.mjs)" "$(finde inbox.mjs)" _run/scripts/
           cp "$(finde ai.js)" "$(finde parser.js)" "$(finde store.js)" _run/
+          cp "$(finde reminders-core.js)" _run/
+          mkdir -p _run/functions/lib && cp "$(finde push.js)" _run/functions/lib/
+          echo '{"type":"module","private":true}' > _run/functions/package.json
           echo '{"type":"module","private":true}' > _run/package.json
           echo '{"type":"module","private":true}' > _run/scripts/package.json
           cd _run/scripts

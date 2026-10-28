@@ -1,0 +1,32 @@
+{
+  "name": "mindspace-native",
+  "private": true,
+  "type": "module",
+  "description": "MindSpace als App für iPhone und Android (Capacitor). Gebaut wird automatisch über GitHub Actions.",
+  "scripts": {
+    "prepare-web": "node scripts/prepare-web.mjs",
+    "sync": "npm run prepare-web && npx cap sync"
+  },
+  "dependencies": {
+    "@aparajita/capacitor-biometric-auth": "latest",
+    "@capacitor-firebase/messaging": "^8.0.0",
+    "@capacitor/android": "^8.0.0",
+    "@capacitor/app": "^8.0.0",
+    "@capacitor/app-launcher": "^8.0.0",
+    "@capacitor/browser": "^8.0.0",
+    "@capacitor/core": "^8.0.0",
+    "@capacitor/filesystem": "^8.0.0",
+    "@capacitor/ios": "^8.0.0",
+    "@capacitor/share": "^8.0.0",
+    "@capacitor/splash-screen": "^8.0.0",
+    "@capacitor/status-bar": "^8.0.0",
+    "@revenuecat/purchases-capacitor": "latest",
+    "firebase": "^10.14.1"
+  },
+  "devDependencies": {
+    "@capacitor/assets": "^3.0.5",
+    "@capacitor/cli": "^8.0.0",
+    "@fontsource-variable/inter": "^5.1.0",
+    "esbuild": "^0.24.0"
+  }
+}

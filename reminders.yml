@@ -1,8 +1,8 @@
-name: Mindora
+name: MindSpace
 
 on:
   schedule:
-    - cron: '*/15 * * * *'   # alle 15 Minuten (GitHub startet manchmal etwas später)
+    - cron: '*/5 * * * *'   # alle 5 Minuten (GitHub startet manchmal etwas später)
   workflow_dispatch:
     inputs:
       test:
@@ -26,11 +26,31 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Abhängigkeiten installieren
-        working-directory: scripts
-        run: npm install --no-audit --no-fund
+      # Sucht die Programmdateien im Repository – egal, in welchem Ordner sie liegen.
+      - name: Programm zusammenstellen
+        run: |
+          set -e
+          finde() { find . -name "$1" -not -path './_run/*' -not -path '*/node_modules/*' -not -path './.git/*' -not -path '*/shared/*' -not -path './native/*' | head -1; }
+          fehlt=""
+          for f in send-reminders.mjs inbox.mjs ai.js parser.js store.js reminders-core.js push.js; do
+            [ -z "$(finde $f)" ] && fehlt="$fehlt $f"
+          done
+          if [ -n "$fehlt" ]; then
+            echo "::error::Diese Dateien fehlen im Repository:$fehlt – bitte hochladen (Add file → Upload files)."
+            exit 1
+          fi
+          mkdir -p _run/scripts
+          cp "$(finde send-reminders.mjs)" "$(finde inbox.mjs)" _run/scripts/
+          cp "$(finde ai.js)" "$(finde parser.js)" "$(finde store.js)" _run/
+          cp "$(finde reminders-core.js)" _run/
+          mkdir -p _run/functions/lib && cp "$(finde push.js)" _run/functions/lib/
+          echo '{"type":"module","private":true}' > _run/functions/package.json
+          echo '{"type":"module","private":true}' > _run/package.json
+          echo '{"type":"module","private":true}' > _run/scripts/package.json
+          cd _run/scripts
+          npm install --no-audit --no-fund --loglevel=error firebase-admin@13 imapflow@1 mailparser@3
       - name: E-Mails abholen, erinnern, Fristen prüfen
-        working-directory: scripts
+        working-directory: _run/scripts
         env:
           FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
           INBOX_USER: ${{ secrets.INBOX_USER }}
