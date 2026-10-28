@@ -38,7 +38,7 @@ Jeder Tester bekommt seinen eigenen, privaten Bereich. Eure Familiendaten sieht 
 
 - **Feedback:** Tester schreiben unter **Mehr → Feedback zur Testversion**. Du bekommst eine Push-Nachricht, der volle Text steht in Firestore unter `feedback`.
 - **Verbrauch:** Firestore → `projects` → Bereich → `usage`. Dort stehen die KI-Aktionen, E-Mails und Tokens je Monat.
-- **Neue Version verteilen:** Dateien zu GitHub hochladen. Tester tippen auf **Mehr → Neueste Version laden**.
+- **Neue Version verteilen:** Dateien zu GitHub hochladen. Tester tippen auf **Mehr → App & Darstellung → Neueste Version laden**.
 - **Testphase beenden:**
   - `BETA_CODE` in `functions/.env` leeren und neu bereitstellen.
   - `beta: true` aus der `config.js` entfernen.

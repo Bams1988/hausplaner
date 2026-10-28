@@ -1,5 +1,16 @@
 {
-  "name": "hausplaner",
+  "name": "mindspace-functions",
   "private": true,
-  "type": "module"
+  "type": "module",
+  "main": "index.js",
+  "engines": { "node": "22" },
+  "scripts": {
+    "sync": "node tools/sync-shared.mjs",
+    "deploy": "node tools/sync-shared.mjs && firebase deploy --only functions,firestore:rules,storage"
+  },
+  "dependencies": {
+    "firebase-admin": "^12.7.0",
+    "firebase-functions": "^6.1.0",
+    "mailparser": "^3.7.1"
+  }
 }

@@ -61,10 +61,10 @@ async function post(apiKey, body, timeoutMs) {
   if (!res.ok) {
     let msg = '';
     try { msg = (await res.json())?.error?.message || ''; } catch {}
-    if (res.status === 401) throw new AiError('Der API-Schlüssel ist ungültig. Prüfe ihn unter Mehr → KI-Assistent.');
+    if (res.status === 401) throw new AiError('Der API-Schlüssel ist ungültig. Prüfe ihn unter Mehr → KI & E-Mail-Eingang.');
     if (res.status === 403) throw new AiError('Der API-Schlüssel hat keine Berechtigung. Prüfe ihn in der Anthropic Console.');
     if (/credit balance|billing/i.test(msg)) throw new AiError('Das Guthaben in der Anthropic Console ist aufgebraucht. Lade dort etwas Guthaben auf.');
-    if (res.status === 404 || /^model:|model.*(not found|does not exist|not available)/i.test(msg)) throw new AiError(`Das KI-Modell ist nicht verfügbar. Wähle unter Mehr → KI-Assistent ein anderes. (${msg})`);
+    if (res.status === 404 || /^model:|model.*(not found|does not exist|not available)/i.test(msg)) throw new AiError(`Das KI-Modell ist nicht verfügbar. Wähle unter Mehr → KI & E-Mail-Eingang ein anderes. (${msg})`);
     if (res.status === 429) throw new AiError('Zu viele Anfragen oder Ausgabelimit erreicht. Warte kurz oder prüfe die Limits in der Anthropic Console.');
     if (res.status >= 500) throw new AiError('Die KI ist gerade überlastet. Versuch es in ein paar Minuten noch einmal.');
     throw new AiError(`KI-Fehler ${res.status}: ${msg || 'unbekannt'}`);
@@ -84,7 +84,7 @@ function jsonFromText(content) {
 // Neuere Modelle erlauben kein erzwungenes Werkzeug – deshalb „auto“ mit klarer Anweisung
 // und notfalls eine Nachfrage.
 async function call({ apiKey, model, proxy }, { system, user, tool, maxTokens = 4096, timeoutMs = 90000, kind = 'parse' }) {
-  if (!apiKey && !proxy) throw new AiError('Kein API-Schlüssel hinterlegt (Mehr → KI-Assistent).');
+  if (!apiKey && !proxy) throw new AiError('Kein API-Schlüssel hinterlegt (Mehr → KI & E-Mail-Eingang).');
   const sys = `${system}\n\nGib dein Ergebnis ausschließlich über einen einzigen Aufruf des Werkzeugs „${tool.name}“ zurück – ohne Text davor oder danach.`;
   const messages = [{ role: 'user', content: user }];
   for (let attempt = 0; attempt < 2; attempt++) {
@@ -301,6 +301,17 @@ const DRAFT_TOOL = {
     },
   },
 };
+// Freies Gespräch mit dem Assistenten: Antwort als Text (Markdown light)
+export async function chatAI(cfg, { system, messages, maxTokens = 1600, timeoutMs = 90000, lang = 'de' }) {
+  const { apiKey, model, proxy } = cfg || {};
+  if (!apiKey && !proxy) throw new AiError('Kein API-Schlüssel hinterlegt (Mehr → KI & E-Mail-Eingang).');
+  const body = { model: model || DEFAULT_MODEL, max_tokens: maxTokens, system: system + (lang === 'en' ? '\n\nAntworte auf Englisch.' : ''), messages };
+  const data = proxy ? await proxy(body, 'chat') : await post(apiKey, body, timeoutMs);
+  const text = (data.content || []).filter((b) => b.type === 'text').map((b) => b.text).join('\n').trim();
+  if (!text) throw new AiError('Die KI hat keine Antwort geliefert. Versuch es noch einmal.');
+  return text;
+}
+
 export async function draftEmail(cfg, { task, contact, sender, project, instruction = '', now = new Date(), lang = 'de' }) {
   const system = `Du schreibst E-Mails im Namen einer Familie (sie baut u. a. mit allkauf ein Haus). ${todayLine(now)}
 Schreibe auf ${lang === 'en' ? 'Englisch (außer der Empfänger ist erkennbar deutschsprachig, dann Deutsch)' : 'Deutsch'}, freundlich, sachlich und knapp (Sie-Form, außer die Vorlage duzt). Nenne konkrete Bezüge (Vorgang, Unterlagen, Termine, Fristen), aber erfinde keine Fakten, Aktenzeichen oder Zusagen. Unterschreibe mit dem Namen des Absenders.`;

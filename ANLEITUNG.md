@@ -14,31 +14,36 @@ Die Einrichtung hat fünf Stufen. Schon nach Stufe 1 kannst du die App benutzen.
 
 > **Du hattest schon den Hausplaner eingerichtet?** Dann lies zuerst den Abschnitt **„Umstieg vom Hausplaner“** ganz unten. Stufe 1–4 musst du nicht wiederholen.
 
+> **Update auf Version 16 (aufgeräumt: Plus mit Diktat, Assistent, neues „Mehr“, Tour)**
+> 1. **GitHub → Add file → Upload files:** `app.js`, `ai.js`, `plans.js`, `i18n.js`, `styles.css`, `sw.js`, `testen.html`, `TESTVERSION.md` und `ANLEITUNG.md`. `config.js` nicht anfassen.
+> 2. Auf jedem Gerät **Mehr → App & Darstellung → Neueste Version laden** (Version 16). Beim ersten Öffnen bietet MindSpace die Tour an.
+> 3. Mit Server-Diensten (optional, für bessere Assistenten-Antworten): in der Cloud Shell `cd ~/hausplaner && git pull && firebase deploy --only functions`.
+
 > **Update auf Version 15 (Schutz vor verlorenen Eingaben + Testphase)**
 > 1. **GitHub → Add file → Upload files:** `app.js`, `store.js`, `i18n.js`, `styles.css`, `sw.js`, `firestore.rules`, `config.beispiel.js`, `testen.html` (neu), `TESTVERSION.md` (neu) und `ANLEITUNG.md`; aus dem Ordner `functions` die Dateien `index.js` und `.env.beispiel`. `config.js` nicht anfassen.
 > 2. **Firebase → Firestore → Regeln:** Inhalt der neuen `firestore.rules` einfügen → **Veröffentlichen**.
-> 3. Auf jedem Gerät **Mehr → Neueste Version laden** (Version 15).
+> 3. Auf jedem Gerät **Mehr → App & Darstellung → Neueste Version laden** (Version 15).
 > 4. Bekannte testen lassen: siehe **TESTVERSION.md**.
 
 > **Update auf Version 14 (vorbereitet für App Store, Google Play und Abos)** – für euren bisherigen Betrieb ändert sich nichts, bis du die Server-Dienste einschaltest:
 > 1. **GitHub → Add file → Upload files:** `app.js`, `store.js`, `ai.js`, `i18n.js`, `plans.js` (neu), `native.js` (neu), `styles.css`, `sw.js`, `firestore.rules`, `storage.rules` (neu), `storage-cors.json` (neu), `firebase.json` (neu), `config.beispiel.js` (neu), `reminders-core.js` (neu), `ANLEITUNG.md`, `VEROEFFENTLICHUNG.md` (neu) an die gewohnte Stelle; `send-reminders.mjs` in `scripts`; die Ordner `functions`, `native`, `mail-worker` und `rechtliches` komplett; `reminders.yml`, `app-ios.yml` und `app-android.yml` in `.github/workflows`. `config.js` nicht anfassen.
 > 2. **Firebase → Firestore → Regeln:** Inhalt der neuen `firestore.rules` einfügen → **Veröffentlichen**.
 > 3. **Postbote:** Code durch die neue `MindSpace-Postbote.gs` ersetzen (kleine Korrektur im Kalender-Abo).
-> 4. Auf jedem Gerät **Mehr → Neueste Version laden** (Version 14).
+> 4. Auf jedem Gerät **Mehr → App & Darstellung → Neueste Version laden** (Version 14).
 > 5. Alles Weitere – Server-Dienste, Abos, Store-Veröffentlichung – steht Schritt für Schritt in **VEROEFFENTLICHUNG.md**.
 
 > **Update auf Version 13 (Zuständigkeit & Kalender)** – wenn MindSpace bei dir schon läuft:
 > 1. **GitHub → Add file → Upload files:** `app.js`, `store.js`, `i18n.js`, `styles.css`, `sw.js`, `firestore.rules`, `ANLEITUNG.md` an die gewohnte Stelle und `send-reminders.mjs` in den Ordner `scripts`. `config.js` nicht anfassen. → **Commit changes**.
 > 2. **Firebase → Firestore Database → Regeln:** alles löschen, Inhalt der neuen `firestore.rules` einfügen → **Veröffentlichen**. (Ohne diesen Schritt kann niemand den Kalender abonnieren.)
 > 3. **Postbote:** in script.google.com den gesamten Code löschen, Inhalt von `MindSpace-Postbote.gs` einfügen, speichern. Danach einmal **Bereitstellen → Neue Bereitstellung** wie in Stufe 6 beschrieben.
-> 4. Auf jedem Gerät **Mehr → App → Neueste Version laden** (bis dort **Version 13** steht).
-> 5. In der App **Mehr → Kalender → Einrichten** und die Web-App-Adresse einfügen. Danach wird jedes Mitglied gefragt.
+> 4. Auf jedem Gerät **Mehr → App & Darstellung → Neueste Version laden** (bis dort **Version 13** steht).
+> 5. In der App **Mehr → Erinnerungen & Kalender → Kalender → Einrichten** und die Web-App-Adresse einfügen. Danach wird jedes Mitglied gefragt.
 
 > **Update auf Version 10 (MindSpace)** – wenn MindSpace/Mindora bei dir schon läuft, reichen diese Schritte:
 > 1. **GitHub → Add file → Upload files:** `app.js`, `store.js`, `ai.js`, `i18n.js` (neu), `styles.css`, `sw.js`, `index.html`, `manifest.webmanifest`, `firestore.rules`, `ANLEITUNG.md` an die gewohnte Stelle, dazu den Ordner-Inhalt `icons/` (alle 5 Dateien, auch `logo.svg`) in den Ordner `icons` und `send-reminders.mjs` in den Ordner `scripts`. `config.js` nicht anfassen. → **Commit changes**.
 > 2. **Firebase → Firestore Database → Regeln:** alles löschen, Inhalt der neuen `firestore.rules` einfügen → **Veröffentlichen**. (Wichtig für das Einladen zu einzelnen Projekten.)
 > 3. **Postbote:** in script.google.com den gesamten Code löschen, Inhalt von `MindSpace-Postbote.gs` einfügen, speichern. Fragt Google beim nächsten Ausführen nach Berechtigungen, **zulassen**.
-> 4. Auf jedem Gerät unter **Mehr → App → Neueste Version laden**. Dort steht dann **Version 10**. Damit das neue Symbol erscheint: MindSpace vom Home-Bildschirm löschen und neu hinzufügen (Daten bleiben erhalten).
+> 4. Auf jedem Gerät unter **Mehr → App & Darstellung → Neueste Version laden**. Dort steht dann **Version 10**. Damit das neue Symbol erscheint: MindSpace vom Home-Bildschirm löschen und neu hinzufügen (Daten bleiben erhalten).
 
 Am besten machst du das an einem privaten Computer (Windows oder Mac), mit einem Browser – installieren musst du nichts.
 
@@ -110,7 +115,7 @@ Firebase ist ein Dienst von Google. Der kostenlose Tarif „Spark“ reicht für
 ### 2.7 Loslegen
 1. MindSpace auf dem iPhone schließen (in der App-Übersicht nach oben wischen) und neu öffnen. Es erscheint die Anmeldung.
 2. **Konto erstellen** → **Loslegen**. Aufgaben aus dem lokalen Modus werden auf Wunsch übernommen.
-3. **Mehr → Partnerin oder Partner einladen** → **Einladung senden** (z. B. per WhatsApp an deine Frau).
+3. **Mehr → Familie & Teilen → Jemanden einladen** → **Einladung senden** (z. B. per WhatsApp an deine Frau).
 4. Deine Frau öffnet den Link in Safari, fügt die App zum Home-Bildschirm hinzu, erstellt ein Konto und gibt den Code ein.
 
 ---
@@ -139,7 +144,7 @@ Ein kleines Programm in deinem GitHub-Repository schaut alle 5 Minuten nach fäl
 3. Den Inhalt der Datei `reminders.yml` (liegt im Hauptordner der ZIP) hineinkopieren → **Commit changes**.
 
 ### 3.4 Push auf dem iPhone aktivieren und testen
-1. MindSpace vom Home-Bildschirm öffnen → **Mehr → Push-Nachrichten → Aktivieren** → **Erlauben**. (Deine Frau macht das auf ihrem iPhone genauso.)
+1. MindSpace vom Home-Bildschirm öffnen → **Mehr → Erinnerungen & Kalender → Push-Nachrichten → Aktivieren** → **Erlauben**. (Deine Frau macht das auf ihrem iPhone genauso.)
 2. GitHub → Reiter **Actions** → links **MindSpace** → **Run workflow** → Haken „Test-Nachricht“ lassen → **Run workflow**.
 3. Nach etwa einer Minute kommt auf beiden iPhones „Test: Push-Nachrichten funktionieren.“
 
@@ -164,7 +169,7 @@ Der KI-Assistent nutzt **Claude von Anthropic**. Er liest eingefügte E-Mails un
 4. Unter **API Keys** → **Create Key** → Name `MindSpace` → Schlüssel kopieren. Er beginnt mit `sk-ant-` und wird nur **einmal** angezeigt.
 
 ### 4.2 In der App eintragen
-1. MindSpace öffnen → **Mehr → KI-Assistent → Einrichten**.
+1. MindSpace öffnen → **Mehr → KI & E-Mail-Eingang → Einrichten**.
 2. Schlüssel einfügen, Modell **Claude Sonnet 5.5** lassen → **Prüfen und speichern**.
 
 Der Schlüssel wird in eurem Bauprojekt gespeichert. Deine Frau kann die KI damit ebenfalls nutzen, und die tägliche Fristprüfung (Stufe 3) verwendet ihn automatisch. An GitHub musst du dafür nichts ändern.
@@ -227,15 +232,15 @@ Jedes Mitglied kann seine Aufgaben als eigenen Kalender **„MindSpace“** im i
 > „Jeder“ heißt nur: Kalender-Apps dürfen den Link ohne Google-Anmeldung abrufen. Ohne den persönlichen geheimen Schlüssel eines Mitglieds liefert die Adresse keine einzige Aufgabe. Ein Mitglied mit eingeschränktem Zugriff sieht auch im Kalender nur seine freigegebenen Projekte.
 
 ### 6.2 In MindSpace eintragen
-**Mehr → Kalender → Einrichten** → URL einfügen → **Prüfen & speichern**. Ab jetzt wird jedes Mitglied beim nächsten Öffnen gefragt.
+**Mehr → Erinnerungen & Kalender → Kalender → Einrichten** → URL einfügen → **Prüfen & speichern**. Ab jetzt wird jedes Mitglied beim nächsten Öffnen gefragt.
 
 ### 6.3 Was jedes Mitglied tut
 1. Bei der Frage „Aufgaben in deinen Kalender?“ **Ja, alle Aufgaben** oder **Ja, nur meine Aufgaben** wählen.
 2. **Jetzt abonnieren** tippen → das iPhone fragt „Kalenderabonnement hinzufügen?“ → **Abonnieren** → **Hinzufügen**.
 3. Für schnelle Aktualisierung: iPhone-Einstellungen → (Apps →) Kalender → Accounts → **Datenabgleich** → „Alle 15 Minuten“.
-4. Am Computer (Outlook, Google Kalender): **Mehr → Kalender → Adresse kopieren** und dort „Kalender aus dem Internet abonnieren“ bzw. „Per URL hinzufügen“.
+4. Am Computer (Outlook, Google Kalender): **Mehr → Erinnerungen & Kalender → Kalender → Adresse kopieren** und dort „Kalender aus dem Internet abonnieren“ bzw. „Per URL hinzufügen“.
 
-Ändern oder beenden: **Mehr → Kalender**. Beim Beenden wird der Link sofort ungültig; den Kalender „MindSpace“ dann noch im Handy löschen (Kalender-App → Kalender → ⓘ → Kalender löschen).
+Ändern oder beenden: **Mehr → Erinnerungen & Kalender → Kalender**. Beim Beenden wird der Link sofort ungültig; den Kalender „MindSpace“ dann noch im Handy löschen (Kalender-App → Kalender → ⓘ → Kalender löschen).
 
 > **Hinweis:** Das Abo ist eine Ansicht – Termine, die du im Handy-Kalender verschiebst, ändern die Aufgabe in MindSpace nicht. Erledigte Aufgaben erscheinen mit ✅, überfällige mit 🔴. Ohne Abo gibt es in jeder Aufgabe den Knopf **📅 In Kalender** für einen einmaligen Eintrag (am besten am Computer).
 
@@ -256,14 +261,14 @@ In der Adresszeile rechts auf das Symbol **Installieren** klicken (Bildschirm mi
 **Mac mit Safari**
 Menü **Ablage** → **Zum Dock hinzufügen**.
 
-Alternativ in MindSpace unter **Mehr → App → Als Programm installieren** (Edge und Chrome).
+Alternativ in MindSpace unter **Mehr → App & Darstellung → Als Programm installieren** (Edge und Chrome).
 
 **Am Computer gibt es zusätzlich:**
 - Seitenleiste links statt Leiste unten, breite Übersicht in zwei Spalten, Monatskalender mit Aufgabentiteln.
-- Tastenkürzel: **N** = neue Aufgabe, **/** = Schnelleingabe, **1–5** = Übersicht, Aufgaben, Plan, Eingang, Mehr, **Esc** = schließen.
+- Tastenkürzel: **N** = neue Aufgabe, **M** = diktieren, **A** = Assistent, **S** = suchen, **1–5** = Übersicht, Aufgaben, Plan, Eingang, Mehr, **Esc** = schließen.
 - Dateien (PDF, Fotos) einfach mit der Maus in eine geöffnete Aufgabe, Zahlung oder in „Fotos & Dokumente“ ziehen.
 - Rechtsklick auf das MindSpace-Symbol in der Taskleiste: **Neue Aufgabe**, **Planer**, **Eingang**, **Kosten**.
-- Push-Nachrichten: unter **Mehr → Push-Nachrichten → Aktivieren** – auf jedem Computer einmal.
+- Push-Nachrichten: unter **Mehr → Erinnerungen & Kalender → Push-Nachrichten → Aktivieren** – auf jedem Computer einmal.
 
 **Hinweis Firmen-PC:** Manche Firmen sperren das Installieren von Web-Apps oder Benachrichtigungen. Dann MindSpace einfach als Lesezeichen im Browser nutzen – funktioniert genauso, nur im Browser-Tab.
 
@@ -271,20 +276,24 @@ Alternativ in MindSpace unter **Mehr → App → Als Programm installieren** (Ed
 
 **Suchen:** Lupe oben rechts (am Computer links in der Seitenleiste oder **Strg+K**). Tippen findet sofort Aufgaben, Kommentare, Fotos & Dokumente, Kosten, Kontakte und E-Mails. Mit **Enter** oder dem **Mikrofon** fragst du die KI, z. B. „Wo ist nochmal der Bauvertrag?“ – sie zeigt, in welchem Projekt und an welcher Aufgabe die Datei liegt, und du öffnest sie direkt.
 
-**Sprachnotiz:** Mikrofon in der Schnelleingabe (am Computer Taste **M**). Sprechen, z. B. „Morgen um 10 die Bank wegen der Zinsbindung anrufen und jeden Dienstag Müll rausbringen“ – die KI macht daraus Aufgaben mit Datum, Uhrzeit, Bereich und Wiederholung. Du prüfst kurz und tippst **Übernehmen**. Klappt das Mitschreiben nicht, nutze das Mikrofon der iPhone-Tastatur.
+**Neue Aufgabe:** Plus unten rechts (am Computer Taste **N**). Schreiben oder **Diktieren** antippen (am Computer Taste **M**), z. B. „Zahnarzt Dienstag 9 Uhr #familie“ – Datum, Uhrzeit und Bereich siehst du sofort, **Anlegen** tippen. Viel Text oder mehrere Dinge auf einmal („Morgen die Bank anrufen und jeden Dienstag Müll rausbringen“)? **Mit KI erkennen** macht daraus mehrere Aufgaben. Klappt das Mitschreiben nicht, nutze das Mikrofon der iPhone-Tastatur.
 
-**Bündeln statt doppelt:** Passt etwas Neues zu einer offenen Aufgabe (gleicher Vorgang), legt MindSpace keine zweite an. Die neue Info landet als Eintrag im **Verlauf** der vorhandenen Aufgabe, eine frühere Frist wird übernommen. Das gilt für die Schnelleingabe, Sprachnotizen, eingefügte E-Mails und den E-Mail-Eingang. Beim Einfügen kannst du das Bündeln je Aufgabe abwählen; in der Schnelleingabe hilft „Doch neu“.
+**Assistent:** Oben **✨ Assistent** (am Computer Taste **A**). Er kennt eure Aufgaben, Projekte, Kosten und Kontakte und beantwortet Fragen wie „Was steht diese Woche an?“ oder „Fass das Projekt Hausbau zusammen“. In einer Aufgabe gibt **✨ Assistent** Rat genau dazu, im Projekt fasst **✨ Zusammenfassung** den Stand zusammen. Jede Frage zählt als eine KI-Aktion.
+
+**Tour und Anleitung:** **Mehr → Hilfe → Tour durch die App** zeigt die wichtigsten Stellen direkt in der App. **Mehr → Hilfe → Anleitung** erklärt jede Funktion – mit Knöpfen, die dich direkt hinführen.
+
+**Bündeln statt doppelt:** Passt etwas Neues zu einer offenen Aufgabe (gleicher Vorgang), legt MindSpace keine zweite an. Die neue Info landet als Eintrag im **Verlauf** der vorhandenen Aufgabe, eine frühere Frist wird übernommen. Das gilt für das Plus (schreiben oder diktieren), eingefügte E-Mails und den E-Mail-Eingang. Beim Einfügen kannst du das Bündeln je Aufgabe abwählen; beim Plus hilft „Doch neu“.
 
 **Anhänge aus E-Mails:** Der Postbote liest PDFs und Bilder im Anhang mit (z. B. Unterlagenlisten, Rechnungen, Bescheide). Wichtige Angaben fließen in Aufgaben und Zahlungen ein, die Anhänge werden an der passenden Aufgabe bzw. Zahlung abgelegt und gehören damit zum Projekt. Jede Datei bekommt eine kurze Beschreibung – so findet die Suche auch Inhalte.
 
-**Einladen – zu allem oder zu einzelnen Projekten:** **Mehr → Jemanden einladen**. „Alle Projekte“ für deine Partnerin, „Nur bestimmte Projekte“ z. B. für Großeltern (nur Familie) oder einen Bauberater (nur Hausbau). Eingeschränkte Mitglieder sehen nur Aufgaben, Kosten, Dateien und Kommentare ihrer Projekte – keine E-Mail-Ablage, keinen KI-Schlüssel, keine Einstellungen – und bekommen nur dazu Push-Nachrichten. Unter **Mehr → Gemeinsam planen** tippst du auf eine Person, um ihren Zugriff zu ändern oder sie zu entfernen.
+**Einladen – zu allem oder zu einzelnen Projekten:** **Mehr → Familie & Teilen → Jemanden einladen**. „Alle Projekte“ für deine Partnerin, „Nur bestimmte Projekte“ z. B. für Großeltern (nur Familie) oder einen Bauberater (nur Hausbau). Eingeschränkte Mitglieder sehen nur Aufgaben, Kosten, Dateien und Kommentare ihrer Projekte – keine E-Mail-Ablage, keinen KI-Schlüssel, keine Einstellungen – und bekommen nur dazu Push-Nachrichten. Unter **Mehr → Familie & Teilen** tippst du auf eine Person, um ihren Zugriff zu ändern oder sie zu entfernen.
 
-**Sprache & Design:** **Mehr → Darstellung**: Deutsch oder Englisch, Hell, Dunkel oder Automatisch (wie das System). Die KI antwortet und Push-Nachrichten kommen in der gewählten Sprache.
+**Sprache & Design:** **Mehr → App & Darstellung**: Deutsch oder Englisch, Hell, Dunkel oder Automatisch (wie das System). Die KI antwortet und Push-Nachrichten kommen in der gewählten Sprache.
 
-**Face ID / Fingerabdruck:** **Mehr → Sicherheit → Einschalten**. Danach ist MindSpace beim Öffnen (und nach 2 Minuten im Hintergrund) gesperrt und wird mit Face ID, Touch ID oder Windows Hello entsperrt. Die erste Anmeldung pro Gerät bleibt mit E-Mail und Passwort; „Stattdessen mit Passwort anmelden“ hilft, falls die Biometrie mal nicht klappt.
+**Face ID / Fingerabdruck:** **Mehr → App & Darstellung → Sicherheit → Einschalten**. Danach ist MindSpace beim Öffnen (und nach 2 Minuten im Hintergrund) gesperrt und wird mit Face ID, Touch ID oder Windows Hello entsperrt. Die erste Anmeldung pro Gerät bleibt mit E-Mail und Passwort; „Stattdessen mit Passwort anmelden“ hilft, falls die Biometrie mal nicht klappt.
 
 
-**Übersicht:** Oben die Schnelleingabe („Bank anrufen morgen 10 Uhr #hausbau“, „Müll rausbringen jeden Dienstag“). Darunter vier Kacheln (Heute, Überfällig, Jetzt starten, 7 Tage) – antippen zeigt die passenden Aufgaben. Dazu Wochenblick, Kosten und Projekte.
+**Übersicht:** Oben Suche und Assistent. Darunter vier Kacheln (Heute, Überfällig, Jetzt starten, 7 Tage) – antippen zeigt die passenden Aufgaben. Dazu Wochenblick, Projekte und Kosten.
 
 **Gesten:** Aufgabe nach rechts wischen = erledigt, nach links = verschieben, gedrückt halten und auf einen Tag ziehen = neues Datum.
 
@@ -292,11 +301,11 @@ Alternativ in MindSpace unter **Mehr → App → Als Programm installieren** (Ed
 
 **Plan:** **7 Tage** (jeder Tag ein Abschnitt), **Monat** (Kalender mit Punkten) und **Projekte** (Fortschritt Schritt für Schritt, dazu Kosten und Fotos des Projekts).
 
-**Wiederkehrende Aufgaben:** In der Aufgabe unter **Wiederholen** (täglich, werktags, wöchentlich, alle 2 Wochen, monatlich, vierteljährlich, jährlich) – oder direkt in der Schnelleingabe: „jeden Montag“, „monatlich“, „jährlich“. Beim Abhaken legt MindSpace den nächsten Termin automatisch an.
+**Wiederkehrende Aufgaben:** In der Aufgabe unter **Wiederholen** (täglich, werktags, wöchentlich, alle 2 Wochen, monatlich, vierteljährlich, jährlich) – oder direkt beim Plus: „jeden Montag“, „monatlich“, „jährlich“. Beim Abhaken legt MindSpace den nächsten Termin automatisch an.
 
-**Kosten & Zahlungen:** **Mehr → Kosten & Zahlungen** (oder im Projekt Hausbau). Mit **Ratenplan aus Vorlage** legst du die Abschläge nach Baufortschritt an – Gesamtpreis eintragen, Prozente aus eurem allkauf-Vertrag übernehmen. Dazu kommen Rechnungen, Sonderwünsche und Nebenkosten. Mit **Budget festlegen** siehst du, wie viel Puffer bleibt. Haken = bezahlt. Für offene Zahlungen mit Datum kommt 3 Tage vorher und am Fälligkeitstag eine Push-Nachricht. Rechnungen in E-Mails erkennt die KI und legt sie hier an.
+**Kosten & Zahlungen:** **Mehr → Kosten** (oder im Projekt Hausbau). Mit **Ratenplan aus Vorlage** legst du die Abschläge nach Baufortschritt an – Gesamtpreis eintragen, Prozente aus eurem allkauf-Vertrag übernehmen. Dazu kommen Rechnungen, Sonderwünsche und Nebenkosten. Mit **Budget festlegen** siehst du, wie viel Puffer bleibt. Haken = bezahlt. Für offene Zahlungen mit Datum kommt 3 Tage vorher und am Fälligkeitstag eine Push-Nachricht. Rechnungen in E-Mails erkennt die KI und legt sie hier an.
 
-**Fotos & Dokumente:** In jeder Aufgabe und jeder Zahlung unter **Fotos & Dateien** – Foto aufnehmen oder Datei/PDF wählen. Alles zusammen unter **Mehr → Fotos & Dokumente**. Fotos werden automatisch verkleinert, Dateien bis 15 MB. **Öffnen / Sichern** gibt die Datei an andere Apps weiter (z. B. „In Dateien sichern“).
+**Fotos & Dokumente:** In jeder Aufgabe und jeder Zahlung unter **Fotos & Dateien** – Foto aufnehmen oder Datei/PDF wählen. Alles zusammen unter **Mehr → Dokumente**. Fotos werden automatisch verkleinert, Dateien bis 15 MB. **Öffnen / Sichern** gibt die Datei an andere Apps weiter (z. B. „In Dateien sichern“).
 
 **Kommentare:** Unten in jeder Aufgabe steht der **Verlauf** (angelegt, erledigt von wem) und darunter das Kommentarfeld. Die anderen bekommen eine Push-Nachricht. In der Liste zeigen 💬 und 📎, wo es Kommentare oder Dateien gibt.
 
@@ -314,9 +323,9 @@ Du prüfst alles und tippst auf **Übernehmen**. Ohne KI-Assistent arbeitet die 
 
 **E-Mails schreiben:** In einer Aufgabe auf **E-Mail an …** tippen, oder unter **Kontakte** auf das Briefsymbol. Mit **Mit KI formulieren** schreibt Claude einen passenden Entwurf, optional nach deiner Vorgabe („um Fristverlängerung bitten“). **In Mail-App öffnen** übergibt alles fertig ausgefüllt an deine Mail-App. Dort tippst du auf Senden, so geht die Mail von deiner eigenen Adresse raus. In der Aufgabe wird vermerkt, dass du geschrieben hast. Über das Telefonsymbol rufst du direkt an.
 
-**Checkliste:** Unter **Mehr → Checkliste Hausbau** gibt es eine Startliste vom Bauantrag bis zur Abnahme.
+**Checkliste:** Unter **Mehr → Lebensbereiche → Checkliste Hausbau** gibt es eine Startliste vom Bauantrag bis zur Abnahme.
 
-**Sicherung:** Unter **Mehr → Sicherung speichern** alle paar Wochen eine Datei in iCloud ablegen.
+**Sicherung:** Unter **Mehr → Konto & Daten → Sicherung speichern** alle paar Wochen eine Datei in iCloud ablegen.
 
 ---
 
@@ -338,7 +347,7 @@ Allkauf bietet keine öffentliche Schnittstelle. Der Login ist mit Google Authen
 | „Keine Berechtigung …“ | Schritt 2.5.3: Regeln aus `firestore.rules` veröffentlichen. |
 | Push lässt sich nicht aktivieren | App muss vom **Home-Bildschirm** gestartet sein, iOS 16.4 oder neuer. Falls einmal abgelehnt: iPhone-Einstellungen → Mitteilungen → MindSpace → Erlauben. |
 | Test-Nachricht kommt nicht | GitHub → Actions → letzten Lauf öffnen und die rote Meldung lesen. Häufig: Secret nicht vollständig kopiert, oder Push auf dem iPhone noch nicht aktiviert. |
-| „Der API-Schlüssel ist ungültig“ | Schlüssel in der Anthropic Console neu erzeugen und unter Mehr → KI-Assistent eintragen. |
+| „Der API-Schlüssel ist ungültig“ | Schlüssel in der Anthropic Console neu erzeugen und unter Mehr → KI & E-Mail-Eingang eintragen. |
 | „Guthaben aufgebraucht“ | In der Anthropic Console unter Billing Guthaben aufladen. |
 | Keine „Jetzt angehen“-Push | Kommt einmal morgens ab 7 Uhr und nur, wenn eine Aufgabe **neu** dringend wird. Die Aufgabe braucht Frist und Vorlauf. |
 | Erinnerungen kommen gar nicht mehr | GitHub → Actions → „MindSpace“ → falls dort „disabled“ steht: **Enable workflow**. |
@@ -357,5 +366,5 @@ Deine Daten, Konten, Firebase und die GitHub-Einstellungen bleiben, wie sie sind
 2. GitHub-Repository → **Add file → Upload files** → alle Dateien und den Ordner **icons** aus dem Hauptordner der ZIP hineinziehen → **Commit changes**. Bestehende Dateien werden ersetzt. **`config.js` ist nicht dabei und bleibt unverändert.**
 3. Den Ordner **scripts** öffnen → **Add file → Upload files** → die drei Dateien aus dem ZIP-Ordner `scripts` hochladen (`inbox.mjs` ist neu) → **Commit changes**.
 4. Den Zeitplan ersetzen: Ordner `.github/workflows` öffnen → `reminders.yml` → Stift (Bearbeiten) → alles markieren und durch den Inhalt der neuen `reminders.yml` (Hauptordner der ZIP) ersetzen → **Commit changes**.
-5. Auf dem iPhone (nur wenn die Cloud aus Stufe 2 läuft – im lokalen Modus vorher unter **Mehr → Sicherung speichern**): das alte Hausplaner-Symbol **löschen** (lange drücken → App entfernen) und die Adresse in Safari neu **zum Home-Bildschirm hinzufügen**. Nur so erscheinen der neue Name und das neue Symbol. Danach einmal anmelden und unter **Mehr → Push-Nachrichten** neu aktivieren. Deine Frau macht das genauso.
+5. Auf dem iPhone (nur wenn die Cloud aus Stufe 2 läuft – im lokalen Modus vorher unter **Mehr → Konto & Daten → Sicherung speichern**): das alte Hausplaner-Symbol **löschen** (lange drücken → App entfernen) und die Adresse in Safari neu **zum Home-Bildschirm hinzufügen**. Nur so erscheinen der neue Name und das neue Symbol. Danach einmal anmelden und unter **Mehr → Erinnerungen & Kalender → Push-Nachrichten** neu aktivieren. Deine Frau macht das genauso.
 6. Für den E-Mail-Eingang: **Stufe 5**.

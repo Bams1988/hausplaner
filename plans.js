@@ -56,6 +56,7 @@ export const AI_KINDS = {
   draft: { model: 'smart', cost: 1 }, // E-Mail-Entwurf
   extract: { model: 'smart', cost: 1 }, // Text mit Anhängen auswerten
   test: { model: 'quick', cost: 1 }, // jeder Aufruf zählt – sonst ließe sich das Kontingent umgehen
+  chat: { model: 'smart', cost: 1 }, // Assistent: Überblick, Zusammenfassung, Rat
 };
 
 export const planOf = (id) => PLANS[id] || PLANS.free;

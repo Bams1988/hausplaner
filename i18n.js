@@ -491,6 +491,52 @@ PATTERNS.push(
   P(/^Testphase: (.+) ist aktiv$/, (m, x) => `Test phase: ${x} is active`),
 );
 
+// --- Version 16: Neue Aufgabe mit Diktat, Assistent, Mehr-Übersicht, Tour, Anleitung
+Object.assign(EN, {
+  'Assistent': 'Assistant', 'Diktieren': 'Dictate', 'Anlegen': 'Add', 'Aufgaben erkennen': 'Recognise tasks', 'Zusammenfassung': 'Summary',
+  'Was steht an? z. B. „Zahnarzt Dienstag 9 Uhr“': 'What’s up next? e.g. “Dentist Tuesday 9am”',
+  'Schreib oder diktiere. Datum, Uhrzeit und Bereich erkennt MindSpace selbst.': 'Type or dictate. MindSpace recognises date, time and area by itself.',
+  'Tippe ins Feld und dann auf das 🎤 der Tastatur – so diktierst du direkt.': 'Tap the field, then the 🎤 on the keyboard – that way you dictate directly.',
+  'Mit KI erkennen – auch mehrere Aufgaben': 'Recognise with AI – also several tasks', 'Alle Details ausfüllen': 'Fill in all details',
+  'Passt alles? Dann „Anlegen“.': 'All good? Then tap “Add”.', 'Viel Text? „Mit KI erkennen“ macht daraus mehrere Aufgaben.': 'Lots of text? “Recognise with AI” turns it into several tasks.',
+  'Ich höre zu … tippe auf „Fertig“, wenn du fertig bist.': 'Listening … tap “Done” when you are finished.',
+  'Nichts verstanden – tippe noch einmal aufs Mikrofon. Klappt es nicht: Tippe ins Feld und dann auf das 🎤 der Tastatur – so diktierst du direkt.': 'Didn’t catch that – tap the microphone again. If it doesn’t work: tap the field, then the 🎤 on the keyboard.',
+  'Die Spracherkennung klappt hier nicht. Tippe ins Feld und dann auf das 🎤 der Tastatur – so diktierst du direkt.': 'Speech recognition doesn’t work here. Tap the field, then the 🎤 on the keyboard to dictate.',
+  'Schreib kurz, was zu tun ist.': 'Briefly write what needs doing.',
+  'Kennt alle Aufgaben, Projekte, Termine und Kosten': 'Knows all tasks, projects, dates and costs', '‹ Zur Aufgabe': '‹ Back to task', 'Alles im Blick': 'Everything',
+  'Frag mich etwas …': 'Ask me something …', 'Frage an den Assistenten': 'Question for the assistant', 'Frage diktieren': 'Dictate question', 'Assistent schreibt': 'Assistant is typing',
+  'Der Assistent braucht die KI.': 'The assistant needs the AI.', 'Richte sie unter Mehr → KI & E-Mail-Eingang ein.': 'Set it up under More → AI & e-mail inbox.',
+  'Bitte die Person, die den Bereich verwaltet, die KI einzurichten.': 'Ask the person who manages the space to set up the AI.', 'KI einrichten': 'Set up AI',
+  'Richte zuerst die KI ein.': 'Set up the AI first.', 'Tippe ins Feld und nutze das 🎤 der Tastatur.': 'Tap the field and use the 🎤 on the keyboard.',
+  'Spracherkennung klappt hier nicht – nutze das 🎤 der Tastatur.': 'Speech recognition doesn’t work here – use the 🎤 on the keyboard.',
+  'Dokumente': 'Documents', 'Noch keine': 'None yet', 'Budget & Raten': 'Budget & instalments', 'Fotos & Belege': 'Photos & receipts', 'Einstellungen': 'Settings',
+  'Abo & Nutzung': 'Plan & usage', 'Familie & Teilen': 'Family & sharing', 'Erinnerungen & Kalender': 'Reminders & calendar', 'KI & E-Mail-Eingang': 'AI & e-mail inbox',
+  'Im Abo enthalten': 'Included in your plan', 'Aktiv': 'Active', 'Noch nicht eingerichtet': 'Not set up yet', 'App & Darstellung': 'App & appearance',
+  'Sprache, Design, App-Sperre': 'Language, theme, app lock', 'Konto & Daten': 'Account & data', 'Sicherung, Abmelden, Rechtliches': 'Backup, sign out, legal',
+  'Hilfe': 'Help', 'Tour durch die App': 'Tour of the app', 'Das Wichtigste in einer Minute': 'The essentials in one minute', 'Anleitung': 'Guide',
+  'Alle Funktionen erklärt – mit „Zeig es mir“': 'All features explained – with “Show me”', 'Fehler, Ideen, Wünsche': 'Bugs, ideas, wishes',
+  'Die Zähler gelten für euren gemeinsamen Bereich und starten am 1. jedes Monats neu.': 'The counters apply to your shared space and restart on the 1st of each month.',
+  'Tippe auf eine Person, um festzulegen, welche Projekte sie sieht.': 'Tap a person to choose which projects they can see.',
+  'KI im Abo enthalten': 'AI included in your plan', 'Assistent öffnen': 'Open assistant', 'Überblick, Zusammenfassungen, Rat zu Aufgaben': 'Overview, summaries, advice on tasks',
+  'Bis dahin: E-Mails unter Eingang → Einfügen hineinkopieren': 'Until then: paste e-mails under Inbox → Paste', 'Rechtliches': 'Legal', 'Mehr': 'More',
+  'Ein Bereich ist ein Projekt oder Lebensbereich mit eigener Farbe. Mit Abschnitten (z. B. „Finanzierung“, „Bau“) entsteht im Planer ein Fahrplan.': 'An area is a project or part of life with its own colour. With sections (e.g. “Financing”, “Construction”) the planner builds a roadmap.',
+  'N = neue Aufgabe · M = diktieren · A = Assistent · S = suchen · 1–5 = Bereiche · Esc = schließen': 'N = new task · M = dictate · A = assistant · S = search · 1–5 = sections · Esc = close',
+  'Der E-Mail-Eingang wird gerade eingerichtet. Bis dahin E-Mails einfach unter': 'The e-mail inbox is being set up. Until then simply paste e-mails under', 'Eingang → Einfügen': 'Inbox → Paste', 'hineinkopieren.': '.',
+  'Vorlagen': 'Templates', 'Checkliste Hausbau': 'House-building checklist',
+});
+PATTERNS.push(
+  P(/^(\d+) Ansprechpartner$/, (m, n) => `${n} ${n === '1' ? 'contact' : 'contacts'}`),
+  P(/^(.+) bezahlt$/, (m, a) => `${a} paid`),
+  P(/^(\d+) Bereiche$/, (m, n) => `${n} areas`),
+  P(/^(.+) · (\d+) von (.+) KI-Aktionen$/, (m, p, a, b) => `${p} · ${a} of ${b} AI actions`),
+  P(/^(\d+) (Person|Personen) · einladen und Zugriff$/, (m, n) => `${n} ${n === '1' ? 'person' : 'people'} · invite and access`),
+  P(/^Push: (.+)$/, (m, a) => `Push: ${tr(a)}`),
+  P(/^(\d+) von (.+) KI-Aktionen diesen Monat · Assistent, Spracheingabe, Suche, Entwürfe$/, (m, a, b) => `${a} of ${b} AI actions this month · assistant, voice input, search, drafts`),
+  P(/^Jede Frage zählt als 1 KI-Aktion · (\d+) von (.+) diesen Monat$/, (m, a, b) => `Each question counts as 1 AI action · ${a} of ${b} this month`),
+  P(/^Zur Aufgabe „(.+)“$/, (m, a) => `About the task “${a}”`),
+  P(/^Gibt es schon – zu „(.+)“ hinzugefügt$/, (m, a) => `Already exists – added to “${a}”`),
+);
+
 export function tr(s) {
   if (LANG === 'de' || s == null) return s;
   const str = String(s);

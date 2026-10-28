@@ -2,12 +2,12 @@ import { createStore, computeRemindAt } from './store.js';
 import { tr, LANG, LOC, setLang, startTranslator } from './i18n.js';
 import { parseEmails, isoDate, similarity, guessPhase, extractDate } from './parser.js';
 import {
-  extractFromText, draftEmail, assessTasks, testConnection, urgencyOf, aiKeyOf, searchWithAI,
+  extractFromText, draftEmail, assessTasks, testConnection, urgencyOf, aiKeyOf, searchWithAI, chatAI,
   STATUS, MODELS, DEFAULT_MODEL, DEFAULT_AREAS, HOUSE_PHASES,
 } from './ai.js';
 import { PLANS, PLAN_ORDER, planOf, fmtLimit, storageLabel } from './plans.js';
 import * as native from './native.js';
-const APP_VERSION = '15.1';
+const APP_VERSION = '16';
 const CFG = self.HAUS_CONFIG || {};
 
 // ================================================================== Zustand
@@ -201,7 +201,7 @@ app.addEventListener('focusout', () => setTimeout(() => { if (S.pendingRender &&
 function tabbar() {
   const newN = S.tasks.filter((t) => t.isNew && !t.done).length;
   const tab = (id, label, icon, dot) => `<button data-action="tab" data-tab="${id}" ${S.view === id || (id === 'more' && ['contacts', 'costs', 'docs'].includes(S.view)) ? 'aria-current="page"' : ''}>${icon}${dot ? `<b class="tab-dot">${dot}</b>` : ''}<span>${label}</span></button>`;
-  return `<nav class="tabbar"><div class="side-brand" aria-hidden="true"><img src="icons/logo.svg" alt="">MindSpace</div><button class="side-search" data-action="open-search" ${S.view === 'search' ? 'aria-current="page"' : ''}>${I.search}<span>Suchen</span><kbd>Ctrl K</kbd></button>${tab('home', 'Übersicht', I.today)}${tab('tasks', 'Aufgaben', I.list)}${tab('plan', 'Plan', I.plan)}${tab('inbox', 'Eingang', I.inbox, newN)}${tab('more', 'Mehr', I.more)}<button class="side-new" data-action="new-task">${I.plus}<span>Neue Aufgabe</span><kbd>N</kbd></button></nav>`;
+  return `<nav class="tabbar"><div class="side-brand" aria-hidden="true"><img src="icons/logo.svg" alt="">MindSpace</div><button class="side-search" data-action="open-search" ${S.view === 'search' ? 'aria-current="page"' : ''}>${I.search}<span>Suchen</span><kbd>Ctrl K</kbd></button><button class="side-ai" data-action="assistant">${I.spark}<span>Assistent</span><kbd>A</kbd></button>${tab('home', 'Übersicht', I.today)}${tab('tasks', 'Aufgaben', I.list)}${tab('plan', 'Plan', I.plan)}${tab('inbox', 'Eingang', I.inbox, newN)}${tab('more', 'Mehr', I.more)}<button class="side-new" data-action="new-task">${I.plus}<span>Neue Aufgabe</span><kbd>N</kbd></button></nav>`;
 }
 
 // ================================================================== Kleine Grafiken
@@ -242,8 +242,10 @@ function viewHome() {
     starten: { label: 'Jetzt starten', items: open.filter((t) => !(t.due && t.due <= today) && urgRank(t) >= 2), empty: 'Nichts muss gerade angestoßen werden.' },
     woche: { label: '7 Tage', items: open.filter((t) => t.due && t.due > today && t.due <= weekEnd), empty: 'In den nächsten 7 Tagen ist nichts fällig.' },
   };
-  if (!S.homeSet) S.homeSet = sets.nachholen.items.length || sets.heute.items.length ? (sets.heute.items.length ? 'heute' : 'nachholen') : sets.starten.items.length ? 'starten' : 'woche';
-  const cur = sets[S.homeSet];
+  const homeDef = sets.nachholen.items.length || sets.heute.items.length ? (sets.heute.items.length ? 'heute' : 'nachholen') : sets.starten.items.length ? 'starten' : 'woche';
+  if (!S.homeSet && S.tasks.length) S.homeSet = homeDef; // erst festlegen, wenn die Aufgaben geladen sind
+  const curKey = S.homeSet || homeDef;
+  const cur = sets[curKey];
   const newOnes = open.filter((t) => t.isNew);
   const tone = { heute: 'brand', nachholen: 'coral', starten: 'sun', woche: 'ink' };
 
@@ -251,11 +253,9 @@ function viewHome() {
   if (isIOS && !standalone && !localStorage.getItem('hp-hide-install')) {
     banner = `<div class="note-card"><p><strong>Als App installieren:</strong> In Safari auf ${I.share} tippen, dann „Zum Home-Bildschirm“. Danach klappen auch Push-Nachrichten.</p><button class="x" data-action="hide-banner" data-key="hp-hide-install" aria-label="Hinweis schließen">×</button></div>`;
   }
-  const gestureTip = S.tasks.length && !localStorage.getItem('hp-tip-gestures')
-    ? `<div class="note-card tip"><p><strong>Tipp:</strong> Aufgabe nach <strong>rechts wischen</strong> = erledigt, nach <strong>links wischen</strong> = verschieben. <strong>Gedrückt halten</strong> und auf einen Tag ziehen = neues Datum.</p><button class="x" data-action="hide-banner" data-key="hp-tip-gestures" aria-label="Tipp schließen">×</button></div>` : '';
 
   const tiles = Object.entries(sets).map(([k, s]) => `
-    <button class="tile t-${tone[k]} ${S.homeSet === k ? 'on' : ''}" data-action="home-set" data-k="${k}" aria-pressed="${S.homeSet === k}">
+    <button class="tile t-${tone[k]} ${curKey === k ? 'on' : ''}" data-action="home-set" data-k="${k}" aria-pressed="${curKey === k}">
       <b>${s.items.length}</b><span>${s.label}</span>
     </button>`).join('');
   const list = cur.items.sort(byUrgency);
@@ -278,17 +278,15 @@ function viewHome() {
       ${installPrompt ? '<button class="btn small" data-action="install">Jetzt installieren</button>' : ''}<button class="x" data-action="hide-banner" data-key="hp-hide-desktop" aria-label="Hinweis schließen">×</button></div>`;
   }
   return `<main class="view home-view">
-    <header class="hello"><button class="head-btn" data-action="open-search" aria-label="Suchen">${I.search}</button><p class="hello-date">${esc(new Date().toLocaleDateString(LOC(), { weekday: 'long', day: 'numeric', month: 'long' }))}</p><h1>${esc(greeting())}</h1></header>
-    ${quickAdd()}
-    ${banner}${gestureTip}
+    <header class="hello"><div class="hello-top"><p class="hello-date">${esc(new Date().toLocaleDateString(LOC(), { weekday: 'long', day: 'numeric', month: 'long' }))}</p>${headActions()}</div><h1>${esc(greeting())}</h1></header>
+    ${banner}
     ${assignCard()}
     ${newOnes.length ? `<button class="inbox-hint" data-action="goto-new">${I.inbox}<span><strong>${newOnes.length} ${newOnes.length === 1 ? 'neue Aufgabe' : 'neue Aufgaben'}</strong> aus E-Mails – kurz prüfen</span>${I.chevron}</button>` : ''}
     <div class="home-grid"><div class="hg-a">
     <div class="tiles" role="tablist" aria-label="Filter">${tiles}</div>
-    ${legend()}
     <section class="card">
       <div class="card-head"><h2>${esc(cur.label === '7 Tage' ? 'Die nächsten 7 Tage' : cur.label)}</h2>
-        ${S.homeSet === 'nachholen' && list.length ? `<button class="btn small secondary" data-action="all-today">Alle auf heute</button>` : ''}</div>
+        ${curKey === 'nachholen' && list.length ? `<button class="btn small secondary" data-action="all-today">Alle auf heute</button>` : ''}</div>
       ${listHtml}
     </section></div><div class="hg-b">
     <section class="card">
@@ -296,9 +294,9 @@ function viewHome() {
         <div class="week-nav"><button class="icon-sm" data-action="week" data-d="-1" aria-label="7 Tage zurück">‹</button><button class="icon-sm" data-action="week" data-d="1" aria-label="7 Tage weiter">›</button></div></div>
       ${weekChart()}
     </section>
-    ${homeCosts()}
     </div></div>
     ${projHtml ? `<section class="card plain"><div class="card-head"><h2>Projekte</h2><button class="link" data-action="plan-mode" data-m="projekte">Alle</button></div>${projHtml}</section>` : ''}
+    ${homeCosts()}
     ${!S.tasks.length ? `<div class="btn-row" style="margin-top:16px"><button class="btn secondary" data-action="template">Checkliste Hausbau laden</button></div>` : ''}
   </main>`;
 }
@@ -450,7 +448,7 @@ function viewTasks() {
       <div class="list">${items.map((t) => row(t)).join('')}</div>`).join('');
   }
   return `<main class="view">
-    <header class="page-head with-btn"><h1>Aufgaben</h1><button class="head-btn" data-action="open-search" aria-label="Suchen">${I.search}</button></header>
+    <header class="page-head with-btn"><h1>Aufgaben</h1>${headActions()}</header>
     <div class="seg" role="group" aria-label="Ansicht">
       <button data-action="filter" data-filter="open" aria-pressed="${S.filter === 'open'}">Offen</button>
       <button data-action="filter" data-filter="done" aria-pressed="${S.filter === 'done'}">Erledigt</button>
@@ -530,7 +528,7 @@ function viewPlan() {
     ${[['woche', '7 Tage'], ['monat', 'Monat'], ['projekte', 'Projekte']].map(([k, l]) => `<button data-action="plan-mode" data-m="${k}" aria-pressed="${mode === k}">${l}</button>`).join('')}</div>`;
   const body = mode === 'monat' ? planMonth() : mode === 'projekte' ? planProjects() : planWeek();
   return `<main class="view">
-    <header class="page-head with-btn"><h1>Planer</h1><button class="head-btn" data-action="open-search" aria-label="Suchen">${I.search}</button></header>
+    <header class="page-head with-btn"><h1>Planer</h1>${headActions()}</header>
     ${seg}${mode !== 'projekte' ? legend() : ''}${body}</main>`;
 }
 
@@ -696,6 +694,7 @@ function viewRoadmap(a) {
         <p>${s.done} von ${s.total} Aufgaben erledigt</p>
         ${cur && a.phases?.length ? `<p>Gerade dran: <strong>${esc(cur.name)}</strong></p>` : !s.open.length && s.total ? '<p><strong>Alles erledigt 🎉</strong></p>' : ''}
         ${s.end ? `<p>Fertig voraussichtlich: <strong>${esc(fmtDate(s.end, { day: 'numeric', month: 'long', year: 'numeric' }))}</strong></p>` : ''}
+        ${S.ai ? `<button class="btn small secondary rm-ask" data-action="assistant" data-area="${esc(a.id)}" data-ask="sum">${I.spark} Zusammenfassung</button>` : ''}
       </div>
     </section>
     ${s.next ? `<div class="rm-next">${I.flag}<span>Nächste Frist: <strong>${esc(s.next.title)}</strong> · ${esc(dueLabel(s.next).text)}</span></div>` : ''}
@@ -725,7 +724,7 @@ function viewInbox() {
     <button data-action="inbox-tab" data-tab="archive" aria-pressed="${S.inboxTab === 'archive'}">Ablage</button></div>`;
   const body = S.inboxTab === 'paste' ? inboxPaste() : S.inboxTab === 'archive' ? inboxArchive() : inboxNew(newOnes);
   return `<main class="view">
-    <header class="page-head"><h1>Eingang</h1><p>Was per E-Mail reinkommt, wird hier zu Aufgaben.</p></header>
+    <header class="page-head with-btn"><h1>Eingang</h1>${headActions()}<p>Was per E-Mail reinkommt, wird hier zu Aufgaben.</p></header>
     ${seg}${body}</main>`;
 }
 function inboxAddressCard() {
@@ -813,7 +812,7 @@ function inboxPaste() {
     ? `<button class="btn block" style="margin-top:14px" data-action="parse-ai" ${has && !S.aiBusy ? '' : 'disabled'} id="parse-btn">${S.aiBusy ? '<span class="spin"></span> MindSpace liest mit …' : `${I.spark} Mit KI auswerten`}</button>
        <button class="link center" data-action="parse" ${S.aiBusy ? 'disabled' : ''}>Ohne KI auswerten</button>`
     : `<button class="btn block" style="margin-top:14px" data-action="parse" ${has ? '' : 'disabled'} id="parse-btn">Aufgaben finden</button>
-       <p class="hint">Mit dem KI-Assistenten (Mehr → KI-Assistent) erkennt MindSpace auch Ansprechpartner, schätzt Vorlaufzeiten und versteht frei formulierte Texte.</p>`;
+       <p class="hint">Mit dem KI-Assistenten (Mehr → KI & E-Mail-Eingang) erkennt MindSpace auch Ansprechpartner, schätzt Vorlaufzeiten und versteht frei formulierte Texte.</p>`;
   return `<p class="hint" style="margin-top:0">Kopiere eine E-Mail, einen Verlauf oder einen Text aus einer anderen App hier hinein.</p>
     <textarea class="paste" id="paste" data-input="paste" placeholder="Hier einfügen …">${esc(S.pasteText)}</textarea>
     <div class="btn-row" style="margin-top:10px">
@@ -933,80 +932,114 @@ function installHow() {
   if (/Firefox\//.test(ua)) return 'Firefox kann keine Web-Apps installieren – öffne MindSpace dafür in Edge oder Chrome.';
   return 'Öffne MindSpace in Edge oder Chrome und wähle dort „App installieren“.';
 }
+// Mehr (v16): Übersicht mit klaren Gruppen, jede Gruppe ist eine eigene Unterseite
 function viewMore() {
+  return S.morePage ? moreSub(S.morePage) : moreHub();
+}
+function moreHub() {
   const cloud = store.mode === 'cloud';
   const ps = pushState();
-  const open = new Map(); for (const t of S.tasks) if (!t.done) open.set(areaOf(t).id, (open.get(areaOf(t).id) || 0) + 1);
+  const full = fullAccess();
+  const plan = billing() ? planOf(curPlan()) : null;
+  const cs = costStats('all');
+  const row = (p, emoji, color, title, sub) => `<button class="setting" data-action="more-page" data-p="${p}"><span class="area-dot" style="--area:${color}">${emoji}</span><span class="grow">${title}<small>${sub}</small></span>${I.chevron}</button>`;
+  const tile = (attrs, emoji, color, title, sub) => `<button class="hub-tile" ${attrs} style="--area:${color}"><span class="hub-ico">${emoji}</span><strong>${title}</strong><small>${sub}</small></button>`;
+  const aiSub = billing() ? 'Im Abo enthalten' : S.ai ? 'Aktiv' : 'Noch nicht eingerichtet';
+  return `<main class="view">
+    <header class="page-head with-btn"><h1>Mehr</h1>${headActions()}</header>
+    ${cloud ? `<button class="me-card" data-action="more-page" data-p="konto"><span class="who big">${esc(initial(S.me?.uid))}</span><span class="grow"><strong>${esc(S.me?.name || '')}</strong><small>${esc(S.me?.email || '')}</small></span>${plan ? `<span class="plan-pill p-${esc(plan.id)}">${esc(plan.name)}</span>` : ''}${I.chevron}</button>`
+      : `<div class="note-card"><p><strong>Lokaler Modus.</strong> Alles bleibt auf diesem Gerät. Für Teilen, Push-Nachrichten und den E-Mail-Eingang richte die Cloud ein (Anleitung, Stufe 2).</p></div>`}
+    <div class="hub-grid">
+      ${tile('data-action="open-contacts"', '👥', '#2F9E77', 'Kontakte', S.contacts.length ? `${S.contacts.length} Ansprechpartner` : 'Noch keine')}
+      ${tile('data-action="open-costs"', '💶', '#4A8FE7', 'Kosten', S.costs.length ? `${esc(eur(cs.paid))} bezahlt` : 'Budget & Raten')}
+      ${tile('data-action="open-docs"', '📷', '#E9A23B', 'Dokumente', S.files.length ? `${S.files.length} ${S.files.length === 1 ? 'Datei' : 'Dateien'}` : 'Fotos & Belege')}
+      ${tile('data-action="more-page" data-p="areas"', '🗂️', '#8E7CE0', 'Lebensbereiche', `${areas().length} Bereiche`)}
+    </div>
+
+    <h2 class="section-title">Einstellungen</h2>
+    <div class="settings">
+      ${billing() ? row('abo', '⭐', '#8E7CE0', 'Abo & Nutzung', `${esc(plan.name)} · ${S.usage?.ai || 0} von ${fmtLimit(lim('aiActions'))} KI-Aktionen`) : ''}
+      ${cloud ? row('team', '👫', '#E46F8E', 'Familie & Teilen', `${members().length} ${members().length === 1 ? 'Person' : 'Personen'} · einladen und Zugriff`) : ''}
+      ${row('notify', '🔔', '#E9A23B', 'Erinnerungen & Kalender', `Push: ${esc(ps.text)}`)}
+      ${full || billing() ? row('ai', '✨', '#2BB0A6', 'KI & E-Mail-Eingang', aiSub) : ''}
+      ${row('app', '⚙️', '#5B7F95', 'App & Darstellung', 'Sprache, Design, App-Sperre')}
+      ${row('konto', '🔐', '#D9774B', cloud ? 'Konto & Daten' : 'Daten', 'Sicherung, Abmelden, Rechtliches')}
+    </div>
+
+    <h2 class="section-title">Hilfe</h2>
+    <div class="settings">
+      <button class="setting" data-action="tour"><span class="area-dot" style="--area:#2F9E77">🧭</span><span class="grow">Tour durch die App<small>Das Wichtigste in einer Minute</small></span>${I.chevron}</button>
+      ${row('help', '📖', '#4A8FE7', 'Anleitung', 'Alle Funktionen erklärt – mit „Zeig es mir“')}
+      ${CFG.backend?.beta && cloud ? `<button class="setting" data-action="feedback"><span class="area-dot" style="--area:#8E7CE0">🧪</span><span class="grow">Feedback zur Testversion<small>Fehler, Ideen, Wünsche</small></span>${I.chevron}</button>` : ''}
+    </div>
+    <p class="hint center" style="margin-top:28px">MindSpace · Planung darf leicht sein.</p>
+  </main>`;
+}
+const MORE_TITLES = { abo: 'Abo & Nutzung', team: 'Familie & Teilen', notify: 'Erinnerungen & Kalender', ai: 'KI & E-Mail-Eingang', app: 'App & Darstellung', konto: 'Konto & Daten', areas: 'Lebensbereiche', help: 'Anleitung' };
+function moreSub(p) {
+  const pages = { abo: pageAbo, team: pageTeam, notify: pageNotify, ai: pageAi, app: pageApp, konto: pageKonto, areas: pageAreas, help: pageHelp };
+  if (!pages[p] || (p === 'abo' && !billing())) { S.morePage = null; return moreHub(); }
+  const title = p === 'konto' && store.mode !== 'cloud' ? 'Daten' : MORE_TITLES[p];
+  return `<main class="view sub-view">
+    <button class="back" data-action="more-back">‹ Mehr</button>
+    <header class="page-head"><h1>${title}</h1></header>
+    ${pages[p]()}
+  </main>`;
+}
+function pageAbo() {
+  return `${planCard()}
+    <p class="hint">Die Zähler gelten für euren gemeinsamen Bereich und starten am 1. jedes Monats neu.</p>`;
+}
+function pageTeam() {
+  const cloud = store.mode === 'cloud';
   const full = fullAccess();
   const mem = members().map((u) => {
     const sc = S.project?.access?.[u];
     const inner = `<span class="who">${esc(initial(u))}</span><span class="grow">${esc(nameOf(u))}${u === S.me?.uid ? ' <span class="muted">(du)</span>' : ''}<small>${esc(scopeLabel(sc))}</small></span>`;
     return full && u !== S.me?.uid ? `<button class="setting" data-action="member" data-id="${esc(u)}">${inner}${I.chevron}</button>` : `<div class="setting">${inner}</div>`;
   }).join('');
-  const modelName = S.ai?.model ? (MODELS.find((m) => m[0] === S.ai.model) || [0, String(S.ai.model)])[1].split(' – ')[0] : S.ai?.apiKey ? MODELS[0][1].split(' – ')[0] : '';
-  return `<main class="view">
-    <header class="page-head"><h1>Mehr</h1></header>
-    ${billing() ? planCard() : ''}
-    ${CFG.backend?.beta && store.mode === 'cloud' ? `<div class="settings" style="margin-bottom:14px"><button class="setting" data-action="feedback"><span class="area-dot" style="--area:#8E7CE0">🧪</span><span class="grow">Feedback zur Testversion<small>Fehler, Ideen, Wünsche – direkt an das MindSpace-Team</small></span>${I.chevron}</button></div>` : ''}
-    ${cloud ? '' : `<div class="note-card"><p><strong>Lokaler Modus.</strong> Alles bleibt auf diesem Gerät. Für Teilen, Push-Nachrichten und den E-Mail-Eingang richte die Cloud ein (Anleitung, Stufe 2).</p></div>`}
-
-    <div class="settings" style="margin-top:4px">
-      <button class="setting" data-action="open-contacts"><span class="area-dot" style="--area:var(--brand)">👥</span><span class="grow">Kontakte<small>${S.contacts.length} Ansprechpartner – anrufen oder anschreiben</small></span>${I.chevron}</button>
-      <button class="setting" data-action="open-costs"><span class="area-dot" style="--area:#4A8FE7">💶</span><span class="grow">Kosten & Zahlungen<small>${S.costs.length ? `${esc(eur(costStats('all').paid))} von ${esc(eur(costStats('all').planned))} bezahlt` : 'Budget, Ratenplan, Rechnungen'}</small></span>${I.chevron}</button>
-      <button class="setting" data-action="open-docs"><span class="area-dot" style="--area:#E9A23B">📷</span><span class="grow">Fotos & Dokumente<small>${S.files.length ? `${S.files.length} ${S.files.length === 1 ? 'Datei' : 'Dateien'}` : 'Baufortschritt, Belege, Protokolle'}</small></span>${I.chevron}</button>
-    </div>
-
-    <h2 class="section-title">Lebensbereiche</h2>
-    <div class="settings">
-      ${areas().map((a) => `<button class="setting" data-action="area-edit" data-id="${esc(a.id)}" ${full ? '' : 'disabled'}><span class="area-dot" style="--area:${esc(a.color)}">${esc(a.emoji)}</span><span class="grow">${esc(a.name)}<small>${open.get(a.id) || 0} offen${a.phases?.length ? ` · ${a.phases.length} Abschnitte` : ''}</small></span>${I.chevron}</button>`).join('')}
-      ${full ? `<button class="setting" data-action="area-new"><span class="area-dot add">+</span><span class="grow">Bereich hinzufügen</span></button>` : ''}
-    </div>
-    ${full ? '' : `<p class="hint">Du bist zu ${esc(scopeLabel(S.project?.access?.[S.me?.uid]))} eingeladen. Weitere Projekte kann dir jemand mit vollem Zugriff freigeben.</p>`}
-
-    <h2 class="section-title">Gemeinsam planen</h2>
-    <div class="settings">
+  return `<div class="settings">
       ${cloud ? mem : ''}
-      ${full ? `<button class="setting" data-action="invite"><span class="grow">Jemanden einladen<small>Zu allen Projekten oder nur zu einzelnen</small></span>${I.chevron}</button>` : ''}
+      ${full ? `<button class="setting" data-action="invite"><span class="area-dot add">+</span><span class="grow">Jemanden einladen<small>Zu allen Projekten oder nur zu einzelnen</small></span>${I.chevron}</button>` : ''}
       ${cloud && full ? `<button class="setting" data-action="join"><span class="grow">Mit Code beitreten</span>${I.chevron}</button>` : ''}
     </div>
-
-    ${cloud ? calSection(full) : ''}
-
-    <h2 class="section-title">Erinnerungen</h2>
-    <div class="settings">
+    ${full ? '<p class="hint">Tippe auf eine Person, um festzulegen, welche Projekte sie sieht.</p>' : `<p class="hint">Du bist zu ${esc(scopeLabel(S.project?.access?.[S.me?.uid]))} eingeladen. Weitere Projekte kann dir jemand mit vollem Zugriff freigeben.</p>`}`;
+}
+function pageNotify() {
+  const ps = pushState();
+  return `<div class="settings">
       <button class="setting" data-action="push" ${ps.on ? 'disabled' : ''}><span class="status-dot ${ps.on ? 'on' : ''}"></span><span class="grow">Push-Nachrichten<small>${esc(ps.text)}</small></span>${ps.on ? '' : '<span class="end">Aktivieren</span>'}</button>
     </div>
     <p class="hint">Zur eingestellten Zeit jeder Aufgabe, morgens ab 7 Uhr eine kurze Übersicht und ein Hinweis, wenn etwas jetzt starten sollte. Jedes Gerät einmal selbst aktivieren.</p>
-
-    ${billing() ? `<h2 class="section-title">KI-Assistent</h2>
-    <div class="settings">
-      <div class="setting"><span class="status-dot on"></span><span class="grow">Im Abo enthalten<small>${S.usage?.ai || 0} von ${fmtLimit(lim('aiActions'))} KI-Aktionen diesen Monat · Spracheingabe, Suche, Entwürfe, Auswerten</small></span></div>
+    ${store.mode === 'cloud' ? calSection(fullAccess()) : ''}`;
+}
+function pageAi() {
+  const full = fullAccess();
+  if (billing()) {
+    return `<div class="settings">
+      <div class="setting"><span class="status-dot on"></span><span class="grow">KI im Abo enthalten<small>${S.usage?.ai || 0} von ${fmtLimit(lim('aiActions'))} KI-Aktionen diesen Monat · Assistent, Spracheingabe, Suche, Entwürfe</small></span></div>
+      <button class="setting" data-action="assistant"><span class="area-dot" style="--area:#2BB0A6">✨</span><span class="grow">Assistent öffnen<small>Überblick, Zusammenfassungen, Rat zu Aufgaben</small></span>${I.chevron}</button>
       ${full ? `<button class="setting" data-action="ai-deep"><span class="status-dot ${S.project?.aiDeep && curPlan() === 'pro' ? 'on' : ''}"></span><span class="grow">Gründlich-Modus${curPlan() === 'pro' ? '' : ' <span class="plan-badge">Pro</span>'}<small>Stärkstes KI-Modell für E-Mails und Entwürfe – zählt doppelt</small></span><span class="end">${S.project?.aiDeep && curPlan() === 'pro' ? 'An' : 'Aus'}</span></button>` : ''}
       ${full && planOf(curPlan()).features.dailyCheck ? `<button class="setting" data-action="assess-all" ${S.aiBusy ? 'disabled' : ''}><span class="grow">${S.aiBusy ? 'Fristen werden geprüft …' : 'Alle Fristen jetzt prüfen'}<small>Passiert sonst jeden Morgen automatisch</small></span></button>` : ''}
     </div>
     ${full ? `<h2 class="section-title">E-Mail-Eingang</h2>
     <div class="settings">
-      <button class="setting" data-action="inbox-settings"><span class="status-dot ${inboxAddr() ? 'on' : ''}"></span><span class="grow">${inboxAddr() ? esc(inboxAddr()) : 'Noch keine Adresse'}<small>${inboxAddr() ? `${S.usage?.mails || 0} von ${fmtLimit(lim('mails'))} E-Mails diesen Monat · Absender verwalten` : 'Eigene Weiterleitungs-Adresse anlegen'}</small></span>${I.chevron}</button>
-    </div>` : ''}
-    ` : full ? `<h2 class="section-title">KI-Assistent</h2>
-    <div class="settings">
+      <button class="setting" data-action="inbox-settings"><span class="status-dot ${inboxAddr() ? 'on' : ''}"></span><span class="grow">${inboxAddr() ? esc(inboxAddr()) : 'Noch keine Adresse'}<small>${inboxAddr() ? `${S.usage?.mails || 0} von ${fmtLimit(lim('mails'))} E-Mails diesen Monat · Absender verwalten` : mailDomainReady() ? 'Eigene Weiterleitungs-Adresse anlegen' : 'Bis dahin: E-Mails unter Eingang → Einfügen hineinkopieren'}</small></span>${I.chevron}</button>
+    </div>` : ''}`;
+  }
+  const modelName = S.ai?.model ? (MODELS.find((m) => m[0] === S.ai.model) || [0, String(S.ai.model)])[1].split(' – ')[0] : S.ai?.apiKey ? MODELS[0][1].split(' – ')[0] : '';
+  return `<div class="settings">
       <button class="setting" data-action="ai-settings"><span class="status-dot ${S.ai ? 'on' : ''}"></span><span class="grow">Claude von Anthropic<small>${S.ai ? `Aktiv · ${esc(modelName)}` : 'Nicht eingerichtet'}</small></span><span class="end">${S.ai ? 'Ändern' : 'Einrichten'}</span></button>
+      ${S.ai ? `<button class="setting" data-action="assistant"><span class="area-dot" style="--area:#2BB0A6">✨</span><span class="grow">Assistent öffnen<small>Überblick, Zusammenfassungen, Rat zu Aufgaben</small></span>${I.chevron}</button>` : ''}
       ${S.ai ? `<button class="setting" data-action="assess-all" ${S.aiBusy ? 'disabled' : ''}><span class="grow">${S.aiBusy ? 'Fristen werden geprüft …' : 'Alle Fristen jetzt prüfen'}<small>Was ist bis wann realistisch zu schaffen?</small></span></button>` : ''}
     </div>
-
     <h2 class="section-title">E-Mail-Eingang</h2>
     <div class="settings">
-      <button class="setting" data-action="inbox-settings"><span class="status-dot ${inboxAddr() ? 'on' : ''}"></span><span class="grow">${inboxAddr() ? esc(inboxAddr()) : 'Nicht eingerichtet'}<small>${inboxAddr() ? 'Erlaubte Absender verwalten' : billing() ? 'Eigene Adresse anlegen' : 'Anleitung, Stufe 5'}</small></span>${I.chevron}</button>
-    </div>
-
-    ` : ''}
-    <h2 class="section-title">Vorlagen</h2>
-    <div class="settings">
-      <button class="setting" data-action="template"><span class="grow">Checkliste Hausbau<small>Vom Bauantrag bis zur Abnahme</small></span>${I.chevron}</button>
-    </div>
-
-    <h2 class="section-title">Darstellung</h2>
-    <div class="settings">
+      <button class="setting" data-action="inbox-settings"><span class="status-dot ${inboxAddr() ? 'on' : ''}"></span><span class="grow">${inboxAddr() ? esc(inboxAddr()) : 'Nicht eingerichtet'}<small>${inboxAddr() ? 'Erlaubte Absender verwalten' : 'Anleitung, Stufe 5'}</small></span>${I.chevron}</button>
+    </div>`;
+}
+function pageApp() {
+  return `<div class="settings">
       <label class="setting"><span class="area-dot" style="--area:#4A8FE7">🌐</span><span class="grow">Sprache<small>Deutsch oder Englisch</small></span>
         <select class="set-select" data-action="set-lang" aria-label="Sprache"><option value="de" ${LANG === 'de' ? 'selected' : ''}>Deutsch</option><option value="en" ${LANG === 'en' ? 'selected' : ''}>English</option></select></label>
       <label class="setting"><span class="area-dot" style="--area:#8E7CE0">🌓</span><span class="grow">Design<small>Hell, dunkel oder wie das System</small></span>
@@ -1023,26 +1056,40 @@ function viewMore() {
       ${standalone ? '' : installPrompt
         ? `<button class="setting" data-action="install"><span class="area-dot" style="--area:var(--brand)">💻</span><span class="grow">Als Programm installieren<small>Eigenes Fenster und Symbol – auf diesem Computer oder Gerät</small></span><span class="end">Installieren</span></button>`
         : !isIOS ? `<div class="setting"><span class="area-dot" style="--area:var(--brand)">💻</span><span class="grow">Als Programm installieren<small>${esc(installHow())}</small></span></div>` : ''}
-      ${isDesktop() ? `<div class="setting"><span class="area-dot" style="--area:#8E7CE0">⌨️</span><span class="grow">Tastenkürzel<small>N = neue Aufgabe · / = Schnelleingabe · 1–5 = Bereiche wechseln · Esc = schließen</small></span></div>` : ''}
+      ${isDesktop() ? `<div class="setting"><span class="area-dot" style="--area:#8E7CE0">⌨️</span><span class="grow">Tastenkürzel<small>N = neue Aufgabe · M = diktieren · A = Assistent · S = suchen · 1–5 = Bereiche · Esc = schließen</small></span></div>` : ''}
       ${native.isNative() ? `<div class="setting"><span class="grow">Version ${APP_VERSION}<small>Updates kommen über den ${native.platform() === 'ios' ? 'App Store' : 'Play Store'}</small></span></div>`
         : `<button class="setting" data-action="hard-reload"><span class="grow">Neueste Version laden<small>Version ${APP_VERSION} – Speicher leeren und neu starten</small></span></button>`}
-      ${legalLinks()}
-    </div>
-
+    </div>`;
+}
+function pageKonto() {
+  const cloud = store.mode === 'cloud';
+  return `${cloud ? `<div class="settings">
+      <div class="setting"><span class="who big">${esc(initial(S.me?.uid))}</span><span class="grow">${esc(S.me?.name)}<small>${esc(S.me?.email)}</small></span></div>
+    </div>` : ''}
     <h2 class="section-title">Daten</h2>
     <div class="settings">
       <button class="setting" data-action="export"><span class="grow">Sicherung speichern<small>Aufgaben, Bereiche, Kontakte und Ablage als Datei</small></span></button>
       <label class="setting" style="cursor:pointer;position:relative"><span class="grow">Sicherung einspielen</span><input type="file" accept="application/json,.json" data-action="import-file" style="position:absolute;inset:0;opacity:0"></label>
     </div>
-
+    ${legalLinks() ? `<h2 class="section-title">Rechtliches</h2><div class="settings">${legalLinks()}</div>` : ''}
     ${cloud ? `<h2 class="section-title">Konto</h2>
     <div class="settings">
-      <div class="setting"><span class="grow">${esc(S.me?.name)}<small>${esc(S.me?.email)}</small></span></div>
       <button class="setting danger" data-action="logout">Abmelden</button>
       ${billing() ? '<button class="setting danger" data-action="delete-account">Konto löschen</button>' : ''}
-    </div>` : ''}
-    <p class="hint center" style="margin-top:28px">MindSpace · Planung darf leicht sein.</p>
-  </main>`;
+    </div>` : ''}`;
+}
+function pageAreas() {
+  const full = fullAccess();
+  const open = new Map(); for (const t of S.tasks) if (!t.done) open.set(areaOf(t).id, (open.get(areaOf(t).id) || 0) + 1);
+  return `<div class="settings">
+      ${areas().map((a) => `<button class="setting" data-action="area-edit" data-id="${esc(a.id)}" ${full ? '' : 'disabled'}><span class="area-dot" style="--area:${esc(a.color)}">${esc(a.emoji)}</span><span class="grow">${esc(a.name)}<small>${open.get(a.id) || 0} offen${a.phases?.length ? ` · ${a.phases.length} Abschnitte` : ''}</small></span>${I.chevron}</button>`).join('')}
+      ${full ? `<button class="setting" data-action="area-new"><span class="area-dot add">+</span><span class="grow">Bereich hinzufügen</span></button>` : ''}
+    </div>
+    <p class="hint">${full ? 'Ein Bereich ist ein Projekt oder Lebensbereich mit eigener Farbe. Mit Abschnitten (z. B. „Finanzierung“, „Bau“) entsteht im Planer ein Fahrplan.' : `Du bist zu ${esc(scopeLabel(S.project?.access?.[S.me?.uid]))} eingeladen. Weitere Projekte kann dir jemand mit vollem Zugriff freigeben.`}</p>
+    ${full ? `<h2 class="section-title">Vorlagen</h2>
+    <div class="settings">
+      <button class="setting" data-action="template"><span class="area-dot" style="--area:#2F9E77">🏡</span><span class="grow">Checkliste Hausbau<small>Vom Bauantrag bis zur Abnahme</small></span>${I.chevron}</button>
+    </div>` : ''}`;
 }
 
 // ================================================================== Anmeldung
@@ -1137,6 +1184,7 @@ function taskSheet(task, preset = {}) {
     ${task ? assignNote(task) : ''}
     ${task && !task.done ? urgencyBox(task) : ''}
     ${task ? `<div class="btn-row" style="margin-bottom:14px">
+      ${S.ai ? `<button type="button" class="btn secondary small" data-act="ask">${I.spark} Assistent</button>` : ''}
       <button type="button" class="btn secondary small" data-act="mail">${I.envelope} ${c?.email ? `E-Mail an ${esc(c.name.split(' ').slice(-1)[0])}` : 'E-Mail schreiben'}</button>
       ${c && (c.mobile || c.phone) ? `<a class="btn secondary small" href="${esc(telHref(c.mobile || c.phone))}">${I.phone} Anrufen</a>` : ''}
       ${task.due && !calCovers(task) ? `<button type="button" class="btn secondary small" data-act="ics">📅 In Kalender</button>` : ''}
@@ -1294,6 +1342,7 @@ function taskSheet(task, preset = {}) {
   sheet.querySelector('[data-act="ics"]')?.addEventListener('click', () => downloadIcs({ ...task, ...formData(), id: task.id }));
   sheet.querySelector('[data-act="assign-ok"]')?.addEventListener('click', () => { closeSheet(); assignAccept(task.id); });
   sheet.querySelector('[data-act="assign-back"]')?.addEventListener('click', () => { closeSheet(); assignReturn(task.id); });
+  sheet.querySelector('[data-act="ask"]')?.addEventListener('click', () => assistantSheet({ taskId: task.id }));
   sheet.querySelector('[data-act="mail"]')?.addEventListener('click', () => {
     const cur = { ...task, ...formData() };
     composeSheet({ task: cur, contact: cur.contactId ? contactById(cur.contactId) : null });
@@ -2500,8 +2549,12 @@ async function bundleInto(ex, { text, due = null, time = null }) {
 
 // ================================================================== Spracheingabe
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition || null;
-function listen({ onText, onEnd }) {
-  if (!SR) return null;
+// Merkt sich, wenn die Spracherkennung auf diesem Gerät nicht funktioniert (z. B. iPhone-Home-Bildschirm-App).
+// Dann übernimmt das Mikrofon der Tastatur.
+const srBroken = () => { try { return localStorage.getItem('ms-sr-broken') === '1'; } catch { return false; } };
+const canListen = () => !!SR && !srBroken();
+function listen({ onText, onEnd, onError }) {
+  if (!canListen()) return null;
   const rec = new SR();
   rec.lang = LANG === 'en' ? 'en-GB' : 'de-DE';
   rec.continuous = true; rec.interimResults = true;
@@ -2514,7 +2567,16 @@ function listen({ onText, onEnd }) {
     }
     onText((finalText + interim).trim());
   };
-  rec.onerror = (e) => { if (e.error === 'not-allowed' || e.error === 'service-not-allowed') toast('Mikrofon nicht erlaubt – bitte in den Einstellungen freigeben.'); };
+  let heard = false;
+  const prevResult = rec.onresult;
+  rec.onresult = (e) => { heard = true; prevResult(e); };
+  rec.onerror = (e) => {
+    if (e.error === 'aborted' || e.error === 'no-speech') return;
+    if (e.error === 'not-allowed') { toast('Mikrofon nicht erlaubt – bitte in den Einstellungen freigeben.'); onError?.(e.error); return; }
+    // service-not-allowed, network, audio-capture …: Spracherkennung hier nicht nutzbar → Tastatur-Mikrofon
+    if (!heard) { try { localStorage.setItem('ms-sr-broken', '1'); } catch {} }
+    onError?.(e.error);
+  };
   rec.onend = () => onEnd?.();
   try { rec.start(); } catch { return null; }
   return rec;
@@ -2522,14 +2584,14 @@ function listen({ onText, onEnd }) {
 function micButton(attrs = '') {
   return `<button type="button" class="mic-btn" ${attrs} aria-label="Spracheingabe">${I.mic}</button>`;
 }
-function voiceSheet(preset = '') {
+function voiceSheet(preset = '', { auto = false } = {}) {
   let rec = null;
   let result = null;
   const sheet = openSheet(`
-    <div class="sheet-head"><h2>Sprachnotiz</h2><button class="btn ghost" data-dismiss>Abbrechen</button></div>
+    <div class="sheet-head"><h2>${preset ? 'Aufgaben erkennen' : 'Sprachnotiz'}</h2><button class="btn ghost" data-dismiss>Abbrechen</button></div>
     <div class="voice">
       <button type="button" class="voice-mic" data-rec aria-label="Aufnahme starten">${I.mic}</button>
-      <p class="voice-state" data-state>${SR ? 'Tippen und sprechen, z. B. „Morgen um 10 die Bank wegen der Zinsbindung anrufen“' : 'Tippe unten ins Feld und nutze das Mikrofon der Tastatur.'}</p>
+      <p class="voice-state" data-state>${canListen() ? 'Tippen und sprechen, z. B. „Morgen um 10 die Bank wegen der Zinsbindung anrufen“' : 'Tippe unten ins Feld und nutze das Mikrofon der Tastatur.'}</p>
     </div>
     <label class="field"><span>Was du gesagt hast</span><textarea data-voice rows="3" placeholder="Hier erscheint der Text – du kannst ihn auch bearbeiten.">${esc(preset)}</textarea></label>
     <button class="btn block" data-go>${S.ai ? `${I.spark} Mit KI auswerten` : 'Aufgabe erkennen'}</button>
@@ -2545,7 +2607,7 @@ function voiceSheet(preset = '') {
   };
   recBtn.addEventListener('click', () => (rec ? stop() : start()));
   sheet.querySelector('[data-dismiss]')?.addEventListener('click', stop);
-  if (!preset && SR) setTimeout(start, 300);
+  if (!preset && canListen()) setTimeout(start, 300);
   const out = sheet.querySelector('[data-result]');
   const draw = () => {
     if (!result) { out.innerHTML = ''; return; }
@@ -2579,6 +2641,7 @@ function voiceSheet(preset = '') {
     } catch (err) { toast(fail(err)); }
     btn.disabled = false; btn.innerHTML = label;
   });
+  if (auto && preset.trim()) setTimeout(() => sheet.querySelector('[data-go]')?.click(), 50);
   async function save() {
     const pick = result.filter((t) => t.selected);
     if (!pick.length) { closeSheet(); return; }
@@ -2695,7 +2758,7 @@ function openSearchHit(k, id) {
 function startSearchVoice() {
   const inp = app.querySelector('[data-input="search"]');
   const btn = app.querySelector('[data-action="search-mic"]');
-  if (!SR) { inp?.focus(); toast('Nutze das Mikrofon der Tastatur.'); return; }
+  if (!canListen()) { inp?.focus(); toast('Nutze das Mikrofon der Tastatur.'); return; }
   if (S.searchRec) { try { S.searchRec.stop(); } catch {} return; }
   btn?.classList.add('on');
   S.searchRec = listen({
@@ -2909,7 +2972,7 @@ async function onAction(e) {
   const el = e.target.closest('[data-action]'); if (!el || el.tagName === 'INPUT') return;
   const a = el.dataset.action;
   switch (a) {
-    case 'tab': if (el.dataset.tab === 'plan' && S.view === 'plan') { S.planArea = null; S.planWeek = 0; S.planMonth = 0; } S.view = el.dataset.tab; render(); window.scrollTo(0, 0); break;
+    case 'tab': if (el.dataset.tab === 'plan' && S.view === 'plan') { S.planArea = null; S.planWeek = 0; S.planMonth = 0; } if (el.dataset.tab === 'more') S.morePage = null; S.view = el.dataset.tab; render(); window.scrollTo(0, 0); break;
     case 'filter': S.filter = el.dataset.filter; render(); break;
     case 'area': S.area = el.dataset.id; render(); break;
     case 'open-plan': S.planArea = el.dataset.id; S.planMode = 'projekte'; S.view = 'plan'; S.openStep = null; S.openStepArea = el.dataset.id; render(); window.scrollTo(0, 0); break;
@@ -2945,7 +3008,7 @@ async function onAction(e) {
     case 'back-more': S.view = 'more'; render(); window.scrollTo(0, 0); break;
     case 'toggle': { const r = el.getBoundingClientRect(); toggleTask(el.dataset.id, r.left + r.width / 2, r.top + r.height / 2); break; }
     case 'edit': taskSheet(S.tasks.find((t) => t.id === el.dataset.id)); break;
-    case 'new-task': taskSheet(null); break;
+    case 'new-task': captureSheet(); break;
     case 'hide-banner': localStorage.setItem(el.dataset.key, '1'); render(); break;
     case 'goto-new': S.view = 'inbox'; S.inboxTab = 'new'; render(); window.scrollTo(0, 0); break;
     case 'inbox-tab': S.inboxTab = el.dataset.tab; render(); break;
@@ -3032,7 +3095,16 @@ async function onAction(e) {
     case 'hard-reload': hardReload(); break;
     case 'lock-on': lockSetupSheet(); break;
     case 'lock-off': if (confirm('Biometrische Sperre ausschalten?')) disableLock(); break;
-    case 'voice': voiceSheet(); break;
+    case 'voice': captureSheet({ voice: true }); break;
+    case 'assistant': {
+      const ar = el.dataset.area ? areaById(el.dataset.area) : null;
+      assistantSheet({ areaId: ar?.id || null, ask: ar && el.dataset.ask === 'sum' ? lx(`Fass das Projekt „${ar.name}“ kurz zusammen: Wo stehen wir, was steht als Nächstes an und worauf sollten wir achten?`, `Give me a short summary of the project “${ar.name}”: where do we stand, what's next and what should we watch out for?`) : '' });
+      break;
+    }
+    case 'more-page': S.morePage = el.dataset.p; render(); window.scrollTo(0, 0); break;
+    case 'more-back': S.morePage = null; render(); window.scrollTo(0, 0); break;
+    case 'tour': startTour(); break;
+    case 'guide': guideDo(el.dataset.k); break;
     case 'open-search': if (S.view !== 'search') S.prevView = S.view; S.view = 'search'; render(); window.scrollTo(0, 0); setTimeout(() => app.querySelector('[data-input="search"]')?.focus(), 60); break;
     case 'search-ai': runSearchAI(S.searchQ || ''); break;
     case 'search-mic': startSearchVoice(); break;
@@ -3141,16 +3213,13 @@ document.addEventListener('keydown', (e) => {
   if (e.metaKey || e.ctrlKey || e.altKey || e.isComposing) return;
   const t = e.target;
   if (t && (/^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName) || t.isContentEditable)) return;
-  if (sheetRoot.innerHTML || document.querySelector('.viewer') || document.getElementById('lock')) return;
+  if (sheetRoot.innerHTML || document.querySelector('.viewer') || document.getElementById('lock') || document.getElementById('tour')) return;
   if (store.mode === 'cloud' && (!S.me || S.projectState !== 'ready')) return;
   const tabs = ['home', 'tasks', 'plan', 'inbox', 'more'];
-  if (e.key === 'n' || e.key === 'N') { e.preventDefault(); if (S.view === 'costs') costSheet(null); else taskSheet(null); }
-  else if (e.key === '/') {
-    e.preventDefault();
-    if (S.view !== 'home') { S.view = 'home'; render(); window.scrollTo(0, 0); }
-    app.querySelector('[data-input="quick"]')?.focus();
-  } else if (e.key === 's' || e.key === 'S') { e.preventDefault(); app.querySelector('[data-action="open-search"]')?.click(); }
-  else if (e.key === 'm' || e.key === 'M') { e.preventDefault(); voiceSheet(); }
+  if (e.key === 'n' || e.key === 'N' || e.key === '/') { e.preventDefault(); if (S.view === 'costs') costSheet(null); else captureSheet(); }
+  else if (e.key === 's' || e.key === 'S') { e.preventDefault(); app.querySelector('[data-action="open-search"]')?.click(); }
+  else if (e.key === 'a' || e.key === 'A') { e.preventDefault(); assistantSheet(); }
+  else if (e.key === 'm' || e.key === 'M') { e.preventDefault(); captureSheet({ voice: true }); }
   else if (/^[1-5]$/.test(e.key)) { S.view = tabs[+e.key - 1]; render(); window.scrollTo(0, 0); }
 });
 const hasFiles = (e) => [...(e.dataTransfer?.types || [])].includes('Files');
@@ -3182,7 +3251,7 @@ function assignPatch(data, task) {
   const to = data.assignee || 'all';
   if (to === prev) return true;
   if (to !== 'all' && !canSee(to, data.areaId)) {
-    alert(`${nameOf(to)} hat keinen Zugriff auf diesen Bereich. Gib ihn unter Mehr → Gemeinsam planen frei oder wähle jemand anderen.`);
+    alert(`${nameOf(to)} hat keinen Zugriff auf diesen Bereich. Gib ihn unter Mehr → Familie & Teilen frei oder wähle jemand anderen.`);
     return false;
   }
   if (to !== 'all' && to !== S.me?.uid) Object.assign(data, { assignNotify: true, assignAck: false, assignBy: S.me?.uid || null, assignByName: S.me?.name || null, assignAt: Date.now(), assignReturned: false });
@@ -3270,7 +3339,7 @@ function maybeAskCal() {
   try { if (Number(localStorage.getItem(calLaterKey()) || 0) > Date.now()) return; } catch {}
   S.calAsked = true;
   const tryOpen = (n) => {
-    if (document.getElementById('lock') || sheetRoot.innerHTML.trim()) { if (n < 20) setTimeout(() => tryOpen(n + 1), 3000); return; }
+    if (document.getElementById('lock') || document.getElementById('tour') || sheetRoot.innerHTML.trim()) { if (n < 40) setTimeout(() => tryOpen(n + 1), 3000); return; }
     calAskSheet(false);
   };
   setTimeout(() => tryOpen(0), 1800);
@@ -3298,7 +3367,7 @@ function calAskSheet(settings) {
     <div class="sheet-head"><h2>${settings ? 'Aufgaben im Kalender' : 'Aufgaben in deinen Kalender?'}</h2><button class="btn ghost" data-dismiss>${settings ? 'Schließen' : 'Später'}</button></div>
     ${settings ? '' : `<div class="cal-hero">${calIcon()}</div>`}
     <p>MindSpace kann deine Aufgaben als eigenen Kalender <strong>„MindSpace“</strong> in den Kalender deines Handys oder Computers eintragen. Neue und geänderte Aufgaben kommen dort von selbst an.</p>
-    <p class="hint">Nur wenn du zustimmst – alle im Projekt entscheiden das für sich selbst. Ändern oder beenden kannst du es jederzeit unter Mehr → Kalender.</p>
+    <p class="hint">Nur wenn du zustimmst – alle im Projekt entscheiden das für sich selbst. Ändern oder beenden kannst du es jederzeit unter Mehr → Erinnerungen & Kalender → Kalender.</p>
     <div class="cal-opts">
       ${opt('all', 'Ja, alle Aufgaben', 'Alles, was du in MindSpace siehst')}
       ${opt('mine', 'Ja, nur meine Aufgaben', 'Wo du zuständig bist – plus gemeinsame')}
@@ -3603,7 +3672,7 @@ function restoreDraft(d) {
 function maybeRestoreDraft() {
   if (S.draftChecked) return;
   const d = draftLoad();
-  if (!d) { S.draftChecked = true; return; }
+  if (!d) { S.draftChecked = true; if (capDraft().trim() && !sheetRoot.innerHTML.trim() && !document.getElementById('tour')) captureSheet(); return; }
   if (d.uid && S.me?.uid && d.uid !== S.me.uid) { S.draftChecked = true; return; }
   if (Date.now() - (d.ts || 0) > 7 * 864e5) { draftClear(); S.draftChecked = true; return; }
   if (d.key !== 'task:new' && !S.tasks.length) return; // Aufgaben noch nicht geladen
@@ -3618,6 +3687,471 @@ function flushOpenSheet() {
 document.addEventListener('visibilitychange', () => { if (document.hidden) flushOpenSheet(); });
 window.addEventListener('pagehide', flushOpenSheet);
 native.onAppState((active) => { if (!active) flushOpenSheet(); });
+
+// ==================================================================
+// Version 16: Kopfknöpfe, „Neue Aufgabe“ mit Diktat, Assistent, Tour, Anleitung
+// ==================================================================
+const lx = (de, en) => (LANG === 'en' ? en : de);
+// **fett** und *kursiv* in bereits maskiertem Text
+const mdInline = (s) => s.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>').replace(/(^|[\s(])\*([^*\n]+)\*(?=[\s).,!?:;]|$)/g, '$1<em>$2</em>');
+function headActions() {
+  return `<div class="head-acts"><button class="head-btn" data-action="open-search" aria-label="Suchen">${I.search}</button><button class="head-btn ai-btn" data-action="assistant" aria-label="Assistent">${I.spark}<span>Assistent</span></button></div>`;
+}
+
+// ---------- Neue Aufgabe: schreiben oder diktieren
+const CAP_KEY = 'ms-cap-draft';
+function capDraft(v) {
+  try {
+    if (v === undefined) return localStorage.getItem(CAP_KEY) || '';
+    if (v) localStorage.setItem(CAP_KEY, v); else localStorage.removeItem(CAP_KEY);
+  } catch {}
+  return '';
+}
+async function addFromText(text, source = 'quick') {
+  const q = parseQuick(text);
+  if (!q.title) return false;
+  if (!S.areas.length) await ensureAreasStored();
+  const ex = findSimilar(q.title, 0.8);
+  const data = { title: q.title, due: q.due, time: q.time, areaId: q.areaId, phase: q.phase, repeat: q.repeat || null, repeatDay: q.repeat && q.due ? parseISO(q.due).getDate() : null, reminder: !q.due ? 'none' : q.time ? 'hour1' : dayDiff(q.due) <= 1 ? 'day0' : 'day1', notes: '', source };
+  if (ex) {
+    await bundleInto(ex, { text: `${source === 'voice' ? '🎤' : '✍️'} ${text.trim()}`, due: q.due, time: q.time });
+    toast(`Gibt es schon – zu „${ex.title}“ hinzugefügt`, { label: 'Doch neu', fn: () => store.addTask(data).catch((e) => toast(fail(e))) });
+    return true;
+  }
+  await store.addTask(data);
+  if (q.due) S.dayPick = q.due;
+  toast(`Angelegt${q.due ? ` für ${fmtDate(q.due)}` : ''} ✓`);
+  return true;
+}
+function captureSheet({ voice = false, text = null } = {}) {
+  let rec = null, dictated = false, base = '';
+  const kbdHint = 'Tippe ins Feld und dann auf das 🎤 der Tastatur – so diktierst du direkt.';
+  const sheet = openSheet(`
+    <div class="sheet-head"><h2>Neue Aufgabe</h2><button class="btn ghost" data-dismiss>Abbrechen</button></div>
+    <div class="cap">
+      <textarea data-cap rows="2" enterkeyhint="done" autocomplete="off" placeholder="Was steht an? z. B. „Zahnarzt Dienstag 9 Uhr“" aria-label="Neue Aufgabe">${esc(text ?? capDraft())}</textarea>
+      <div class="cap-pv" data-pv></div>
+    </div>
+    <div class="cap-actions">
+      <button type="button" class="cap-mic" data-rec>${I.mic}<span data-rec-l>Diktieren</span></button>
+      <button type="button" class="btn cap-add" data-add disabled>Anlegen</button>
+    </div>
+    <p class="cap-state" data-state>${canListen() ? 'Schreib oder diktiere. Datum, Uhrzeit und Bereich erkennt MindSpace selbst.' : kbdHint}</p>
+    <div class="cap-more">
+      ${S.ai ? `<button type="button" class="link" data-ai>${I.spark}Mit KI erkennen – auch mehrere Aufgaben</button>` : ''}
+      <button type="button" class="link" data-details>Alle Details ausfüllen</button>
+    </div>`);
+  const ta = sheet.querySelector('[data-cap]'), pv = sheet.querySelector('[data-pv]'), add = sheet.querySelector('[data-add]');
+  const recBtn = sheet.querySelector('[data-rec]'), recL = sheet.querySelector('[data-rec-l]'), state = sheet.querySelector('[data-state]');
+  const grow = () => { ta.style.height = 'auto'; ta.style.height = Math.min(220, ta.scrollHeight + 2) + 'px'; };
+  const update = () => { const v = ta.value; pv.innerHTML = v.trim() ? quickPreview(v) : ''; add.disabled = !v.trim(); capDraft(v); grow(); };
+  const stop = () => { try { rec?.stop(); } catch {} rec = null; recBtn.classList.remove('on'); recL.textContent = 'Diktieren'; };
+  sheetGuard = () => { stop(); capDraft(''); };
+  const start = () => {
+    if (rec) { stop(); return; }
+    if (!canListen()) { ta.focus(); state.textContent = kbdHint; state.classList.add('flash'); setTimeout(() => state.classList.remove('flash'), 900); return; }
+    base = ta.value.trim();
+    rec = listen({
+      onText: (t) => { ta.value = base ? `${base} ${t}` : t; dictated = true; update(); },
+      onEnd: () => {
+        recBtn.classList.remove('on'); recL.textContent = 'Diktieren'; rec = null;
+        if (!ta.value.trim()) state.textContent = `Nichts verstanden – tippe noch einmal aufs Mikrofon. Klappt es nicht: ${kbdHint}`;
+        else state.textContent = S.ai && ta.value.length > 90 ? 'Viel Text? „Mit KI erkennen“ macht daraus mehrere Aufgaben.' : 'Passt alles? Dann „Anlegen“.';
+      },
+      onError: (err) => { stop(); state.textContent = err === 'not-allowed' ? 'Mikrofon nicht erlaubt – bitte in den Einstellungen freigeben.' : `Die Spracherkennung klappt hier nicht. ${kbdHint}`; },
+    });
+    if (!rec) { ta.focus(); state.textContent = kbdHint; return; }
+    recBtn.classList.add('on'); recL.textContent = 'Fertig'; state.textContent = 'Ich höre zu … tippe auf „Fertig“, wenn du fertig bist.';
+  };
+  recBtn.addEventListener('click', start);
+  ta.addEventListener('input', update);
+  ta.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); if (!add.disabled) add.click(); } });
+  add.addEventListener('click', async () => {
+    stop();
+    const v = ta.value.trim(); if (!v) return;
+    add.disabled = true;
+    try { if (await addFromText(v, dictated ? 'voice' : 'quick')) { capDraft(''); closeSheet({ saved: true }); render(); } else { add.disabled = false; toast('Schreib kurz, was zu tun ist.'); } }
+    catch (e) { add.disabled = false; toast(fail(e)); }
+  });
+  sheet.querySelector('[data-details]').addEventListener('click', () => {
+    stop();
+    const v = ta.value.trim(); const q = v ? parseQuick(v) : null;
+    capDraft('');
+    taskSheet(null, q ? { title: q.title || v, due: q.due || '', time: q.time || '', areaId: q.areaId, phase: q.phase, repeat: q.repeat || null } : {});
+  });
+  sheet.querySelector('[data-ai]')?.addEventListener('click', () => { stop(); const v = ta.value.trim(); capDraft(''); voiceSheet(v, { auto: !!v }); });
+  update();
+  if (voice) start();
+  else if (window.matchMedia('(hover: hover)').matches) ta.focus();
+}
+
+// ---------- Assistent: Überblick, Zusammenfassung, Rat
+const ST_TXT = { late: 'überfällig', today: 'heute fällig', start: 'jetzt starten', ok: 'im Plan', none: 'ohne Datum', done: 'erledigt' };
+const ctxDate = (d, time) => (d ? `${fmtDate(d, { weekday: 'short', day: 'numeric', month: 'numeric', year: 'numeric' })}${time ? ` ${time}` : ''}` : 'ohne Datum');
+function ctxTask(t, full = false) {
+  const a = areaOf(t);
+  const parts = [`- ${t.title}`, `[${a.name}${phaseOf(t) ? ` / ${phaseOf(t)}` : ''}]`];
+  parts.push(t.done ? `erledigt${t.doneAt ? ` am ${ctxDate(isoDate(new Date(t.doneAt)))}` : ''}` : `fällig: ${ctxDate(t.due, t.time)} (${ST_TXT[statusOf(t)]})`);
+  if (!t.done && t.startBy && urgRank(t) >= 2) parts.push(`spätestens beginnen: ${ctxDate(t.startBy)}`);
+  if (t.assignee && t.assignee !== 'all') parts.push(`zuständig: ${nameOf(t.assignee)}`);
+  if (t.repeat) parts.push(`wiederholt sich ${REPEAT_SHORT[t.repeat] || t.repeat}`);
+  if (t.leadDays) parts.push(`Vorlauf ${t.leadDays} Tage`);
+  const c = t.contactId && contactById(t.contactId); if (c) parts.push(`Kontakt: ${c.name}${c.company ? ` (${c.company})` : ''}`);
+  const n = String(t.notes || '').replace(/\s+/g, ' ').trim();
+  if (n) parts.push(`Notiz: ${full ? n.slice(0, 3000) : n.slice(0, 160) + (n.length > 160 ? '…' : '')}`);
+  return parts.join(' | ');
+}
+function assistantContext({ areaId = null, taskId = null } = {}) {
+  const L = [];
+  const fa = areaId ? areaById(areaId) : null;
+  const ft = taskId ? S.tasks.find((x) => x.id === taskId) : null;
+  L.push(`Gemeinsamer Bereich: ${S.project?.name || 'MindSpace'}${members().length ? ` · Personen: ${members().map(nameOf).join(', ')}` : ''}`);
+  L.push(`Es fragt: ${myName() || 'der Nutzer'}`);
+  if (ft) {
+    L.push('', 'AUFGABE IM FOKUS:', ctxTask(ft, true));
+    const thread = S.comments.filter((c) => c.taskId === ft.id).sort((a, b) => (a.at || 0) - (b.at || 0)).slice(-15);
+    if (thread.length) L.push('Verlauf/Kommentare:', ...thread.map((c) => `  · ${c.at ? ctxDate(isoDate(new Date(c.at))) : ''} ${whoName(c.by, c.byName)}: ${String(c.text || '').slice(0, 400)}`));
+    const fc = ft.contactId && contactById(ft.contactId);
+    if (fc) L.push(`Kontakt dazu: ${fc.name}${fc.company ? `, ${fc.company}` : ''}${fc.role ? `, ${fc.role}` : ''}${fc.email ? `, ${fc.email}` : ''}${fc.phone || fc.mobile ? `, Tel. ${fc.mobile || fc.phone}` : ''}`);
+  }
+  if (fa) L.push('', `PROJEKT IM FOKUS: ${fa.name}`);
+  L.push('', 'PROJEKTE / LEBENSBEREICHE:');
+  for (const a of areas()) {
+    const st = areaStats(a);
+    if (!st.total) continue;
+    let line = `- ${a.name}: ${st.open.length} offen, ${st.done} erledigt${st.next ? `; nächste Frist ${ctxDate(st.next.due)} (${st.next.title})` : ''}${st.end ? `; letzte Frist ${ctxDate(st.end)}` : ''}`;
+    if (a.phases?.length) { try { line += `\n  Abschnitte: ${roadmapSteps(a).map((x) => `${x.name} ${x.done}/${x.items.length}${x.state === 'now' ? ' (gerade dran)' : ''}`).join('; ')}`; } catch {} }
+    L.push(line);
+  }
+  const open = S.tasks.filter((t) => !t.done).sort(byDue);
+  const inFocus = (t) => fa && areaOf(t).id === fa.id;
+  const openList = fa ? [...open.filter(inFocus), ...open.filter((t) => !inFocus(t)).slice(0, 80)] : open.slice(0, 220);
+  L.push('', `OFFENE AUFGABEN (${open.length}${openList.length < open.length ? `, davon ${openList.length} aufgeführt` : ''}):`, ...openList.map((t) => ctxTask(t, inFocus(t))));
+  const done = S.tasks.filter((t) => t.done).sort((a, b) => (b.doneAt || 0) - (a.doneAt || 0));
+  const doneList = fa ? done.filter(inFocus).slice(0, 80) : done.filter((t) => t.doneAt && Date.now() - t.doneAt < 45 * 864e5).slice(0, 40);
+  if (doneList.length) L.push('', fa ? `ERLEDIGT IM PROJEKT ${fa.name}:` : 'ZULETZT ERLEDIGT (45 Tage):', ...doneList.map((t) => ctxTask(t)));
+  if (S.costs.length) {
+    L.push('', 'KOSTEN:');
+    for (const a of areas()) {
+      const cs = costStats(a.id);
+      if (!cs.list.length && !cs.budget) continue;
+      L.push(`- ${a.name}: geplant ${eur(cs.planned)}, bezahlt ${eur(cs.paid)}, offen ${eur(cs.open)}${cs.budget ? `, Budget ${eur(cs.budget)}` : ''}${cs.unknown ? `, ${cs.unknown} ohne Betrag` : ''}`);
+    }
+    const next = S.costs.filter((c) => !c.paid && c.due && (!fa || costArea(c) === fa.id)).sort((a, b) => a.due.localeCompare(b.due)).slice(0, 12);
+    if (next.length) L.push('Nächste offene Zahlungen:', ...next.map((c) => `  · ${ctxDate(c.due)}: ${c.title} ${c.amount != null ? eur(c.amount) : '(Betrag offen)'}`));
+  }
+  if (S.contacts.length) L.push('', `KONTAKTE (${S.contacts.length}):`, ...S.contacts.slice(0, 60).map((c) => `- ${c.name}${c.company ? ` (${c.company})` : ''}${c.role ? ` – ${c.role}` : ''}`));
+  return L.join('\n');
+}
+function assistantSystem(focus) {
+  const d = new Date();
+  return `Du bist der persönliche Planungsassistent in der App MindSpace. Du hilfst ${myName() || 'dem Nutzer'} und der Familie, den Überblick über Aufgaben, Projekte, Fristen und Kosten zu behalten.
+Heute ist ${d.toLocaleDateString('de-DE', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}, ${d.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' })} Uhr.
+Regeln:
+- Antworte freundlich, klar und kurz – lieber 5 gute Zeilen als eine lange Abhandlung. Auf Nachfrage gerne ausführlicher.
+- Stütze dich auf die Daten unten. Erfinde keine Aufgaben, Termine oder Beträge. Fehlt etwas, sag es offen.
+- Allgemeines Wissen (z. B. wie ein Bauantrag oder eine Steuererklärung abläuft) darfst du ergänzen, kennzeichne es dann als allgemeinen Hinweis.
+- Nenne Termine mit Wochentag und Datum. Priorisiere: überfällig → heute → jetzt starten → bald fällig.
+- Formatierung: kurze Absätze, **fett** für das Wichtigste, Listen mit „- “. Keine Tabellen, keine Überschriften mit #.
+- Du kannst in der App nichts ändern. Schlage konkrete nächste Schritte vor; neue Aufgaben legt man mit dem Plus an.
+
+DATEN AUS MINDSPACE:
+${assistantContext(focus)}`;
+}
+function chatMd(text) {
+  const lines = esc(text).split('\n');
+  let html = '', list = null;
+  const close = () => { if (list) { html += `</${list}>`; list = null; } };
+  for (const raw of lines) {
+    const l = raw.trimEnd();
+    const ul = l.match(/^\s*[-•*]\s+(.*)$/), ol = l.match(/^\s*\d+[.)]\s+(.*)$/), h = l.match(/^#{1,4}\s+(.*)$/);
+    if (ul || ol) { const tag = ul ? 'ul' : 'ol'; if (list !== tag) { close(); html += `<${tag}>`; list = tag; } html += `<li>${mdInline((ul || ol)[1])}</li>`; continue; }
+    close();
+    if (h) html += `<p><strong>${mdInline(h[1])}</strong></p>`;
+    else if (l.trim()) html += `<p>${mdInline(l)}</p>`;
+  }
+  close();
+  return html;
+}
+function assistantSheet({ areaId = null, taskId = null, ask = '' } = {}) {
+  const task = taskId ? S.tasks.find((x) => x.id === taskId) : null;
+  const area = !task && areaId ? areaById(areaId) : null;
+  const focus = { areaId: area?.id || null, taskId: task?.id || null };
+  const key = task ? `t:${task.id}` : area ? `a:${area.id}` : 'all';
+  if (!S.chat || S.chat.key !== key) S.chat = { key, msgs: [] };
+  const chat = S.chat;
+  let busy = false, rec = null;
+  const sugg = task ? [lx('Wie gehe ich das am besten an?', 'How should I tackle this?'), lx('Was muss ich dabei beachten?', 'What do I need to watch out for?'), lx('Mach mir eine kurze Checkliste.', 'Give me a short checklist.'), lx('Wen sollte ich kontaktieren?', 'Who should I contact?')]
+    : area ? [lx(`Fass das Projekt ${area.name} zusammen.`, `Summarise the project ${area.name}.`), lx('Was sind die nächsten Schritte?', 'What are the next steps?'), lx('Wo hakt es gerade?', 'Where are we stuck?'), lx('Was kommt diesen Monat?', 'What is coming up this month?')]
+    : [lx('Was steht diese Woche an?', 'What is on this week?'), lx('Was ist gerade am dringendsten?', 'What is most urgent right now?'), lx('Fass alle Projekte kurz zusammen.', 'Summarise all projects briefly.'), lx('Was habe ich zuletzt erledigt?', 'What did I get done recently?'), ...(S.costs.length ? [lx('Wie stehen die Kosten?', 'How are the costs looking?')] : [])];
+  const focusLine = task ? `Zur Aufgabe „${esc(task.title)}“` : area ? `${lx('Projekt', 'Project')} ${esc(area.emoji)} ${esc(area.name)}` : 'Kennt alle Aufgaben, Projekte, Termine und Kosten';
+  const sheet = openSheet(`
+    <div class="sheet-head"><h2 class="as-title">${I.spark} Assistent</h2><button class="btn ghost" data-dismiss>Schließen</button></div>
+    <div class="as-focus">${task ? '<button type="button" class="link" data-totask>‹ Zur Aufgabe</button>' : ''}<span>${focusLine}</span>${task || area ? '<button type="button" class="link" data-all>Alles im Blick</button>' : ''}</div>
+    ${S.ai ? '' : `<div class="note-card"><p><strong>Der Assistent braucht die KI.</strong> ${fullAccess() ? 'Richte sie unter Mehr → KI & E-Mail-Eingang ein.' : 'Bitte die Person, die den Bereich verwaltet, die KI einzurichten.'}</p>${fullAccess() && !billing() ? '<button class="btn small" data-setup style="margin-top:10px">KI einrichten</button>' : ''}</div>`}
+    <div class="chat" data-chat></div>
+    <div class="chat-sugg" data-sugg></div>
+    <form class="chat-in" autocomplete="off">
+      <textarea rows="1" data-q placeholder="Frag mich etwas …" enterkeyhint="send" aria-label="Frage an den Assistenten" ${S.ai ? '' : 'disabled'}></textarea>
+      <button type="button" class="mic-btn" data-mic aria-label="Frage diktieren" ${S.ai ? '' : 'disabled'}>${I.mic}</button>
+      <button type="submit" class="chat-send" aria-label="Senden" ${S.ai ? '' : 'disabled'}>${I.arrowUp}</button>
+    </form>
+    ${billing() ? '<p class="hint tiny center" data-use></p>' : ''}`);
+  const box = sheet.querySelector('[data-chat]'), sg = sheet.querySelector('[data-sugg]'), form = sheet.querySelector('form'), q = sheet.querySelector('[data-q]'), mic = sheet.querySelector('[data-mic]');
+  const use = sheet.querySelector('[data-use]');
+  const draw = () => {
+    box.innerHTML = chat.msgs.map((m) => `<div class="msg ${m.role}${m.err ? ' err' : ''}" ${m.role === 'assistant' ? 'translate="no"' : ''}>${m.role === 'user' ? esc(m.text) : chatMd(m.text)}</div>`).join('')
+      + (busy ? '<div class="msg assistant typing" aria-label="Assistent schreibt"><i></i><i></i><i></i></div>' : '');
+    sg.innerHTML = !chat.msgs.length && S.ai ? sugg.map((x) => `<button type="button" data-s="${esc(x)}">${esc(x)}</button>`).join('') : '';
+    if (use) use.textContent = `Jede Frage zählt als 1 KI-Aktion · ${S.usage?.ai || 0} von ${fmtLimit(lim('aiActions'))} diesen Monat`;
+    requestAnimationFrame(() => { sheet.scrollTop = sheet.scrollHeight; });
+  };
+  const grow = () => { q.style.height = 'auto'; q.style.height = Math.min(130, q.scrollHeight + 2) + 'px'; };
+  async function send(text) {
+    text = String(text || '').trim();
+    if (!text || busy) return;
+    if (!S.ai) { toast('Richte zuerst die KI ein.'); return; }
+    chat.msgs.push({ role: 'user', text });
+    q.value = ''; grow(); busy = true; draw();
+    // Verlauf ohne Fehlversuche, höchstens die letzten 12 Nachrichten
+    const hist = [];
+    chat.msgs.forEach((m, i) => { if (m.err || (m.role === 'user' && chat.msgs[i + 1]?.err)) return; hist.push({ role: m.role, content: m.text }); });
+    try {
+      const answer = await chatAI(aiCfg(), { system: assistantSystem(focus), messages: hist.slice(-12), lang: LANG });
+      chat.msgs.push({ role: 'assistant', text: answer });
+    } catch (e) {
+      chat.msgs.push({ role: 'assistant', text: `⚠️ ${fail(e)}`, err: true });
+    }
+    busy = false;
+    if (sheet.isConnected) draw();
+  }
+  form.addEventListener('submit', (e) => { e.preventDefault(); send(q.value); });
+  q.addEventListener('input', grow);
+  q.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); send(q.value); } });
+  sg.addEventListener('click', (e) => { const b = e.target.closest('[data-s]'); if (b) send(b.dataset.s); });
+  mic.addEventListener('click', () => {
+    if (rec) { try { rec.stop(); } catch {} return; }
+    if (!canListen()) { q.focus(); toast('Tippe ins Feld und nutze das 🎤 der Tastatur.'); return; }
+    rec = listen({
+      onText: (t) => { q.value = t; grow(); },
+      onEnd: () => { rec = null; mic.classList.remove('on'); if (q.value.trim()) send(q.value); },
+      onError: (err) => { rec = null; mic.classList.remove('on'); if (err !== 'not-allowed') { q.focus(); toast('Spracherkennung klappt hier nicht – nutze das 🎤 der Tastatur.'); } },
+    });
+    if (rec) mic.classList.add('on'); else q.focus();
+  });
+  sheet.querySelector('[data-totask]')?.addEventListener('click', () => { const t = S.tasks.find((x) => x.id === focus.taskId); if (t) taskSheet(t); });
+  sheet.querySelector('[data-all]')?.addEventListener('click', () => assistantSheet());
+  sheet.querySelector('[data-setup]')?.addEventListener('click', () => aiSheet());
+  sheetGuard = () => { try { rec?.stop(); } catch {} };
+  draw();
+  if (ask && S.ai) send(ask);
+  else if (S.ai && window.matchMedia('(hover: hover)').matches) q.focus();
+}
+
+// ---------- Tour durch die App
+const TOUR_KEY = 'ms-tour-v16';
+let tour = null;
+function tourSteps() {
+  const vis = (...sels) => { for (const sel of sels) for (const el of document.querySelectorAll(sel)) { const r = el.getBoundingClientRect(); if (r.width && r.height) return el; } return null; };
+  const tab = (k) => () => vis(`.tabbar [data-tab="${k}"]`);
+  return [
+    { center: true, title: lx('Willkommen bei MindSpace 👋', 'Welcome to MindSpace 👋'), text: lx('Ich zeige dir in einer Minute die wichtigsten Stellen. Du findest die Tour jederzeit wieder unter **Mehr → Hilfe**.', 'Let me show you the most important places in one minute. You can find this tour again any time under **More → Help**.'), next: lx('Tour starten', 'Start tour'), skip: lx('Später', 'Later') },
+    { view: 'home', el: () => vis('.tiles'), title: lx('Dein Tag auf einen Blick', 'Your day at a glance'), text: lx('**Heute**, **Überfällig**, **Jetzt starten** und die **nächsten 7 Tage**. Tippe eine Kachel an – darunter erscheinen die passenden Aufgaben.', '**Today**, **Overdue**, **Start now** and the **next 7 days**. Tap a tile and the matching tasks appear below.') },
+    { view: 'home', el: () => vis('.home-view .card .row', '.home-view .card'), title: lx('Erledigen und verschieben', 'Complete and reschedule'), text: lx('Tippe auf den **Kreis** = erledigt. **Nach rechts wischen** = erledigt, **nach links** = verschieben. **Gedrückt halten** und auf einen Tag ziehen = neues Datum.', 'Tap the **circle** = done. **Swipe right** = done, **swipe left** = reschedule. **Press and hold**, then drag onto a day = new date.') },
+    { view: 'home', el: () => vis('.fab', '.side-new'), title: lx('Neue Aufgabe', 'New task'), text: lx('Mit dem **Plus** legst du Aufgaben an – **schreiben oder diktieren**. Datum und Uhrzeit erkennt MindSpace selbst, z. B. „Zahnarzt Dienstag 9 Uhr“.', 'Use the **plus** to add tasks – **type or dictate**. MindSpace recognises the date and time itself, e.g. “Dentist Tuesday 9am”.') },
+    { view: 'home', el: () => vis('.head-acts .ai-btn', '.side-ai'), title: lx('Dein Assistent ✨', 'Your assistant ✨'), text: lx('Frag nach einem **Überblick**, einer **Zusammenfassung** deines Projekts oder nach **Rat** zu einer Aufgabe – jederzeit.', 'Ask for an **overview**, a **summary** of your project or **advice** on a task – any time.') },
+    { view: 'home', el: () => vis('.head-acts [data-action="open-search"]', '.side-search'), title: lx('Suchen', 'Search'), text: lx('Findet Aufgaben, Notizen, Kontakte, Zahlungen und Dokumente – auch mit Fragen wie „Wo ist die Rechnung vom Elektriker?“', 'Finds tasks, notes, contacts, payments and documents – even questions like “Where is the electrician’s invoice?”') },
+    { view: 'home', el: tab('tasks'), title: lx('Aufgaben', 'Tasks'), text: lx('Alle Aufgaben als Liste – nach Bereichen gefiltert, offen oder erledigt.', 'All tasks as a list – filtered by area, open or done.') },
+    { view: 'home', el: tab('plan'), title: lx('Planer', 'Planner'), text: lx('**7 Tage**, **Monat** und deine **Projekte** mit Fahrplan – Schritt für Schritt bis zum Ziel.', '**7 days**, **month** and your **projects** with a roadmap – step by step to the goal.') },
+    { view: 'home', el: tab('inbox'), title: lx('Eingang', 'Inbox'), text: lx('E-Mails weiterleiten oder hineinkopieren – die KI macht daraus Aufgaben, Zahlungen und Kontakte.', 'Forward or paste e-mails – the AI turns them into tasks, payments and contacts.') },
+    { view: 'home', el: tab('more'), title: lx('Mehr', 'More'), text: lx('Kontakte, Kosten, Dokumente, Familie und alle Einstellungen – übersichtlich in Gruppen. Unter **Hilfe** findest du die Anleitung und diese Tour.', 'Contacts, costs, documents, family and all settings – neatly grouped. Under **Help** you find the guide and this tour.') },
+    { center: true, final: true, title: lx('Fertig – viel Freude! 🎉', 'All set – enjoy! 🎉'), text: lx('Tipp: Schalte **Push-Nachrichten** ein, damit dich MindSpace rechtzeitig erinnert.', 'Tip: turn on **push notifications** so MindSpace reminds you in time.'), next: lx('Los geht’s', 'Let’s go') },
+  ];
+}
+function startTour(i = 0) {
+  closeSheet();
+  try { localStorage.setItem(TOUR_KEY, '1'); } catch {}
+  tour = { i, steps: tourSteps() };
+  document.addEventListener('keydown', tourKey, true);
+  window.addEventListener('resize', tourPlace);
+  tourShow();
+}
+function tourEnd() {
+  document.getElementById('tour')?.remove();
+  document.removeEventListener('keydown', tourKey, true);
+  window.removeEventListener('resize', tourPlace);
+  tour = null;
+}
+function tourKey(e) {
+  if (!tour) return;
+  if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); tourEnd(); }
+  else if (e.key === 'ArrowRight' || e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); tourGo(1); }
+  else if (e.key === 'ArrowLeft') { e.preventDefault(); e.stopPropagation(); tourGo(-1); }
+}
+function tourGo(d) {
+  if (!tour) return;
+  const n = tour.i + d;
+  if (n < 0) return;
+  if (n >= tour.steps.length) { tourEnd(); return; }
+  tour.i = n; tourShow();
+}
+function tourShow() {
+  const st = tour.steps[tour.i];
+  if (st.view && (S.view !== st.view || S.morePage)) { S.view = st.view; S.morePage = null; render(); }
+  let box = document.getElementById('tour');
+  if (!box) { box = document.createElement('div'); box.id = 'tour'; document.body.appendChild(box); }
+  const total = tour.steps.filter((x) => !x.center).length;
+  const num = tour.steps.slice(0, tour.i + 1).filter((x) => !x.center).length;
+  const pushOffer = st.final && store.mode === 'cloud' && !pushState().on && (native.isNative() || typeof Notification !== 'undefined');
+  box.innerHTML = `<div class="tour-hole"></div>
+    <div class="tour-pop" role="dialog" aria-modal="true" aria-labelledby="tour-h">
+      ${st.center ? '' : `<p class="tour-n">${num} / ${total}</p><button class="tour-x" data-t="end" aria-label="${lx('Tour beenden', 'End tour')}">×</button>`}
+      <h3 id="tour-h">${esc(st.title)}</h3>
+      <p>${mdInline(esc(st.text))}</p>
+      <div class="tour-btns">
+        ${st.skip ? `<button class="btn ghost small" data-t="end">${esc(st.skip)}</button>` : !st.center && tour.i > 1 ? `<button class="btn ghost small" data-t="prev">${lx('Zurück', 'Back')}</button>` : st.center ? '' : '<span></span>'}
+        ${pushOffer ? `<button class="btn secondary small" data-t="push">${lx('Push aktivieren', 'Enable push')}</button>` : ''}
+        <button class="btn small" data-t="next">${esc(st.next || lx('Weiter', 'Next'))}</button>
+      </div>
+    </div>`;
+  box.setAttribute('translate', 'no');
+  box.onclick = (e) => {
+    const b = e.target.closest('[data-t]'); if (!b) return;
+    const t = b.dataset.t;
+    if (t === 'next') tourGo(1);
+    else if (t === 'prev') tourGo(-1);
+    else if (t === 'end') tourEnd();
+    else if (t === 'push') { tourEnd(); S.view = 'more'; S.morePage = 'notify'; render(); window.scrollTo(0, 0); setTimeout(() => app.querySelector('[data-action="push"]')?.classList.add('pulse-once'), 50); }
+  };
+  tourPlace(true);
+}
+function tourPlace(scroll) {
+  if (!tour) return;
+  const box = document.getElementById('tour'); if (!box) return;
+  const st = tour.steps[tour.i];
+  const hole = box.querySelector('.tour-hole'), pop = box.querySelector('.tour-pop');
+  const el = st.center ? null : st.el?.();
+  if (!el) { box.classList.add('center'); hole.removeAttribute('style'); pop.removeAttribute('style'); return; }
+  box.classList.remove('center');
+  if (scroll === true) {
+    const r0 = el.getBoundingClientRect();
+    if (r0.top < 80 || r0.bottom > innerHeight - 110) { el.scrollIntoView({ block: 'center' }); }
+  }
+  const r = el.getBoundingClientRect(), pad = 6;
+  hole.style.cssText = `top:${r.top - pad}px;left:${r.left - pad}px;width:${r.width + pad * 2}px;height:${r.height + pad * 2}px`;
+  const pw = Math.min(340, innerWidth - 32);
+  pop.style.width = `${pw}px`;
+  const ph = pop.offsetHeight;
+  let top = r.bottom + pad + 12;
+  if (top + ph > innerHeight - 12) top = r.top - pad - 12 - ph;
+  if (top < 12) top = Math.max(12, (innerHeight - ph) / 2);
+  let left = r.left + r.width / 2 - pw / 2;
+  if (r.width < 120 && r.left > innerWidth / 2) left = r.right - pw; // kleine Knöpfe rechts (Plus)
+  left = Math.max(16, Math.min(left, innerWidth - pw - 16));
+  pop.style.top = `${top}px`; pop.style.left = `${left}px`;
+}
+function maybeTour() {
+  if (tour || S.tourAsked) return;
+  try { if (localStorage.getItem(TOUR_KEY)) return; } catch { return; }
+  if (store.mode === 'cloud' && (!S.me || S.projectState !== 'ready')) return;
+  S.tourAsked = true;
+  const tryOpen = (n) => {
+    if (tour) return;
+    if (document.getElementById('lock') || sheetRoot.innerHTML.trim() || document.querySelector('.viewer')) { if (n < 40) setTimeout(() => tryOpen(n + 1), 2500); return; }
+    startTour(0);
+  };
+  setTimeout(() => tryOpen(0), 1200);
+}
+
+// ---------- Anleitung (interaktiv)
+const GUIDE = () => [
+  { e: '➕', t: lx('Aufgabe anlegen', 'Add a task'), s: lx('Schreiben oder diktieren', 'Type or dictate'),
+    steps: [lx('Unten rechts auf das **Plus** tippen.', 'Tap the **plus** at the bottom right.'), lx('Schreib, was zu tun ist – z. B. „Zahnarzt Dienstag 9 Uhr“. Oder tippe auf **Diktieren** und sprich.', 'Type what needs doing – e.g. “Dentist Tuesday 9am”. Or tap **Dictate** and speak.'), lx('Unter dem Feld siehst du, was erkannt wurde: Datum, Uhrzeit, Bereich.', 'Below the field you see what was recognised: date, time, area.'), lx('**Anlegen** tippen – fertig. Für Notizen, Erinnerung oder Zuständigkeit: **Alle Details ausfüllen**.', 'Tap **Add** – done. For notes, reminder or assignee: **Fill in all details**.')],
+    tip: lx('Mit **#bereich** (z. B. #familie) wählst du den Bereich. Wiederholungen wie „jeden Montag“ werden erkannt. Klappt das Diktieren nicht, nutze das 🎤 der Tastatur.', 'Use **#area** (e.g. #family) to pick the area. Repeats like “every Monday” are recognised. If dictation does not work, use the 🎤 on the keyboard.'),
+    act: [['capture', lx('Ausprobieren', 'Try it')], ['voice', lx('Diktieren', 'Dictate')]] },
+  { e: '✅', t: lx('Erledigen und verschieben', 'Complete and reschedule'), s: lx('Tippen, wischen, ziehen', 'Tap, swipe, drag'),
+    steps: [lx('Auf den **Kreis** vor der Aufgabe tippen = erledigt.', 'Tap the **circle** in front of the task = done.'), lx('**Nach rechts wischen** = erledigt, **nach links wischen** = verschieben.', '**Swipe right** = done, **swipe left** = reschedule.'), lx('**Gedrückt halten** und auf einen Tag im Wochenblick ziehen = neues Datum.', '**Press and hold** and drag onto a day in the week view = new date.'), lx('Auf die Aufgabe tippen öffnet Details, Notizen, Fotos und den Verlauf.', 'Tapping the task opens details, notes, photos and the history.')],
+    act: [['home', lx('Zur Übersicht', 'Go to overview')]] },
+  { e: '🎨', t: lx('Die Farben', 'The colours'), s: lx('Was Rot, Gelb, Orange … bedeuten', 'What red, yellow, orange … mean'), legend: true,
+    steps: [lx('**Rot** – überfällig, **Gelb** – heute fällig, **Orange** – jetzt starten (damit es rechtzeitig klappt), **Blau** – im Plan, **Grün** – erledigt.', '**Red** – overdue, **yellow** – due today, **orange** – start now (to make it in time), **blue** – on track, **green** – done.'), lx('„Jetzt starten“ berechnet MindSpace aus Frist und Vorlauf – z. B. wenn die Bank zwei Wochen braucht.', '“Start now” is calculated from deadline and lead time – e.g. when the bank needs two weeks.')],
+    act: [['plan', lx('Zum Planer', 'Open planner')]] },
+  { e: '🗓️', t: lx('Planen', 'Planning'), s: lx('7 Tage, Monat, Projekte', '7 days, month, projects'),
+    steps: [lx('Unten auf **Plan** tippen.', 'Tap **Plan** at the bottom.'), lx('**7 Tage** zeigt die Woche ab heute, **Monat** den Kalender.', '**7 days** shows the week from today, **Month** the calendar.'), lx('**Projekte** zeigt jedes Projekt mit Fortschritt und einem Fahrplan Schritt für Schritt.', '**Projects** shows each project with progress and a step-by-step roadmap.')],
+    act: [['plan', lx('Zum Planer', 'Open planner')], ['projects', lx('Projekte ansehen', 'View projects')]] },
+  { e: '🗂️', t: lx('Projekte und Lebensbereiche', 'Projects and areas'), s: lx('Eigene Bereiche mit Fahrplan', 'Your own areas with a roadmap'),
+    steps: [lx('**Mehr → Lebensbereiche → Bereich hinzufügen**.', '**More → Areas → Add area**.'), lx('Name, Symbol und Farbe wählen.', 'Choose a name, symbol and colour.'), lx('Optional **Abschnitte** anlegen (z. B. „Planung“, „Umsetzung“) – daraus entsteht der Fahrplan.', 'Optionally add **sections** (e.g. “Planning”, “Execution”) – they form the roadmap.')],
+    act: [['area-new', lx('Neuen Bereich anlegen', 'Create an area')]] },
+  { e: '✨', t: lx('Der Assistent', 'The assistant'), s: lx('Überblick, Zusammenfassung, Rat', 'Overview, summary, advice'),
+    steps: [lx('Oben auf **✨ Assistent** tippen – auf jeder Seite.', 'Tap **✨ Assistant** at the top – on every page.'), lx('Eine Frage antippen oder eigene stellen, z. B. „Was steht diese Woche an?“ – auch per Mikrofon.', 'Tap a suggestion or ask your own, e.g. “What is on this week?” – also by microphone.'), lx('In einer Aufgabe: **✨ Assistent** für Rat genau zu dieser Aufgabe. Im Projekt: **✨ Zusammenfassung**.', 'In a task: **✨ Assistant** for advice on that task. In a project: **✨ Summary**.')],
+    tip: lx('Der Assistent sieht deine Aufgaben, Projekte, Kosten und Kontakte – aber ändert nichts selbst.', 'The assistant sees your tasks, projects, costs and contacts – but does not change anything itself.'),
+    act: [['assistant', lx('Assistent öffnen', 'Open assistant')]] },
+  { e: '📬', t: lx('E-Mails in Aufgaben verwandeln', 'Turn e-mails into tasks'), s: lx('Weiterleiten oder einfügen', 'Forward or paste'),
+    steps: [lx('Unten auf **Eingang** → **Einfügen**.', 'Tap **Inbox** → **Paste** at the bottom.'), lx('E-Mail-Text hineinkopieren und **Auswerten** tippen.', 'Paste the e-mail text and tap **Analyse**.'), lx('MindSpace schlägt Aufgaben, Zahlungen und Kontakte vor – du wählst aus, was übernommen wird.', 'MindSpace suggests tasks, payments and contacts – you choose what to keep.')],
+    tip: lx('Mit eigener Weiterleitungs-Adresse geht es noch einfacher: E-Mail einfach weiterleiten.', 'With your own forwarding address it is even easier: just forward the e-mail.'),
+    act: [['paste', lx('Zum Einfügen', 'Go to paste')]] },
+  { e: '🔔', t: lx('Erinnerungen und Push', 'Reminders and push'), s: lx('Rechtzeitig erinnert werden', 'Get reminded in time'),
+    steps: [lx('**Mehr → Erinnerungen & Kalender → Push-Nachrichten → Aktivieren**.', '**More → Reminders & calendar → Push notifications → Enable**.'), lx('Auf dem iPhone geht das nur, wenn MindSpace über das Symbol auf dem Home-Bildschirm geöffnet ist.', 'On iPhone this only works when MindSpace is opened from its home-screen icon.'), lx('Pro Aufgabe wählst du den Zeitpunkt der Erinnerung. Morgens kommt eine kurze Übersicht.', 'You choose the reminder time per task. Each morning you get a short overview.')],
+    act: [['notify', lx('Push einrichten', 'Set up push')]] },
+  { e: '📅', t: lx('Im Handy-Kalender sehen', 'See tasks in your phone calendar'), s: lx('Termine automatisch im Kalender', 'Dates automatically in your calendar'),
+    steps: [lx('**Mehr → Erinnerungen & Kalender → Kalender**.', '**More → Reminders & calendar → Calendar**.'), lx('Wählen: alle Aufgaben oder nur meine.', 'Choose: all tasks or only mine.'), lx('**Abonnieren** tippen – der Handy-Kalender aktualisiert sich dann von selbst.', 'Tap **Subscribe** – your phone calendar then updates itself.')],
+    act: [['notify', lx('Zum Kalender', 'Go to calendar')]] },
+  { e: '👪', t: lx('Gemeinsam planen', 'Plan together'), s: lx('Familie einladen, Zuständigkeit', 'Invite family, assign tasks'),
+    steps: [lx('**Mehr → Familie & Teilen → Jemanden einladen**.', '**More → Family & sharing → Invite someone**.'), lx('Den Code weitergeben – die andere Person tritt damit bei.', 'Share the code – the other person joins with it.'), lx('In einer Aufgabe unter **Zuständig** eine Person wählen: Sie bekommt eine Push-Nachricht und bestätigt.', 'In a task, pick a person under **Assigned to**: they get a push notification and confirm.')],
+    act: [['team', lx('Familie & Teilen', 'Family & sharing')]] },
+  { e: '💶', t: lx('Kosten und Raten', 'Costs and instalments'), s: lx('Budget, Zahlungen, Ratenplan', 'Budget, payments, instalment plan'),
+    steps: [lx('**Mehr → Kosten**.', '**More → Costs**.'), lx('Mit dem Plus eine Zahlung erfassen oder einen **Ratenplan** anlegen.', 'Add a payment with the plus or create an **instalment plan**.'), lx('Bezahlt? Haken setzen – Fortschritt und Restbudget rechnen sich selbst.', 'Paid? Tick it – progress and remaining budget update themselves.')],
+    act: [['costs', lx('Zu den Kosten', 'Go to costs')]] },
+  { e: '📷', t: lx('Fotos und Dokumente', 'Photos and documents'), s: lx('Belege, Pläne, Baufortschritt', 'Receipts, plans, progress photos'),
+    steps: [lx('In einer Aufgabe unter **Fotos & Dateien** hinzufügen – oder unter **Mehr → Dokumente**.', 'Add under **Photos & files** in a task – or under **More → Documents**.'), lx('Alles ist danach über die Suche auffindbar.', 'Everything can then be found via search.')],
+    act: [['docs', lx('Zu den Dokumenten', 'Go to documents')]] },
+  { e: '🔎', t: lx('Suchen', 'Search'), s: lx('Alles finden', 'Find everything'),
+    steps: [lx('Oben auf die **Lupe** tippen.', 'Tap the **magnifier** at the top.'), lx('Stichwort eingeben – oder eine Frage wie „Wann kommt der Gutachter?“ und Enter.', 'Enter a keyword – or a question like “When is the surveyor coming?” and press Enter.')],
+    act: [['search', lx('Suche öffnen', 'Open search')]] },
+  { e: '🔐', t: lx('App-Sperre', 'App lock'), s: lx('Face ID, Touch ID oder PIN', 'Face ID, Touch ID or PIN'),
+    steps: [lx('**Mehr → App & Darstellung → Sicherheit**.', '**More → App & appearance → Security**.'), lx('Einschalten – MindSpace sperrt sich nach 2 Minuten im Hintergrund.', 'Turn it on – MindSpace locks itself after 2 minutes in the background.')],
+    act: [['app', lx('Zur Sicherheit', 'Go to security')]] },
+  { e: '📱', t: lx('Als App installieren', 'Install as an app'), s: lx('Eigenes Symbol auf dem Home-Bildschirm', 'Own icon on your home screen'),
+    steps: [lx('iPhone: MindSpace in **Safari** öffnen → **Teilen** → **Zum Home-Bildschirm**.', 'iPhone: open MindSpace in **Safari** → **Share** → **Add to Home Screen**.'), lx('Android: in **Chrome** → Menü **⋮** → **App installieren**.', 'Android: in **Chrome** → menu **⋮** → **Install app**.'), lx('Ab jetzt immer über das neue Symbol öffnen – nur dann klappen Push-Nachrichten.', 'From now on always open it via the new icon – only then do push notifications work.')] },
+];
+function pageHelp() {
+  const items = GUIDE().map((g, i) => `<details class="g-item" ${S.guideOpen === i ? 'open' : ''} data-gi="${i}">
+      <summary><span class="g-ico">${g.e}</span><span class="grow"><strong>${esc(g.t)}</strong><small>${esc(g.s)}</small></span><span class="g-chev">${I.chevron}</span></summary>
+      <div class="g-body">
+        <ol>${g.steps.map((x) => `<li>${mdInline(esc(x))}</li>`).join('')}</ol>
+        ${g.legend ? legend() : ''}
+        ${g.tip ? `<p class="g-tip">💡 ${mdInline(esc(g.tip))}</p>` : ''}
+        ${g.act?.length ? `<div class="btn-row">${g.act.map(([k, l], j) => `<button class="btn small ${j ? 'secondary' : ''}" data-action="guide" data-k="${k}">${esc(l)}</button>`).join('')}</div>` : ''}
+      </div>
+    </details>`).join('');
+  return `<div class="guide-hero">
+      <div><strong>${lx('Neu hier?', 'New here?')}</strong><p>${lx('Die Tour zeigt dir in einer Minute die wichtigsten Stellen direkt in der App.', 'The tour shows you the most important places right inside the app in one minute.')}</p></div>
+      <button class="btn small" data-action="tour">🧭 ${lx('Tour starten', 'Start tour')}</button>
+    </div>
+    <div class="guide">${items}</div>
+    <p class="hint center">${lx('Noch Fragen? Frag einfach den Assistenten.', 'More questions? Just ask the assistant.')} <button class="link inline" data-action="assistant">✨ ${lx('Assistent', 'Assistant')}</button></p>`;
+}
+function guideDo(k) {
+  const go = (v, extra = {}) => { closeSheet(); Object.assign(S, { view: v, morePage: null }, extra); render(); window.scrollTo(0, 0); };
+  switch (k) {
+    case 'capture': captureSheet(); break;
+    case 'voice': captureSheet({ voice: true }); break;
+    case 'home': go('home'); break;
+    case 'plan': go('plan', { planMode: 'woche', planArea: null }); break;
+    case 'projects': go('plan', { planMode: 'projekte', planArea: null }); break;
+    case 'area-new': if (ownProjects() >= lim('ownProjects')) paywallSheet('projects'); else areaSheet(null); break;
+    case 'assistant': assistantSheet(); break;
+    case 'paste': go('inbox', { inboxTab: 'paste' }); break;
+    case 'notify': go('more', { morePage: 'notify' }); break;
+    case 'team': go('more', { morePage: 'team' }); break;
+    case 'app': go('more', { morePage: 'app' }); break;
+    case 'costs': go('costs', { prevView: 'more', costArea: 'all' }); break;
+    case 'docs': go('docs', { prevView: 'more', docsArea: 'all' }); break;
+    case 'search': go('search', { prevView: 'more' }); setTimeout(() => app.querySelector('[data-input="search"]')?.focus(), 60); break;
+    default: break;
+  }
+}
+// Offene Anleitungs-Abschnitte merken (damit ein Neuzeichnen sie nicht schließt)
+app.addEventListener('toggle', (e) => { const d = e.target; if (d.matches?.('.g-item')) { if (d.open) { S.guideOpen = +d.dataset.gi; app.querySelectorAll('.g-item[open]').forEach((x) => { if (x !== d) x.open = false; }); } else if (S.guideOpen === +d.dataset.gi) S.guideOpen = null; } }, true);
 
 // ================================================================== Start
 applyTheme();
@@ -3636,13 +4170,14 @@ store.init({
   },
   onUserDoc(d) { S.userDoc = d; render(); maybeAskCal(); },
   onProject(p) {
-    S.project = p; S.projectState = p ? 'ready' : 'none'; render(); maybeAskCal();
+    S.project = p; S.projectState = p ? 'ready' : 'none'; render(); maybeAskCal(); maybeTour();
     if (p && Object.values(p.access || {}).some(Array.isArray)) setTimeout(() => { if (S.tasks.length || S.files.length) runBackfill(); }, 4000);
   },
   onTasks(list) {
     S.tasks = list; render();
     setTimeout(maybeRestoreDraft, 400);
-    if (S.openNewOnReady) { S.openNewOnReady = false; setTimeout(() => taskSheet(null), 300); }
+    if (store.mode !== 'cloud') maybeTour();
+    if (S.openNewOnReady) { S.openNewOnReady = false; setTimeout(() => captureSheet(), 300); }
     if (S.openTaskOnReady) { const t = list.find((x) => x.id === S.openTaskOnReady); if (t) { S.openTaskOnReady = null; setTimeout(() => taskSheet(t), 300); } }
   },
   onInfos(list) { S.infos = list; render(); },
