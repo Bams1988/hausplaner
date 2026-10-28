@@ -296,7 +296,17 @@ class CloudStore {
     this.h.onAuth(this.me);
   }
   signIn(email, pw) { return this.A.signInWithEmailAndPassword(this.auth, email, pw); }
-  resetPassword(email) { return this.A.sendPasswordResetEmail(this.auth, email); }
+  // Link zum Zurücksetzen per E-Mail (Sprache der Mail wie die App; danach zurück zu MindSpace)
+  async resetPassword(email, lang = 'de') {
+    try { this.auth.languageCode = lang; } catch {}
+    const url = typeof location !== 'undefined' && /^https:/.test(location.href) ? location.origin + location.pathname : null;
+    try { return await this.A.sendPasswordResetEmail(this.auth, email, url ? { url } : undefined); }
+    catch (e) {
+      // Adresse der App nicht als Rückkehr-Ziel freigegeben → ohne Rücksprung-Link senden
+      if (url && /unauthorized-continue-uri|invalid-continue-uri|missing-continue-uri/.test(e?.code || '')) return this.A.sendPasswordResetEmail(this.auth, email);
+      throw e;
+    }
+  }
   async signOut() {
     const tok = localStorage.getItem('hausplaner-push-token');
     if (tok && this.me) {

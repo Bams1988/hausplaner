@@ -2,12 +2,12 @@ import { createStore, computeRemindAt } from './store.js';
 import { tr, LANG, LOC, setLang, startTranslator } from './i18n.js';
 import { parseEmails, isoDate, similarity, guessPhase, extractDate } from './parser.js';
 import {
-  extractFromText, draftEmail, assessTasks, testConnection, urgencyOf, aiKeyOf, searchWithAI, chatAI,
+  extractFromText, draftEmail, assessTasks, testConnection, urgencyOf, aiKeyOf, searchWithAI, chatAI, suggestContacts,
   STATUS, MODELS, DEFAULT_MODEL, DEFAULT_AREAS, HOUSE_PHASES,
 } from './ai.js';
 import { PLANS, PLAN_ORDER, planOf, fmtLimit, storageLabel } from './plans.js';
 import * as native from './native.js';
-const APP_VERSION = '16.1';
+const APP_VERSION = '16.2';
 const CFG = self.HAUS_CONFIG || {};
 
 // ================================================================== Zustand
@@ -941,7 +941,6 @@ function moreHub() {
   const ps = pushState();
   const full = fullAccess();
   const plan = billing() ? planOf(curPlan()) : null;
-  const cs = costStats('all');
   const row = (p, emoji, color, title, sub) => `<button class="setting" data-action="more-page" data-p="${p}"><span class="area-dot" style="--area:${color}">${emoji}</span><span class="grow">${title}<small>${sub}</small></span>${I.chevron}</button>`;
   const tile = (attrs, emoji, color, title, sub) => `<button class="hub-tile" ${attrs} style="--area:${color}"><span class="hub-ico">${emoji}</span><strong>${title}</strong><small>${sub}</small></button>`;
   const aiSub = billing() ? 'Im Abo enthalten' : S.ai ? 'Aktiv' : 'Noch nicht eingerichtet';
@@ -951,7 +950,7 @@ function moreHub() {
       : `<div class="note-card"><p><strong>Lokaler Modus.</strong> Alles bleibt auf diesem Gerät. Für Teilen, Push-Nachrichten und den E-Mail-Eingang richte die Cloud ein (Anleitung, Stufe 2).</p></div>`}
     <div class="hub-grid">
       ${tile('data-action="open-contacts"', '👥', '#2F9E77', 'Kontakte', S.contacts.length ? `${S.contacts.length} Ansprechpartner` : 'Noch keine')}
-      ${tile('data-action="open-costs"', '💶', '#4A8FE7', 'Kosten', S.costs.length ? `${esc(eur(cs.paid))} bezahlt` : 'Budget & Raten')}
+      ${tile('data-action="open-costs"', '💶', '#4A8FE7', 'Kosten', costAreas().length ? `${costAreas().length} ${costAreas().length === 1 ? 'Projekt' : 'Projekte'} mit Budget` : 'Budget & Raten')}
       ${tile('data-action="open-docs"', '📷', '#E9A23B', 'Dokumente', S.files.length ? `${S.files.length} ${S.files.length === 1 ? 'Datei' : 'Dateien'}` : 'Fotos & Belege')}
       ${tile('data-action="more-page" data-p="areas"', '🗂️', '#8E7CE0', 'Lebensbereiche', `${areas().length} Bereiche`)}
     </div>
@@ -1065,6 +1064,7 @@ function pageKonto() {
   const cloud = store.mode === 'cloud';
   return `${cloud ? `<div class="settings">
       <div class="setting"><span class="who big">${esc(initial(S.me?.uid))}</span><span class="grow">${esc(S.me?.name)}<small>${esc(S.me?.email)}</small></span></div>
+      <button class="setting" data-action="reset-pw" data-email="${esc(S.me?.email || '')}"><span class="area-dot" style="--area:#5B7F95">🔑</span><span class="grow">Passwort ändern<small>Du bekommst einen Link per E-Mail</small></span>${I.chevron}</button>
     </div>` : ''}
     <h2 class="section-title">Daten</h2>
     <div class="settings">
@@ -1108,7 +1108,7 @@ function viewAuth() {
       ${S.authError ? `<p class="error">${esc(S.authError)}</p>` : ''}
       <button class="btn block" type="submit">${reg ? 'Konto erstellen' : 'Anmelden'}</button>
     </form>
-    ${reg ? '' : '<button class="link center" data-action="reset-pw">Passwort vergessen?</button>'}
+    ${reg ? '' : '<button class="btn ghost block" data-action="reset-pw" style="margin-top:6px">Passwort vergessen?</button>'}
   </main>`;
 }
 function viewSetup() {
@@ -1209,7 +1209,7 @@ function taskSheet(task, preset = {}) {
         <p class="hint" data-lead-hint style="margin-top:-6px"></p>
         <div class="two">
           <label class="field" data-phase-wrap ${phaseOptions(tArea) ? '' : 'hidden'}><span>Abschnitt im Plan</span><select name="phase">${phaseOptions(tArea, phaseOf(t))}</select></label>
-          <label class="field"><span>Ansprechpartner</span><select name="contactId">${contactOptions(t.contactId)}</select></label>
+          <div class="field cp-field"><span>Ansprechpartner</span>${contactPicker(t.contactId)}</div>
         </div>
         ${memOpts}
         <label class="field"><span>Notizen</span><textarea name="notes" rows="4">${esc(t.notes || '')}</textarea></label>
@@ -1260,6 +1260,7 @@ function taskSheet(task, preset = {}) {
     else lh.textContent = f.due ? 'Vorlauf = wie viele Tage vorher du anfangen musst, z. B. weil die Bank Zeit braucht. MindSpace erinnert dich dann rechtzeitig.' : '';
   };
   form.addEventListener('input', upd); form.addEventListener('change', upd); upd();
+  wireContactPicker(sheet, () => ({ title: form.title.value, notes: form.notes?.value || '', areaId: form.areaId?.value }));
   // Ungespeicherte Eingaben schützen: Entwurf auf dem Gerät, bestehende Aufgaben automatisch speichern
   const draftKey = task ? `task:${task.id}` : 'task:new';
   const rawFields = () => Object.fromEntries(new FormData(form));
@@ -1302,6 +1303,7 @@ function taskSheet(task, preset = {}) {
     for (const [k, v] of Object.entries(d.fields || {})) { const el = form.elements[k]; if (el && typeof el.value === 'string' && !(el instanceof RadioNodeList)) el.value = v; }
     if (d.fields?.notes?.trim() || d.fields?.leadDays || d.fields?.time) form.querySelector('details.more-fields')?.setAttribute('open', '');
     if (d.cmt && cmtBox()) cmtBox().value = d.cmt;
+    sheet.querySelector('[data-cpick]')?._sync?.();
     upd();
     if (task) initial = ''; // wiederhergestellte Eingaben gelten als ungespeichert
     keepDraft();
@@ -2109,7 +2111,7 @@ function costRow(c) {
   if (c.paid) meta.push(`<span>Bezahlt${c.paidAt ? ` am ${esc(fmtDate(c.paidAt, { day: 'numeric', month: 'short' }))}` : ''}</span>`);
   else if (c.due) meta.push(`<span class="${late ? 'late' : ''}">${late ? 'Überfällig seit' : 'Fällig'} ${esc(dueLabel({ due: c.due }).text)}</span>`);
   else meta.push('<span>Noch ohne Termin</span>');
-  if (S.costArea === 'all' && areas().filter((x) => S.costs.some((k) => costArea(k) === x.id)).length > 1) meta.push(`<span class="area-tag" style="--area:${esc(a.color)}">${esc(a.emoji)} ${esc(a.name)}</span>`);
+  if (false && S.costArea === 'all') meta.push(`<span class="area-tag" style="--area:${esc(a.color)}">${esc(a.emoji)} ${esc(a.name)}</span>`);
   const nf = fileCount('cost', c.id);
   if (nf) meta.push(`<span>📎 ${nf}</span>`);
   return `<div class="row cost-row ${c.paid ? 'done' : ''}" style="--area:${esc(a.color)}">
@@ -2117,17 +2119,46 @@ function costRow(c) {
     <button class="row-main" data-action="cost-edit" data-id="${esc(c.id)}"><div class="row-title">${esc(c.title)}</div><div class="row-meta">${meta.join('')}</div></button>
     <span class="amt ${c.amount == null ? 'muted' : ''}">${c.amount == null ? 'Betrag?' : esc(eur(c.amount))}</span></div>`;
 }
-function homeCosts() {
-  if (!S.costs.length) return '';
-  const st = costStats('all');
+// Kosten je Projekt (wie bei Budget-Apps): jedes Projekt hat sein eigenes Budget – nichts wird über Projekte hinweg vermischt
+function costAreas() {
+  return areas().filter((a) => S.costs.some((c) => costArea(c) === a.id) || Number(a.budget) > 0)
+    .map((a) => ({ a, st: costStats(a.id) }))
+    .sort((x, y) => (y.st.late.length - x.st.late.length) || ((x.st.upcoming[0]?.due || '9999').localeCompare(y.st.upcoming[0]?.due || '9999')) || (y.st.planned - x.st.planned));
+}
+function budgetState(st) {
+  if (!st.budget) return null;
+  const used = st.planned / st.budget;
+  if (st.planned > st.budget) return { k: 'over', label: 'Über Budget', pct: used };
+  if (used >= 0.9) return { k: 'tight', label: `${Math.round(used * 100)} % verplant`, pct: used };
+  return { k: 'ok', label: 'Im Budget', pct: used };
+}
+function areaCostCard(a, st, { home = false } = {}) {
+  const bs = budgetState(st);
   const nx = st.upcoming[0];
-  return `<section class="card"><button class="card-link" data-action="open-costs">
-    <div class="card-head"><h2>Kosten</h2><span class="link">Alle ›</span></div>
-    <p class="cs-mini"><b>${esc(eur(st.paid))}</b> bezahlt von ${esc(eur(st.planned))}${st.budget ? ` · Budget ${esc(eur(st.budget))}` : ''}</p>
+  const right = st.budget
+    ? (st.rest >= 0 ? `<span class="ac-free"><b>${esc(eur(st.rest))}</b><small>noch frei</small></span>` : `<span class="ac-free over"><b>${esc(eur(-st.rest))}</b><small>über Budget</small></span>`)
+    : `<span class="ac-free none"><b>${esc(eur(st.open))}</b><small>noch offen</small></span>`;
+  const meta = st.budget
+    ? `${esc(eur(st.paid))} bezahlt · ${esc(eur(st.open))} offen · Budget ${esc(eur(st.budget))}`
+    : `${esc(eur(st.paid))} von ${esc(eur(st.planned))} bezahlt · <span class="ac-set">Budget festlegen</span>`;
+  const next = st.late.length ? `<p class="ac-next late">⚠️ ${st.late.length} ${st.late.length === 1 ? 'Zahlung' : 'Zahlungen'} überfällig</p>`
+    : nx ? `<p class="ac-next">Nächste: <strong>${esc(nx.title)}</strong> · ${esc(nx.amount == null ? 'Betrag?' : eur(nx.amount))} · ${esc(dueLabel({ due: nx.due }).text)}</p>` : '';
+  return `<button class="ac-card" data-action="open-costs" data-area="${esc(a.id)}" style="--area:${esc(a.color)}">
+    <div class="ac-top"><span class="ac-name"><span class="ac-ico">${esc(a.emoji)}</span><span><strong>${esc(a.name)}</strong>${bs ? `<em class="ac-pill ${bs.k}">${esc(bs.label)}</em>` : ''}</span></span>${right}</div>
     ${costBar(st)}
-    ${st.late.length ? `<p class="cs-next late">${st.late.length} ${st.late.length === 1 ? 'Zahlung ist' : 'Zahlungen sind'} überfällig</p>`
-      : nx ? `<p class="cs-next">Nächste Zahlung: <strong>${esc(nx.title)}</strong> · ${esc(eur(nx.amount))} · ${esc(dueLabel({ due: nx.due }).text)}</p>` : ''}
-  </button></section>`;
+    <p class="ac-meta">${meta}</p>
+    ${next}
+  </button>`;
+}
+function homeCosts() {
+  const list = costAreas();
+  if (!list.length) return '';
+  const shown = list.slice(0, 3);
+  return `<section class="card ac-section">
+    <div class="card-head"><h2>Budgets & Kosten</h2><button class="link" data-action="open-costs" data-area="all">Alle ›</button></div>
+    <div class="ac-list">${shown.map(({ a, st }) => areaCostCard(a, st, { home: true })).join('')}</div>
+    ${list.length > shown.length ? `<button class="link" data-action="open-costs" data-area="all">+ ${list.length - shown.length} weitere Projekte</button>` : ''}
+  </section>`;
 }
 function viewCosts() {
   const ar = S.costArea && (S.costArea === 'all' || areaById(S.costArea)) ? S.costArea : 'all';
@@ -2149,25 +2180,37 @@ function viewCosts() {
         ${st.budget ? '' : `<button class="btn block ghost" data-action="cost-budget">Budget festlegen</button>`}
       </div></main>`;
   }
-  const summary = `<section class="card cost-card">
-    <div class="cs-top"><div><span class="cs-label">Bereits bezahlt</span><b class="cs-big">${esc(eur(st.paid))}</b>
+  const perArea = ar === 'all' ? costAreas() : [];
+  const summary = ar === 'all' && perArea.length ? `<div class="ac-list page">${perArea.map(({ a, st: s2 }) => areaCostCard(a, s2)).join('')}</div>
+    <p class="hint">Jedes Projekt hat sein eigenes Budget. Tippe auf ein Projekt für Details, Ratenplan und Budget.</p>` : `<section class="card cost-card">
+    ${st.budget ? `<div class="cs-top"><div><span class="cs-label">${st.rest >= 0 ? 'Noch frei im Budget' : 'Über Budget'}</span><b class="cs-big ${st.rest < 0 ? 'late' : ''}">${esc(eur(Math.abs(st.rest)))}</b>
+      <span class="cs-sub">${esc(eur(st.planned))} von ${esc(eur(st.budget))} verplant · ${esc(eur(st.paid))} bezahlt${st.unknown ? ` · ${st.unknown} ohne Betrag` : ''}</span></div>
+      ${ring(Math.min(1, st.planned / st.budget), 64, 8, st.rest < 0 ? 'var(--coral)' : 'var(--brand)')}</div>`
+    : `<div class="cs-top"><div><span class="cs-label">Bereits bezahlt</span><b class="cs-big">${esc(eur(st.paid))}</b>
       <span class="cs-sub">von ${esc(eur(st.planned))} geplant${st.unknown ? ` · ${st.unknown} ohne Betrag` : ''}</span></div>
-      ${ring(st.planned ? st.paid / st.planned : 0, 64, 8)}</div>
+      ${ring(st.planned ? st.paid / st.planned : 0, 64, 8)}</div>`}
     ${costBar(st)}
     <div class="cs-legend"><span><i class="c-paid"></i>Bezahlt</span><span><i class="c-open"></i>Noch offen <b>${esc(eur(st.open))}</b></span>
-      ${st.budget ? (st.rest >= 0 ? `<span><i class="c-rest"></i>Puffer <b>${esc(eur(st.rest))}</b></span>` : `<span class="late"><i class="c-over"></i><b>${esc(eur(-st.rest))} über Budget</b></span>`) : ''}</div>
-    <button class="cs-budget" data-action="cost-budget">${st.budget ? `Budget${area ? '' : ' gesamt'}: <strong>${esc(eur(st.budget))}</strong> <span class="link inline">ändern</span>` : `${I.plus} Budget festlegen – dann siehst du, wie viel Puffer bleibt`}</button>
+      ${st.budget ? (st.rest >= 0 ? `<span><i class="c-rest"></i>Noch frei <b>${esc(eur(st.rest))}</b></span>` : `<span class="late"><i class="c-over"></i><b>${esc(eur(-st.rest))} über Budget</b></span>`) : ''}</div>
+    <button class="cs-budget" data-action="cost-budget">${st.budget ? `Budget für ${esc(area?.name || 'dieses Projekt')}: <strong>${esc(eur(st.budget))}</strong> <span class="link inline">ändern</span>` : `${I.plus} Budget für ${esc(area?.name || 'dieses Projekt')} festlegen – dann siehst du, wie viel noch frei ist`}</button>
   </section>`;
   const today = todayISO();
   const tl = st.upcoming.slice(0, 5);
   const timeline = tl.length ? `<section class="card"><div class="card-head"><h2>Nächste Zahlungen</h2></div>
     <ol class="pay-tl">${tl.map((c) => { const d = parseISO(c.due); return `<li><button data-action="cost-edit" data-id="${esc(c.id)}" class="${c.due < today ? 'is-late' : ''}">
       <span class="pt-date"><b>${d.getDate()}</b>${esc(d.toLocaleDateString(LOC(), { month: 'short' }).replace('.', ''))}</span>
-      <span class="pt-t"><strong>${esc(c.title)}</strong><small>${c.due < today ? 'überfällig' : esc(dueLabel({ due: c.due }).text)} · ${esc(kindName(c.kind))}</small></span>
+      <span class="pt-t"><strong>${esc(c.title)}</strong><small>${c.due < today ? 'überfällig' : esc(dueLabel({ due: c.due }).text)} · ${ar === 'all' ? `${esc(areaById(costArea(c))?.emoji || '')} ${esc(areaById(costArea(c))?.name || '')}` : esc(kindName(c.kind))}</small></span>
       <span class="pt-a">${esc(c.amount == null ? 'Betrag?' : eur(c.amount))}</span></button></li>`; }).join('')}</ol></section>` : '';
   const sortRate = (a, b) => (a.order ?? 999) - (b.order ?? 999) || (a.due || '9999').localeCompare(b.due || '9999') || (a.createdAt || 0) - (b.createdAt || 0);
   const sortOther = (a, b) => (a.paid - b.paid) || (a.due || '9999').localeCompare(b.due || '9999') || (a.createdAt || 0) - (b.createdAt || 0);
-  const groups = COST_KINDS.map(([k, label]) => {
+  const byArea = ar === 'all' && perArea.length > 1;
+  const groups = byArea ? perArea.map(({ a }) => {
+    const items = st.list.filter((c) => costArea(c) === a.id).sort(sortOther);
+    if (!items.length) return '';
+    const paid = items.filter((c) => c.paid).length;
+    return `<div class="group-head"><h2>${esc(a.emoji)} ${esc(a.name)}</h2><span>${paid} von ${items.length} bezahlt</span></div>
+      <div class="list">${items.map(costRow).join('')}</div>`;
+  }).join('') : COST_KINDS.map(([k, label]) => {
     const items = st.list.filter((c) => (COST_KINDS.some((x) => x[0] === c.kind) ? c.kind : 'sonst') === k).sort(k === 'rate' ? sortRate : sortOther);
     if (!items.length) return '';
     const sum = items.reduce((s, c) => s + (Number(c.amount) || 0), 0);
@@ -2211,7 +2254,7 @@ function costSheet(c, preset = {}) {
       </div>
       <label class="opt toggle-paid"><input type="checkbox" name="paid" ${v.paid ? 'checked' : ''}> Bereits bezahlt</label>
       <label class="field" data-paidat ${v.paid ? '' : 'hidden'} style="margin-top:12px"><span>Bezahlt am</span><input type="date" name="paidAt" value="${esc(v.paidAt || todayISO())}"></label>
-      <label class="field" style="margin-top:14px"><span>Empfänger / Ansprechpartner</span><select name="contactId">${contactOptions(v.contactId)}</select></label>
+      <div class="field" style="margin-top:14px"><span>Empfänger / Ansprechpartner</span>${contactPicker(v.contactId)}</div>
       <label class="field"><span>Notiz</span><textarea name="note" rows="2" placeholder="z. B. Rechnungsnummer, Verwendungszweck">${esc(v.note || '')}</textarea></label>
       <div class="field"><span>Belege – Rechnung, Foto, PDF</span><div data-att-wrap>${attachBox({ costId: c?.id }, pending)}</div></div>
       <p class="hint">Für offene Zahlungen mit Datum erinnert MindSpace 3 Tage vorher und am Fälligkeitstag per Push.</p>
@@ -2223,6 +2266,7 @@ function costSheet(c, preset = {}) {
   const form = sheet.querySelector('form');
   form.paid.addEventListener('change', () => { sheet.querySelector('[data-paidat]').hidden = !form.paid.checked; });
   wireAttach(sheet, () => ({ costId: c?.id, areaId: form.areaId.value }), pending);
+  wireContactPicker(sheet, () => ({ title: form.title.value, notes: form.note?.value || '', areaId: form.areaId?.value }));
   if (isNew) setTimeout(() => form.title.focus(), 280);
   form.onsubmit = async (e) => {
     e.preventDefault();
@@ -3121,11 +3165,7 @@ async function onAction(e) {
     case 'search-open': openSearchHit(el.dataset.k, el.dataset.id); break;
     case 'install': if (installPrompt) { installPrompt.prompt(); const r = await installPrompt.userChoice.catch(() => null); if (r?.outcome === 'accepted') installPrompt = null; render(); } break;
     case 'auth-tab': S.authTab = el.dataset.tab; S.authError = ''; render(); break;
-    case 'reset-pw': {
-      const email = app.querySelector('input[name="email"]')?.value || prompt('Deine E-Mail-Adresse');
-      if (email) store.resetPassword(email).then(() => toast('Link zum Zurücksetzen wurde gesendet.')).catch((err) => toast(fail(err)));
-      break;
-    }
+    case 'reset-pw': resetPwSheet(el.dataset.email || app.querySelector('input[name="email"]')?.value || ''); break;
   }
 }
 app.addEventListener('click', onAction);
@@ -3722,6 +3762,135 @@ async function keepAwake(on) {
 }
 // iOS gibt die Sperre beim Wechsel in den Hintergrund frei → beim Zurückkommen neu anfordern
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && wakeWanted && sheetRoot.innerHTML.trim()) keepAwake(true); });
+
+// ---------- Passwort vergessen / ändern: Link per E-Mail
+function resetPwSheet(prefill = '') {
+  const own = !!S.me?.email && prefill === S.me.email;
+  const sheet = openSheet(`
+    <div class="sheet-head"><h2>${own ? 'Passwort ändern' : 'Passwort vergessen?'}</h2><button class="btn ghost" data-dismiss>Abbrechen</button></div>
+    <div data-step="1">
+      <p class="hint" style="margin-top:0">Gib die E-Mail-Adresse deines MindSpace-Kontos ein. Du bekommst einen Link, mit dem du ein neues Passwort festlegst.</p>
+      <form autocomplete="on">
+        <label class="field"><span>E-Mail</span><input name="email" type="email" autocomplete="email" required value="${esc(prefill)}" ${own ? 'readonly' : ''}></label>
+        <p class="error" data-err hidden></p>
+        <button class="btn block" type="submit">Link senden</button>
+      </form>
+    </div>
+    <div data-step="2" hidden class="pw-sent">
+      <div class="pw-ico">📬</div>
+      <h3>Schau in dein Postfach</h3>
+      <p>Wir haben einen Link an <strong data-to></strong> geschickt – falls es dazu ein Konto gibt.</p>
+      <ol class="pw-steps">
+        <li>E-Mail „Passwort zurücksetzen“ öffnen (kommt meist innerhalb einer Minute).</li>
+        <li>Auf den Link tippen und ein neues Passwort festlegen (mindestens 6 Zeichen).</li>
+        <li>Zurück in MindSpace mit dem neuen Passwort anmelden.</li>
+      </ol>
+      <p class="hint">Nichts angekommen? Schau im <strong>Spam-Ordner</strong> nach oder sende den Link nach einer Minute erneut.</p>
+      <div class="btn-col"><button class="btn block" data-dismiss>Fertig</button><button class="btn ghost block" data-again>Erneut senden</button></div>
+    </div>`);
+  const form = sheet.querySelector('form'), err = sheet.querySelector('[data-err]');
+  const send = async (email) => {
+    const btn = form.querySelector('[type="submit"]');
+    btn.disabled = true; btn.innerHTML = '<span class="spin"></span> Wird gesendet …'; err.hidden = true;
+    try {
+      await store.resetPassword(email, LANG);
+      sheet.querySelector('[data-to]').textContent = email;
+      sheet.querySelector('[data-step="1"]').hidden = true; sheet.querySelector('[data-step="2"]').hidden = false;
+    } catch (x) {
+      // Aus Datenschutzgründen nicht verraten, ob es ein Konto gibt
+      if (x?.code === 'auth/user-not-found') { sheet.querySelector('[data-to]').textContent = email; sheet.querySelector('[data-step="1"]').hidden = true; sheet.querySelector('[data-step="2"]').hidden = false; }
+      else { err.textContent = x?.code === 'auth/too-many-requests' ? 'Zu viele Versuche. Warte ein paar Minuten und versuch es dann noch einmal.' : fail(x); err.hidden = false; }
+    }
+    btn.disabled = false; btn.textContent = 'Link senden';
+  };
+  form.onsubmit = (e) => { e.preventDefault(); const email = form.email.value.trim(); if (email) send(email); };
+  sheet.querySelector('[data-again]').addEventListener('click', () => { sheet.querySelector('[data-step="2"]').hidden = true; sheet.querySelector('[data-step="1"]').hidden = false; send(form.email.value.trim()); });
+  sheet.querySelectorAll('[data-dismiss]').forEach((b) => (b.onclick = closeSheet));
+  if (!prefill) setTimeout(() => form.email.focus(), 60);
+}
+
+// ---------- Ansprechpartner suchen statt Liste; KI sortiert passende nach oben
+function contactPicker(selectedId) {
+  const c = selectedId ? contactById(selectedId) : null;
+  return `<div class="cpick" data-cpick>
+    <input type="hidden" name="contactId" value="${esc(c?.id || '')}">
+    <div class="cp-sel" data-cp-sel ${c ? '' : 'hidden'}>${c ? cpChip(c) : ''}</div>
+    <div class="cp-box" data-cp-box ${c ? 'hidden' : ''}>
+      <label class="cp-search">${I.search}<input type="search" data-cq placeholder="Ansprechpartner suchen …" autocomplete="off" enterkeyhint="search" aria-label="Ansprechpartner suchen"></label>
+      <div class="cp-sugg" data-cp-sugg></div>
+      <div class="cp-res" data-cp-res></div>
+    </div>
+  </div>`;
+}
+const cpChip = (c) => `<span class="cp-av">${esc((c.name || '?').trim().charAt(0).toUpperCase())}</span><span class="grow"><strong>${esc(c.name)}</strong>${c.company || c.role ? `<small>${esc([c.company, c.role].filter(Boolean).join(' · '))}</small>` : ''}</span><button type="button" class="cp-x" data-cp-clear aria-label="Ansprechpartner entfernen">×</button>`;
+const CP_STOP = new Set('aber alle auch eine einen einer eines oder und unter wegen für fuer mit vom von zum zur der die das den dem des ist sind wird noch nach bitte termin anrufen klären klaeren prüfen pruefen machen schicken senden fragen holen erledigen neue neuer neues gmbh herr frau'.split(' '));
+const cpWords = (s) => [...new Set(fold(s).split(/[^a-z0-9]+/).filter((w) => w.length >= 4 && !CP_STOP.has(w)))];
+// Schnelle Einschätzung ohne KI: gemeinsame Wörter, Namen in der Aufgabe, frühere Aufgaben im selben Bereich
+function contactScore(c, ctx) {
+  const hay = fold([c.name, c.company, c.role, c.email, c.notes].filter(Boolean).join(' '));
+  const ws = cpWords(`${ctx.title} ${ctx.notes || ''}`);
+  let sc = 0;
+  for (const w of ws) { const stem = w.slice(0, Math.max(4, w.length - 2)); if (hay.includes(stem)) sc += 1; }
+  const last = fold(String(c.name || '').split(/\s+/).pop());
+  if (last.length >= 3 && fold(ctx.title).includes(last)) sc += 3;
+  const same = S.tasks.filter((t) => t.contactId === c.id && ctx.areaId && areaOf(t).id === ctx.areaId).length;
+  return sc + Math.min(1, same * 0.25);
+}
+function wireContactPicker(sheet, ctxOf) {
+  const root = sheet.querySelector('[data-cpick]'); if (!root) return;
+  const hid = root.querySelector('input[name="contactId"]'), sel = root.querySelector('[data-cp-sel]'), box = root.querySelector('[data-cp-box]');
+  const q = root.querySelector('[data-cq]'), sugg = root.querySelector('[data-cp-sugg]'), res = root.querySelector('[data-cp-res]');
+  let ai = null, aiBusy = false, aiKey = '';
+  const ctx = () => { const x = ctxOf() || {}; return { title: x.title || '', notes: x.notes || '', areaId: x.areaId || null }; };
+  const pick = (c) => {
+    hid.value = c ? c.id : '';
+    sel.innerHTML = c ? cpChip(c) : ''; sel.hidden = !c; box.hidden = !!c;
+    hid.dispatchEvent(new Event('change', { bubbles: true }));
+    if (!c) { q.value = ''; draw(); }
+  };
+  const aiRank = (id) => { const i = ai ? ai.findIndex((h) => h.id === id) : -1; return i < 0 ? 99 : i; };
+  const row = (c, why = '') => `<button type="button" class="cp-row" data-cp-id="${esc(c.id)}"><span class="cp-av">${esc((c.name || '?').trim().charAt(0).toUpperCase())}</span><span class="grow"><strong>${esc(c.name)}</strong><small>${esc([c.company, c.role].filter(Boolean).join(' · ') || c.email || '')}</small>${why ? `<em>${I.spark} ${esc(why)}</em>` : ''}</span></button>`;
+  function draw() {
+    const qq = fold(q.value.trim());
+    const cx = ctx();
+    if (!S.contacts.length) { sugg.innerHTML = '<p class="hint" style="margin:6px 2px 0">Noch keine Kontakte. Sie entstehen aus E-Mails oder unter Mehr → Kontakte.</p>'; res.innerHTML = ''; return; }
+    if (qq) {
+      const hits = S.contacts.filter((c) => fold([c.name, c.company, c.role, c.email].filter(Boolean).join(' ')).includes(qq))
+        .sort((a, b) => aiRank(a.id) - aiRank(b.id) || contactScore(b, cx) - contactScore(a, cx) || String(a.name).localeCompare(String(b.name), 'de'));
+      sugg.innerHTML = '';
+      res.innerHTML = hits.length ? hits.slice(0, 6).map((c) => row(c, ai?.find((h) => h.id === c.id)?.why || '')).join('') + (hits.length > 6 ? `<p class="hint cp-more">${hits.length - 6} weitere – genauer suchen</p>` : '') : '<p class="hint cp-more">Kein Kontakt gefunden.</p>';
+      return;
+    }
+    res.innerHTML = '';
+    let list;
+    if (ai?.length) list = ai.map((h) => ({ c: contactById(h.id), why: h.why })).filter((x) => x.c);
+    else list = S.contacts.map((c) => ({ c, s: contactScore(c, cx) })).filter((x) => x.s >= 1).sort((a, b) => b.s - a.s).slice(0, 3).map((x) => ({ c: x.c, why: '' }));
+    const head = aiBusy ? `<p class="cp-h"><span class="spin"></span> KI sucht passende Kontakte …</p>` : list.length ? `<p class="cp-h">${ai?.length ? `${I.spark} Vorschlag der KI` : 'Passt vielleicht'}</p>` : ai ? '<p class="cp-h muted">Die KI hat keinen passenden Kontakt gefunden – einfach suchen.</p>' : '';
+    sugg.innerHTML = head + list.map((x) => row(x.c, x.why)).join('');
+  }
+  async function askAi() {
+    const cx = ctx();
+    if (!S.ai || aiBusy || S.contacts.length < 2 || cx.title.trim().length < 3) return;
+    const key = `${cx.title}|${cx.notes.slice(0, 200)}|${cx.areaId}`;
+    S.cpCache = S.cpCache || new Map();
+    if (S.cpCache.has(key)) { ai = S.cpCache.get(key); aiKey = key; draw(); return; }
+    if (aiKey === key) return;
+    aiKey = key; aiBusy = true; draw();
+    try { ai = await suggestContacts(aiCfg(), { title: cx.title, notes: cx.notes, area: areaById(cx.areaId)?.name || '', contacts: S.contacts, lang: LANG }); S.cpCache.set(key, ai); }
+    catch (e) { ai = null; if (e?.code !== 'quota') toast(fail(e)); }
+    aiBusy = false;
+    if (root.isConnected) draw();
+  }
+  root.addEventListener('click', (e) => {
+    const r = e.target.closest('[data-cp-id]'); if (r) { pick(contactById(r.dataset.cpId)); return; }
+    if (e.target.closest('[data-cp-clear]')) { pick(null); setTimeout(() => q.focus(), 30); }
+  });
+  root._sync = () => { const c = hid.value ? contactById(hid.value) : null; sel.innerHTML = c ? cpChip(c) : ''; sel.hidden = !c; box.hidden = !!c; draw(); };
+  q.addEventListener('input', draw);
+  q.addEventListener('focus', () => { draw(); askAi(); });
+  q.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); root.querySelector('.cp-row')?.click(); } });
+  draw();
+}
 
 // ---------- Neue Aufgabe: schreiben oder diktieren
 const CAP_KEY = 'ms-cap-draft';

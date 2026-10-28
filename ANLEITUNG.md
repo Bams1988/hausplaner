@@ -14,9 +14,9 @@ Die Einrichtung hat fünf Stufen. Schon nach Stufe 1 kannst du die App benutzen.
 
 > **Du hattest schon den Hausplaner eingerichtet?** Dann lies zuerst den Abschnitt **„Umstieg vom Hausplaner“** ganz unten. Stufe 1–4 musst du nicht wiederholen.
 
-> **Update auf Version 16 (aufgeräumt: Plus mit Diktat, Assistent, neues „Mehr“, Tour)**
-> 1. **GitHub → Add file → Upload files:** `app.js`, `ai.js`, `plans.js`, `i18n.js`, `styles.css`, `sw.js`, `testen.html`, `TESTVERSION.md` und `ANLEITUNG.md`. `config.js` nicht anfassen.
-> 2. Auf jedem Gerät **Mehr → App & Darstellung → Neueste Version laden** (Version 16.1). Beim ersten Öffnen bietet MindSpace die Tour an.
+> **Update auf Version 16.2 (aufgeräumt: Plus mit Diktat, Assistent, neues „Mehr“, Tour)**
+> 1. **GitHub → Add file → Upload files:** `app.js`, `ai.js`, `plans.js`, `store.js`, `i18n.js`, `styles.css`, `sw.js`, `testen.html`, `TESTVERSION.md`, `ANLEITUNG.md`, `firebase.json` und `functions/package.json`. `config.js` nicht anfassen.
+> 2. Auf jedem Gerät **Mehr → App & Darstellung → Neueste Version laden** (Version 16.2). Beim ersten Öffnen bietet MindSpace die Tour an.
 > 3. Mit Server-Diensten (optional, für bessere Assistenten-Antworten): in der Cloud Shell `cd ~/hausplaner && git pull && firebase deploy --only functions`.
 
 > **Update auf Version 15 (Schutz vor verlorenen Eingaben + Testphase)**
@@ -282,6 +282,8 @@ Alternativ in MindSpace unter **Mehr → App & Darstellung → Als Programm inst
 
 **Tour und Anleitung:** **Mehr → Hilfe → Tour durch die App** zeigt die wichtigsten Stellen direkt in der App. **Mehr → Hilfe → Anleitung** erklärt jede Funktion – mit Knöpfen, die dich direkt hinführen.
 
+**Ansprechpartner zuordnen:** In der Aufgabe unter **Weitere Angaben → Ansprechpartner** (und bei Kosten) suchst du per Name oder Firma statt in einer langen Liste. Tippst du ins Suchfeld, schlägt die KI passende Kontakte vor, z. B. das Überlandwerk für „Hausanschluss Strom“, und sortiert sie nach oben. Das kostet eine KI-Aktion; dieselbe Aufgabe wird nicht doppelt gefragt.
+
 **Bündeln statt doppelt:** Passt etwas Neues zu einer offenen Aufgabe (gleicher Vorgang), legt MindSpace keine zweite an. Die neue Info landet als Eintrag im **Verlauf** der vorhandenen Aufgabe, eine frühere Frist wird übernommen. Das gilt für das Plus (schreiben oder diktieren), eingefügte E-Mails und den E-Mail-Eingang. Beim Einfügen kannst du das Bündeln je Aufgabe abwählen; beim Plus hilft „Doch neu“.
 
 **Anhänge aus E-Mails:** Der Postbote liest PDFs und Bilder im Anhang mit (z. B. Unterlagenlisten, Rechnungen, Bescheide). Wichtige Angaben fließen in Aufgaben und Zahlungen ein, die Anhänge werden an der passenden Aufgabe bzw. Zahlung abgelegt und gehören damit zum Projekt. Jede Datei bekommt eine kurze Beschreibung – so findet die Suche auch Inhalte.
@@ -302,6 +304,10 @@ Alternativ in MindSpace unter **Mehr → App & Darstellung → Als Programm inst
 **Plan:** **7 Tage** (jeder Tag ein Abschnitt), **Monat** (Kalender mit Punkten) und **Projekte** (Fortschritt Schritt für Schritt, dazu Kosten und Fotos des Projekts).
 
 **Wiederkehrende Aufgaben:** In der Aufgabe unter **Wiederholen** (täglich, werktags, wöchentlich, alle 2 Wochen, monatlich, vierteljährlich, jährlich) – oder direkt beim Plus: „jeden Montag“, „monatlich“, „jährlich“. Beim Abhaken legt MindSpace den nächsten Termin automatisch an.
+
+**Budgets je Projekt:** Jedes Projekt hat sein eigenes Budget (z. B. Hausbau 380.000 €). Die Übersicht zeigt unter **Budgets & Kosten** je Projekt, wie viel **noch frei** ist, was bezahlt und was noch offen ist, plus die nächste Zahlung. „Im Budget“, „90 % verplant“ oder „Über Budget“ siehst du auf einen Blick. Projekte werden nie zusammengerechnet.
+
+**Passwort vergessen:** Auf der Anmeldeseite **Passwort vergessen?** antippen, E-Mail eingeben – du bekommst einen Link zum Zurücksetzen. Angemeldet geht das unter **Mehr → Konto & Daten → Passwort ändern**.
 
 **Kosten & Zahlungen:** **Mehr → Kosten** (oder im Projekt Hausbau). Mit **Ratenplan aus Vorlage** legst du die Abschläge nach Baufortschritt an – Gesamtpreis eintragen, Prozente aus eurem allkauf-Vertrag übernehmen. Dazu kommen Rechnungen, Sonderwünsche und Nebenkosten. Mit **Budget festlegen** siehst du, wie viel Puffer bleibt. Haken = bezahlt. Für offene Zahlungen mit Datum kommt 3 Tage vorher und am Fälligkeitstag eine Push-Nachricht. Rechnungen in E-Mails erkennt die KI und legt sie hier an.
 

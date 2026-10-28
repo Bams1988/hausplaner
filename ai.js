@@ -387,6 +387,29 @@ Antworte nur mit IDs aus dem Verzeichnis. Dateien (f:) sind besonders wichtig, w
   return { answer: r.antwort || '', hits: (Array.isArray(r.treffer) ? r.treffer : []).filter((h) => h && h.id).map((h) => ({ id: String(h.id), why: h.grund || '' })) };
 }
 
+// Passende Ansprechpartner zu einer Aufgabe oder Zahlung vorschlagen (beste zuerst)
+const CONTACT_TOOL = {
+  name: 'kontaktvorschlag',
+  description: 'Gibt die Kontakte zurück, die zur Aufgabe passen – bester zuerst.',
+  input_schema: {
+    type: 'object', required: ['treffer'],
+    properties: {
+      treffer: {
+        type: 'array', description: 'Höchstens 4 passende Kontakte, bester zuerst. Leer, wenn keiner wirklich passt.',
+        items: { type: 'object', required: ['id'], properties: { id: { type: 'string', description: 'ID aus der Kontaktliste.' }, grund: { type: ['string', 'null'], description: 'Warum er passt, max. 60 Zeichen, z. B. „Netzbetreiber – zuständig für Hausanschluss“.' } } },
+      },
+    },
+  },
+};
+export async function suggestContacts(cfg, { title, notes = '', area = '', contacts = [], lang = 'de' } = {}) {
+  const list = contacts.slice(0, 300).map((c) => [c.id, c.name, c.company, c.role, c.email ? '@' + String(c.email).split('@')[1] : '', c.notes ? String(c.notes).replace(/\s+/g, ' ').slice(0, 60) : ''].filter(Boolean).join(' | ')).join('\n');
+  const system = `Du ordnest in der Planer-App MindSpace einer Aufgabe die passenden Ansprechpartner aus dem Adressbuch zu. Achte auf Thema, Firma, Rolle, Branche und Namen in der Aufgabe (z. B. „Hausanschluss Strom“ → Netzbetreiber/Überlandwerk, „Treppe“ → Treppenbau, „Keller“ → Kellerbaufirma, „Kita“ → Kita). Gib nur Kontakte zurück, die fachlich wirklich passen – lieber keinen als einen falschen. Antworte nur mit IDs aus der Liste.${langLine(lang)}`;
+  const user = `Aufgabe: ${title}${area ? `\nBereich: ${area}` : ''}${notes ? `\nNotizen: ${String(notes).slice(0, 600)}` : ''}\n\nAdressbuch (id | Name | Firma | Rolle | E-Mail-Domain | Notiz):\n${list}`;
+  const r = await call(cfg, { system, user, tool: CONTACT_TOOL, maxTokens: 500, timeoutMs: 45000, kind: 'search' });
+  const ids = new Set(contacts.map((c) => c.id));
+  return (Array.isArray(r.treffer) ? r.treffer : []).filter((h) => h && ids.has(String(h.id))).slice(0, 4).map((h) => ({ id: String(h.id), why: h.grund || '' }));
+}
+
 // ------------------------------------------------------------------ Regel-Variante ohne KI
 export function startByOf(t) {
   if (!t.due || t.leadDays == null || t.leadDays === '') return null;
