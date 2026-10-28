@@ -17,4 +17,11 @@ self.HAUS_CONFIG = {
   },
   // Firebase-Konsole → Projekteinstellungen → Cloud Messaging → Web-Push-Zertifikate
   vapidKey: 'BOdrrZ7vR0EROPIWFCfyDC9G3jBjZWBB9x-I7913kKQcEvxsuYcUgNmjY0SZzeGF6IhEiH1OkckWKnHlC_tCRtU',
+    backend: {
+    enabled: true,
+    region: 'europe-west3',
+    mailDomain: '',
+    beta: true,
+    revenuecat: { ios: '', android: '' },
+  },
 };
