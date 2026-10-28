@@ -7,7 +7,7 @@ import {
 } from './ai.js';
 import { PLANS, PLAN_ORDER, planOf, fmtLimit, storageLabel } from './plans.js';
 import * as native from './native.js';
-const APP_VERSION = '15';
+const APP_VERSION = '15.1';
 const CFG = self.HAUS_CONFIG || {};
 
 // ================================================================== Zustand
@@ -731,7 +731,7 @@ function viewInbox() {
 function inboxAddressCard() {
   const p = S.project || {};
   const addr = inboxAddr();
-  if (billing() && !addr) return fullAccess() && CFG.backend?.mailDomain ? `<div class="note-card"><p><strong>E-Mails weiterleiten:</strong> MindSpace gibt euch eine eigene Adresse. Alles, was ihr dorthin weiterleitet, liest die KI – samt Anhängen – und legt Aufgaben, Zahlungen und Kontakte an.</p><button class="btn small" data-action="inbox-create" style="margin-top:10px">Adresse anlegen</button></div>` : '';
+  if (billing() && !addr) return fullAccess() && mailDomainReady() ?`<div class="note-card"><p><strong>E-Mails weiterleiten:</strong> MindSpace gibt euch eine eigene Adresse. Alles, was ihr dorthin weiterleitet, liest die KI – samt Anhängen – und legt Aufgaben, Zahlungen und Kontakte an.</p><button class="btn small" data-action="inbox-create" style="margin-top:10px">Adresse anlegen</button></div>` : '';
   if (store.mode !== 'cloud') return `<div class="note-card"><p><strong>E-Mails weiterleiten</strong> geht, sobald die Cloud eingerichtet ist (Anleitung, Stufe 2 und 5). Bis dahin: Text unter „Einfügen“ hineinkopieren.</p></div>`;
   if (!addr) return `<div class="note-card"><p><strong>Tipp:</strong> Mit einem eigenen MindSpace-Postfach leitest du E-Mails einfach weiter – die KI legt die Aufgaben dann von selbst an. Einrichtung: Anleitung, Stufe 5.</p></div>`;
   const fast = billing() || p.inboxSource === 'gmail-script';
@@ -1529,14 +1529,17 @@ function areaSheet(a) {
 }
 
 // --- E-Mail-Eingang
-const inboxAddr = () => (billing() ? (S.project?.inboxAlias && CFG.backend?.mailDomain ? `${S.project.inboxAlias}@${CFG.backend.mailDomain}` : '') : S.project?.inboxAddress || '');
+// Mit Abo: eigene Adresse über die Mail-Domain. Solange die fehlt, bleibt eine vorhandene Postboten-Adresse sichtbar.
+const mailDomainReady = () => !!CFG.backend?.mailDomain;
+const inboxAddr = () => (billing() && mailDomainReady() && S.project?.inboxAlias ? `${S.project.inboxAlias}@${CFG.backend.mailDomain}` : S.project?.inboxAddress || '');
 function inboxSheet() {
   const addr = inboxAddr();
   const allowed = (S.project?.inboxAllowed || []).join('\n');
   const sheet = openSheet(`
     <div class="sheet-head"><h2>E-Mail-Eingang</h2><button class="btn ghost" data-dismiss>Abbrechen</button></div>
     ${addr ? `<div class="address-card" style="margin-bottom:16px"><p>Weiterleiten an</p><button class="address" type="button" data-act="copy">${esc(addr)} ${I.copy}</button></div>`
-      : billing() ? `<div class="note-card"><p>Noch keine Adresse. Tippe auf „Adresse anlegen“ – danach leitest du E-Mails einfach dorthin weiter.</p><button class="btn small" type="button" data-action="inbox-create" style="margin-top:8px">Adresse anlegen</button></div>`
+      : billing() && mailDomainReady() ? `<div class="note-card"><p>Noch keine Adresse. Tippe auf „Adresse anlegen“ – danach leitest du E-Mails einfach dorthin weiter.</p><button class="btn small" type="button" data-action="inbox-create" style="margin-top:8px">Adresse anlegen</button></div>`
+      : billing() ? `<div class="note-card"><p>Der E-Mail-Eingang wird gerade eingerichtet. Bis dahin E-Mails einfach unter <strong>Eingang → Einfügen</strong> hineinkopieren.</p></div>`
       : `<div class="note-card"><p>Noch kein Postfach verbunden. Die Einrichtung (ca. 15 Minuten) steht in der Anleitung, Stufe 5.</p></div>`}
     ${billing() ? `<p class="hint">${esc(planOf(curPlan()).name)}: ${fmtLimit(lim('mails'))} E-Mails pro Monat, davon ${S.usage?.mails || 0} genutzt. Die KI liest je Mail bis zu ${lim('mailAttachments')} ${lim('mailAttachments') === 1 ? 'Anhang' : 'Anhänge'} mit.</p>` : ''}
     <form>
@@ -2902,7 +2905,7 @@ async function importData(file) {
 }
 
 // ================================================================== Ereignisse
-app.addEventListener('click', async (e) => {
+async function onAction(e) {
   const el = e.target.closest('[data-action]'); if (!el || el.tagName === 'INPUT') return;
   const a = el.dataset.action;
   switch (a) {
@@ -2983,7 +2986,7 @@ app.addEventListener('click', async (e) => {
     case 'plan-manage': manageSubscription(); break;
     case 'plan-restore': restorePurchases(); break;
     case 'ai-deep': if (curPlan() === 'pro') { await store.updateProject({ aiDeep: !S.project?.aiDeep }).catch((err) => toast(fail(err))); } else paywallSheet('deep'); break;
-    case 'inbox-create': try { el.disabled = true; await store.inboxAddress(); toast('Adresse ist bereit'); } catch (err) { toast(fail(err)); el.disabled = false; } break;
+    case 'inbox-create': try { el.disabled = true; await store.inboxAddress(); if (el.closest('.sheet')) closeSheet(); toast('Adresse ist bereit'); } catch (err) { toast(fail(err)); el.disabled = false; } break;
     case 'delete-account': deleteAccountSheet(); break;
     case 'feedback': feedbackSheet(); break;
     case 'legal': native.openExternal(el.dataset.url); break;
@@ -3042,7 +3045,10 @@ app.addEventListener('click', async (e) => {
       break;
     }
   }
-});
+}
+app.addEventListener('click', onAction);
+// Knöpfe mit data-action gibt es auch in Fenstern (Sheets), die außerhalb von #app liegen
+sheetRoot.addEventListener('click', onAction);
 
 app.addEventListener('keydown', (e) => {
   if ((e.key === 'Enter' || e.key === ' ') && e.target.matches('[role="button"][data-action]')) { e.preventDefault(); e.target.click(); }
