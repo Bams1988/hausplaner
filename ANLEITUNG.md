@@ -16,7 +16,7 @@ Die Einrichtung hat fünf Stufen. Schon nach Stufe 1 kannst du die App benutzen.
 
 > **Update auf Version 16 (aufgeräumt: Plus mit Diktat, Assistent, neues „Mehr“, Tour)**
 > 1. **GitHub → Add file → Upload files:** `app.js`, `ai.js`, `plans.js`, `i18n.js`, `styles.css`, `sw.js`, `testen.html`, `TESTVERSION.md` und `ANLEITUNG.md`. `config.js` nicht anfassen.
-> 2. Auf jedem Gerät **Mehr → App & Darstellung → Neueste Version laden** (Version 16). Beim ersten Öffnen bietet MindSpace die Tour an.
+> 2. Auf jedem Gerät **Mehr → App & Darstellung → Neueste Version laden** (Version 16.1). Beim ersten Öffnen bietet MindSpace die Tour an.
 > 3. Mit Server-Diensten (optional, für bessere Assistenten-Antworten): in der Cloud Shell `cd ~/hausplaner && git pull && firebase deploy --only functions`.
 
 > **Update auf Version 15 (Schutz vor verlorenen Eingaben + Testphase)**

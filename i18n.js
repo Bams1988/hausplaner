@@ -523,6 +523,8 @@ Object.assign(EN, {
   'N = neue Aufgabe · M = diktieren · A = Assistent · S = suchen · 1–5 = Bereiche · Esc = schließen': 'N = new task · M = dictate · A = assistant · S = search · 1–5 = sections · Esc = close',
   'Der E-Mail-Eingang wird gerade eingerichtet. Bis dahin E-Mails einfach unter': 'The e-mail inbox is being set up. Until then simply paste e-mails under', 'Eingang → Einfügen': 'Inbox → Paste', 'hineinkopieren.': '.',
   'Vorlagen': 'Templates', 'Checkliste Hausbau': 'House-building checklist',
+  'Mit KI anlegen': 'Add with AI', 'auch mehrere Aufgaben auf einmal': 'also several tasks at once', 'Ignorieren': 'Ignore', 'Ignoriert – der Hinweis ist weg.': 'Ignored – the notice is gone.',
+  'Viel Text? „Mit KI anlegen“ macht daraus mehrere Aufgaben.': 'Lots of text? “Add with AI” turns it into several tasks.',
 });
 PATTERNS.push(
   P(/^(\d+) Ansprechpartner$/, (m, n) => `${n} ${n === '1' ? 'contact' : 'contacts'}`),

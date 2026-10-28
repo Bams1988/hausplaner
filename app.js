@@ -7,7 +7,7 @@ import {
 } from './ai.js';
 import { PLANS, PLAN_ORDER, planOf, fmtLimit, storageLabel } from './plans.js';
 import * as native from './native.js';
-const APP_VERSION = '16';
+const APP_VERSION = '16.1';
 const CFG = self.HAUS_CONFIG || {};
 
 // ================================================================== Zustand
@@ -733,17 +733,17 @@ function inboxAddressCard() {
   if (billing() && !addr) return fullAccess() && mailDomainReady() ?`<div class="note-card"><p><strong>E-Mails weiterleiten:</strong> MindSpace gibt euch eine eigene Adresse. Alles, was ihr dorthin weiterleitet, liest die KI – samt Anhängen – und legt Aufgaben, Zahlungen und Kontakte an.</p><button class="btn small" data-action="inbox-create" style="margin-top:10px">Adresse anlegen</button></div>` : '';
   if (store.mode !== 'cloud') return `<div class="note-card"><p><strong>E-Mails weiterleiten</strong> geht, sobald die Cloud eingerichtet ist (Anleitung, Stufe 2 und 5). Bis dahin: Text unter „Einfügen“ hineinkopieren.</p></div>`;
   if (!addr) return `<div class="note-card"><p><strong>Tipp:</strong> Mit einem eigenen MindSpace-Postfach leitest du E-Mails einfach weiter – die KI legt die Aufgaben dann von selbst an. Einrichtung: Anleitung, Stufe 5.</p></div>`;
-  const fast = billing() || p.inboxSource === 'gmail-script';
+  const fast = (billing() && p.inboxAlias && mailDomainReady()) || p.inboxSource === 'gmail-script';
   const last = p.inboxCheckedAt ? Math.round((Date.now() - p.inboxCheckedAt) / 60000) : null;
   const stale = last != null && last > (fast ? 20 : 90);
   const ign = p.inboxLastIgnored && Date.now() - p.inboxLastIgnored.at < 3 * 864e5 && !(p.inboxAllowed || []).includes(p.inboxLastIgnored.from) ? p.inboxLastIgnored : null;
   return `<div class="address-card">
     <p>Leite E-Mails weiter an</p>
     <button class="address" data-action="copy-address">${esc(addr)} ${I.copy}</button>
-    <small>${billing() ? `Kommt sofort an · ${S.usage?.mails || 0} von ${fmtLimit(lim('mails'))} E-Mails diesen Monat` : stale ? 'Längere Zeit nicht abgerufen – siehe Anleitung, falls das so bleibt.' : last == null ? (fast ? 'Wird jede Minute abgerufen.' : 'Wird alle 15 Minuten abgerufen.') : last < 2 ? 'Gerade eben abgerufen' + (fast ? ' – jede Minute aktuell.' : '.') : `Zuletzt vor ${last} Min. abgerufen.`}</small>
+    <small>${billing() && p.inboxAlias && mailDomainReady() ? `Kommt sofort an · ${S.usage?.mails || 0} von ${fmtLimit(lim('mails'))} E-Mails diesen Monat` : stale ? 'Längere Zeit nicht abgerufen – siehe Anleitung, falls das so bleibt.' : last == null ? (fast ? 'Wird jede Minute abgerufen.' : 'Wird alle 15 Minuten abgerufen.') : last < 2 ? 'Gerade eben abgerufen' + (fast ? ' – jede Minute aktuell.' : '.') : `Zuletzt vor ${last} Min. abgerufen.`}</small>
   </div>
   ${ign ? `<div class="note-card"><p><strong>Nicht gelesen:</strong> „${esc(ign.subject)}“ von ${esc(ign.from)}. MindSpace liest nur Mails von euren eigenen Adressen und von erlaubten Absendern.</p>
-    <div class="btn-row" style="margin-top:10px"><button class="btn small" data-action="allow-sender" data-from="${esc(ign.from)}">${esc(ign.from)} erlauben</button><button class="btn small ghost" data-action="allow-sender" data-from="@${esc(ign.from.split('@')[1] || '')}">Alle von @${esc(ign.from.split('@')[1] || '')}</button></div></div>` : ''}`;
+    <div class="btn-row" style="margin-top:10px"><button class="btn small" data-action="allow-sender" data-from="${esc(ign.from)}">${esc(ign.from)} erlauben</button><button class="btn small secondary" data-action="allow-sender" data-from="@${esc(ign.from.split('@')[1] || '')}">Alle von @${esc(ign.from.split('@')[1] || '')}</button><button class="btn small ghost" data-action="ignore-sender">Ignorieren</button></div></div>` : ''}`;
 }
 function inboxNew(list) {
   const cards = list.map((t) => {
@@ -2553,12 +2553,16 @@ const SR = window.SpeechRecognition || window.webkitSpeechRecognition || null;
 // Dann übernimmt das Mikrofon der Tastatur.
 const srBroken = () => { try { return localStorage.getItem('ms-sr-broken') === '1'; } catch { return false; } };
 const canListen = () => !!SR && !srBroken();
-function listen({ onText, onEnd, onError }) {
+function listen({ onText, onEnd, onError, silenceMs = 0 }) {
   if (!canListen()) return null;
   const rec = new SR();
   rec.lang = LANG === 'en' ? 'en-GB' : 'de-DE';
   rec.continuous = true; rec.interimResults = true;
   let finalText = '';
+  // Mit silenceMs: nach einer Sprechpause automatisch beenden (spätestens 10 s, wenn gar nichts kommt)
+  let quiet = null;
+  const arm = (ms) => { if (!silenceMs) return; clearTimeout(quiet); quiet = setTimeout(() => { try { rec.stop(); } catch {} }, ms); };
+  arm(10000);
   rec.onresult = (e) => {
     let interim = '';
     for (let i = e.resultIndex; i < e.results.length; i++) {
@@ -2569,7 +2573,7 @@ function listen({ onText, onEnd, onError }) {
   };
   let heard = false;
   const prevResult = rec.onresult;
-  rec.onresult = (e) => { heard = true; prevResult(e); };
+  rec.onresult = (e) => { heard = true; prevResult(e); arm(silenceMs); };
   rec.onerror = (e) => {
     if (e.error === 'aborted' || e.error === 'no-speech') return;
     if (e.error === 'not-allowed') { toast('Mikrofon nicht erlaubt – bitte in den Einstellungen freigeben.'); onError?.(e.error); return; }
@@ -2577,8 +2581,8 @@ function listen({ onText, onEnd, onError }) {
     if (!heard) { try { localStorage.setItem('ms-sr-broken', '1'); } catch {} }
     onError?.(e.error);
   };
-  rec.onend = () => onEnd?.();
-  try { rec.start(); } catch { return null; }
+  rec.onend = () => { clearTimeout(quiet); onEnd?.(); };
+  try { rec.start(); } catch { clearTimeout(quiet); return null; }
   return rec;
 }
 function micButton(attrs = '') {
@@ -2607,6 +2611,8 @@ function voiceSheet(preset = '', { auto = false } = {}) {
   };
   recBtn.addEventListener('click', () => (rec ? stop() : start()));
   sheet.querySelector('[data-dismiss]')?.addEventListener('click', stop);
+  keepAwake(true);
+  sheetGuard = () => { stop(); keepAwake(false); };
   if (!preset && canListen()) setTimeout(start, 300);
   const out = sheet.querySelector('[data-result]');
   const draw = () => {
@@ -3016,6 +3022,10 @@ async function onAction(e) {
     case 'discard-new': { const t = S.tasks.find((x) => x.id === el.dataset.id); if (t) store.deleteTask(t.id).then(() => toast('Verworfen', { label: 'Rückgängig', fn: () => { const { id, ...rest } = t; store.addTask(rest); } })).catch((err) => toast(fail(err))); break; }
     case 'accept-all': for (const t of S.tasks.filter((x) => x.isNew && !x.done)) await store.updateTask(t.id, { isNew: false }, t).catch(() => {}); toast('Alles im Plan ✓'); break;
     case 'copy-address': copyText(inboxAddr(), 'Adresse kopiert'); break;
+    case 'ignore-sender': {
+      try { await store.updateProject({ inboxLastIgnored: null }); toast('Ignoriert – der Hinweis ist weg.'); } catch (err) { toast(fail(err)); }
+      break;
+    }
     case 'allow-sender': {
       const list = [...new Set([...(S.project?.inboxAllowed || []), el.dataset.from.toLowerCase()])];
       try { await store.updateProject({ inboxAllowed: list, inboxLastIgnored: null }); toast('Erlaubt ✓ Leite die Mail einfach noch einmal weiter.'); } catch (err) { toast(fail(err)); }
@@ -3698,6 +3708,21 @@ function headActions() {
   return `<div class="head-acts"><button class="head-btn" data-action="open-search" aria-label="Suchen">${I.search}</button><button class="head-btn ai-btn" data-action="assistant" aria-label="Assistent">${I.spark}<span>Assistent</span></button></div>`;
 }
 
+// ---------- Bildschirm wach halten, solange ein Eingabe-Fenster offen ist (Diktieren!)
+let wakeLock = null, wakeWanted = false;
+async function keepAwake(on) {
+  wakeWanted = on;
+  try {
+    if (on && !wakeLock && 'wakeLock' in navigator && document.visibilityState === 'visible') {
+      wakeLock = await navigator.wakeLock.request('screen');
+      wakeLock.addEventListener?.('release', () => { wakeLock = null; });
+      if (!wakeWanted) { wakeLock?.release().catch(() => {}); wakeLock = null; }
+    } else if (!on && wakeLock) { const w = wakeLock; wakeLock = null; await w.release(); }
+  } catch { wakeLock = null; }
+}
+// iOS gibt die Sperre beim Wechsel in den Hintergrund frei → beim Zurückkommen neu anfordern
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && wakeWanted && sheetRoot.innerHTML.trim()) keepAwake(true); });
+
 // ---------- Neue Aufgabe: schreiben oder diktieren
 const CAP_KEY = 'ms-cap-draft';
 function capDraft(v) {
@@ -3736,17 +3761,19 @@ function captureSheet({ voice = false, text = null } = {}) {
       <button type="button" class="cap-mic" data-rec>${I.mic}<span data-rec-l>Diktieren</span></button>
       <button type="button" class="btn cap-add" data-add disabled>Anlegen</button>
     </div>
+    ${S.ai ? `<button type="button" class="btn block cap-ai" data-ai><span>${I.spark} Mit KI anlegen</span><small>auch mehrere Aufgaben auf einmal</small></button>` : ''}
     <p class="cap-state" data-state>${canListen() ? 'Schreib oder diktiere. Datum, Uhrzeit und Bereich erkennt MindSpace selbst.' : kbdHint}</p>
     <div class="cap-more">
-      ${S.ai ? `<button type="button" class="link" data-ai>${I.spark}Mit KI erkennen – auch mehrere Aufgaben</button>` : ''}
       <button type="button" class="link" data-details>Alle Details ausfüllen</button>
     </div>`);
   const ta = sheet.querySelector('[data-cap]'), pv = sheet.querySelector('[data-pv]'), add = sheet.querySelector('[data-add]');
   const recBtn = sheet.querySelector('[data-rec]'), recL = sheet.querySelector('[data-rec-l]'), state = sheet.querySelector('[data-state]');
   const grow = () => { ta.style.height = 'auto'; ta.style.height = Math.min(220, ta.scrollHeight + 2) + 'px'; };
-  const update = () => { const v = ta.value; pv.innerHTML = v.trim() ? quickPreview(v) : ''; add.disabled = !v.trim(); capDraft(v); grow(); };
+  const aiBtn = sheet.querySelector('[data-ai]');
+  const update = () => { const v = ta.value; pv.innerHTML = v.trim() ? quickPreview(v) : ''; add.disabled = !v.trim(); if (aiBtn) aiBtn.disabled = !v.trim(); capDraft(v); grow(); };
   const stop = () => { try { rec?.stop(); } catch {} rec = null; recBtn.classList.remove('on'); recL.textContent = 'Diktieren'; };
-  sheetGuard = () => { stop(); capDraft(''); };
+  keepAwake(true);
+  sheetGuard = () => { stop(); capDraft(''); keepAwake(false); };
   const start = () => {
     if (rec) { stop(); return; }
     if (!canListen()) { ta.focus(); state.textContent = kbdHint; state.classList.add('flash'); setTimeout(() => state.classList.remove('flash'), 900); return; }
@@ -3756,7 +3783,7 @@ function captureSheet({ voice = false, text = null } = {}) {
       onEnd: () => {
         recBtn.classList.remove('on'); recL.textContent = 'Diktieren'; rec = null;
         if (!ta.value.trim()) state.textContent = `Nichts verstanden – tippe noch einmal aufs Mikrofon. Klappt es nicht: ${kbdHint}`;
-        else state.textContent = S.ai && ta.value.length > 90 ? 'Viel Text? „Mit KI erkennen“ macht daraus mehrere Aufgaben.' : 'Passt alles? Dann „Anlegen“.';
+        else state.textContent = S.ai && ta.value.length > 90 ? 'Viel Text? „Mit KI anlegen“ macht daraus mehrere Aufgaben.' : 'Passt alles? Dann „Anlegen“.';
       },
       onError: (err) => { stop(); state.textContent = err === 'not-allowed' ? 'Mikrofon nicht erlaubt – bitte in den Einstellungen freigeben.' : `Die Spracherkennung klappt hier nicht. ${kbdHint}`; },
     });
@@ -3770,7 +3797,7 @@ function captureSheet({ voice = false, text = null } = {}) {
     stop();
     const v = ta.value.trim(); if (!v) return;
     add.disabled = true;
-    try { if (await addFromText(v, dictated ? 'voice' : 'quick')) { capDraft(''); closeSheet({ saved: true }); render(); } else { add.disabled = false; toast('Schreib kurz, was zu tun ist.'); } }
+    try { if (await addFromText(v, dictated ? 'voice' : 'quick')) { capDraft(''); keepAwake(false); closeSheet({ saved: true }); render(); } else { add.disabled = false; toast('Schreib kurz, was zu tun ist.'); } }
     catch (e) { add.disabled = false; toast(fail(e)); }
   });
   sheet.querySelector('[data-details]').addEventListener('click', () => {
@@ -3779,7 +3806,7 @@ function captureSheet({ voice = false, text = null } = {}) {
     capDraft('');
     taskSheet(null, q ? { title: q.title || v, due: q.due || '', time: q.time || '', areaId: q.areaId, phase: q.phase, repeat: q.repeat || null } : {});
   });
-  sheet.querySelector('[data-ai]')?.addEventListener('click', () => { stop(); const v = ta.value.trim(); capDraft(''); voiceSheet(v, { auto: !!v }); });
+  aiBtn?.addEventListener('click', () => { stop(); const v = ta.value.trim(); if (!v) return; capDraft(''); voiceSheet(v, { auto: true }); });
   update();
   if (voice) start();
   else if (window.matchMedia('(hover: hover)').matches) ta.focus();
@@ -3909,6 +3936,8 @@ function assistantSheet({ areaId = null, taskId = null, ask = '' } = {}) {
   const grow = () => { q.style.height = 'auto'; q.style.height = Math.min(130, q.scrollHeight + 2) + 'px'; };
   async function send(text) {
     text = String(text || '').trim();
+    if (rec) { const r = rec; rec = null; mic.classList.remove('on'); try { r.abort ? r.abort() : r.stop(); } catch {} }
+    q.blur(); // beendet auch das Diktat der iPhone-Tastatur
     if (!text || busy) return;
     if (!S.ai) { toast('Richte zuerst die KI ein.'); return; }
     chat.msgs.push({ role: 'user', text });
@@ -3933,8 +3962,9 @@ function assistantSheet({ areaId = null, taskId = null, ask = '' } = {}) {
     if (rec) { try { rec.stop(); } catch {} return; }
     if (!canListen()) { q.focus(); toast('Tippe ins Feld und nutze das 🎤 der Tastatur.'); return; }
     rec = listen({
+      silenceMs: 1800,
       onText: (t) => { q.value = t; grow(); },
-      onEnd: () => { rec = null; mic.classList.remove('on'); if (q.value.trim()) send(q.value); },
+      onEnd: () => { const was = rec; rec = null; mic.classList.remove('on'); if (was && q.value.trim()) send(q.value); },
       onError: (err) => { rec = null; mic.classList.remove('on'); if (err !== 'not-allowed') { q.focus(); toast('Spracherkennung klappt hier nicht – nutze das 🎤 der Tastatur.'); } },
     });
     if (rec) mic.classList.add('on'); else q.focus();
@@ -3942,7 +3972,8 @@ function assistantSheet({ areaId = null, taskId = null, ask = '' } = {}) {
   sheet.querySelector('[data-totask]')?.addEventListener('click', () => { const t = S.tasks.find((x) => x.id === focus.taskId); if (t) taskSheet(t); });
   sheet.querySelector('[data-all]')?.addEventListener('click', () => assistantSheet());
   sheet.querySelector('[data-setup]')?.addEventListener('click', () => aiSheet());
-  sheetGuard = () => { try { rec?.stop(); } catch {} };
+  keepAwake(true);
+  sheetGuard = () => { try { rec?.stop(); } catch {} keepAwake(false); };
   draw();
   if (ask && S.ai) send(ask);
   else if (S.ai && window.matchMedia('(hover: hover)').matches) q.focus();
