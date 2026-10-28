@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "main": "index.js",
-  "engines": { "node": "20" },
+  "engines": { "node": "22" },
   "scripts": {
     "sync": "node tools/sync-shared.mjs",
     "deploy": "node tools/sync-shared.mjs && firebase deploy --only functions,firestore:rules,storage"
